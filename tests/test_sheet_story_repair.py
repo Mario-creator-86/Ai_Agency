@@ -51,6 +51,39 @@ def test_failed_review_returns_writer_cause_without_calling_editor(
     assert "Writer returned no usable script" in result["reason"]
 
 
+def test_the_story_repair_gives_the_writer_her_retention_row(
+    engine,
+    film,  # noqa: F811
+    monkeypatch,
+):
+    """Her notes and the retention row of her last reading — where she loses the viewer, and
+    why — ride in the rewrite's own data: no identity carries her letter (2026-10-16)."""
+    monkeypatch.setattr(story, "story_gate", lambda *a: (False, "Missing ending"))
+    monkeypatch.setattr(
+        story,
+        "latest_review",
+        lambda *a: StoryReview(
+            verdict="REVISE",
+            notes_json={"notes": ["Add an ending."]},
+            retention_json={"at_3": 60, "collapse_at": "5-8", "why": "no payoff"},
+        ),
+    )
+    asked: list[list[str]] = []
+
+    def writer(*_args, notes, **_kwargs):
+        asked.append(list(notes))
+        raise story.ScriptRejected("Writer returned no usable script")
+
+    monkeypatch.setattr(story, "agent_write_script", writer)
+    story.repair_story(engine, object(), film, "test", "report", [])
+    (notes,) = asked
+    assert "Add an ending." in notes
+    assert (
+        "Reținerea la care se așteaptă Directorul: 60% la 3 s; pierde publicul la 5-8: no payoff."
+        in notes
+    )
+
+
 def test_existing_approved_story_needs_no_new_review(
     engine,
     film,  # noqa: F811

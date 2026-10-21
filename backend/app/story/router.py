@@ -10,7 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.media.serial_storyboard import SerialStoryboardError, storyboard_from_episode
 from app.security import require_owner
+from app.services import CommandConflict
 from app.story.review import ReviewError, review_episode
+from app.story.serial_stage import DayNotTold, tell_day_now
 from app.story.services import (
     EpisodeNotGrounded,
     NothingHappened,
@@ -124,6 +126,32 @@ def create_story_router() -> APIRouter:
             raise HTTPException(status_code=409, detail=str(exc)) from None
         except EpisodeNotGrounded as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
+        except StoryError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @router.post("/logs/{log_id}/tell")
+    def post_tell(
+        request: Request,
+        log_id: Annotated[str, Path(min_length=36, max_length=36)],
+        cmd: CommandOnly,
+    ) -> dict:
+        """The Owner's «Scrie episodul», to the end: written, read by the Director, approved
+        under the channel's policy, storyboarded, its filming queued (`tell_day_now`).
+
+        Until 2026-10-13 the button was `/episodes/write` alone, and the draft it made waited
+        for the next run's stage to be read. That route still drafts alone. Idempotent by the
+        command id. A state that refuses the press — a quiet day, the Owner's stop, a day
+        that has its episode or used its drafts, an episode waiting for him, no model, the
+        same id reused with another day — is 409 with the studio's sentence; an answer
+        refused before it was stored is 422, as the write route says it.
+        """
+        state = request.app.state
+        try:
+            return tell_day_now(
+                state.engine, state.registry, state.settings, log_id, str(cmd.command_id)
+            )
+        except (DayNotTold, NothingHappened, CommandConflict) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         except StoryError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
 

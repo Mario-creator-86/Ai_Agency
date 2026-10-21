@@ -1,0 +1,76 @@
+........................................................................ [  8%]
+........................................................................ [ 16%]
+........................................................................ [ 25%]
+........................................................................ [ 33%]
+........................................................................ [ 41%]
+........................................................................ [ 50%]
+........................................................................ [ 58%]
+........................................................................ [ 66%]
+...............................................F........................ [ 75%]
+........................................................................ [ 83%]
+..........................................FF............................ [ 91%]
+.....................................................................    [100%]
+================================== FAILURES ===================================
+___ test_an_analysis_without_its_object_is_asked_again_with_native_thinking ___
+tests\test_mail.py:778: in test_an_analysis_without_its_object_is_asked_again_with_native_thinking
+    assert sorted(r.prompt_template_version for r in runs) == [
+E   AssertionError: assert ['director-re...iew-v2+think'] == ['director-re...iew-v1+think']
+E
+E     At index 0 diff: 'director-review-v2' != 'director-review-v1'
+E     Use -v to get more diff
+---------------------------- Captured stderr setup ----------------------------
+{"timestamp": "2026-10-13T22:31:48.685479+00:00", "level": "INFO", "logger": "studio.agents", "message": "role_capability_preference", "moved": 0, "skipped": 1}
+----------------------------- Captured log setup ------------------------------
+INFO     studio.agents:services.py:1436 role_capability_preference
+---------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-13T22:31:48.725548+00:00", "level": "INFO", "logger": "studio.structured", "message": "structured_answer_invalid", "task_type": "director_review", "model": "kimi-k3:cloud", "refused": false}
+------------------------------ Captured log call ------------------------------
+INFO     studio.structured:structured.py:156 structured_answer_invalid
+_ test_under_mode_a_first_still_that_never_passes_is_bought_once_not_every_day _
+tests\test_daily_run_stages.py:2092: in test_under_mode_a_first_still_that_never_passes_is_bought_once_not_every_day
+    assert asked == [3, 3, 3], asked
+E   AssertionError: [1, 1, 1]
+E   assert [1, 1, 1] == [3, 3, 3]
+E
+E     At index 0 diff: 1 != 3
+E     Use -v to get more diff
+---------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-13T22:32:55.855666+00:00", "level": "INFO", "logger": "studio.agents", "message": "role_capability_preference", "moved": 0, "skipped": 1}
+{"timestamp": "2026-10-13T22:32:58.509955+00:00", "level": "INFO", "logger": "studio.scene_rewrite", "message": "director_ladder", "storyboard_id": "979ed339-95d2-4eaa-b952-2bdb48f04ad8", "rewritten": [], "left": [1]}
+{"timestamp": "2026-10-13T22:32:58.574178+00:00", "level": "INFO", "logger": "studio.scene_rewrite", "message": "director_ladder", "storyboard_id": "979ed339-95d2-4eaa-b952-2bdb48f04ad8", "rewritten": [], "left": [1]}
+{"timestamp": "2026-10-13T22:32:58.635992+00:00", "level": "INFO", "logger": "studio.scene_rewrite", "message": "director_ladder", "storyboard_id": "979ed339-95d2-4eaa-b952-2bdb48f04ad8", "rewritten": [], "left": [1]}
+------------------------------ Captured log call ------------------------------
+INFO     studio.agents:services.py:1436 role_capability_preference
+INFO     studio.scene_rewrite:scene_rewrite.py:4110 director_ladder
+INFO     studio.scene_rewrite:scene_rewrite.py:4110 director_ladder
+INFO     studio.scene_rewrite:scene_rewrite.py:4110 director_ladder
+_ test_under_mode_a_hero_that_fails_clip_qc_twice_is_bought_once_not_every_day _
+tests\test_daily_run_stages.py:2130: in test_under_mode_a_hero_that_fails_clip_qc_twice_is_bought_once_not_every_day
+    assert posts == [2, 2, 2], posts
+E   AssertionError: [1, 1, 1]
+E   assert [1, 1, 1] == [2, 2, 2]
+E
+E     At index 0 diff: 1 != 2
+E     Use -v to get more diff
+---------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-13T22:33:00.054958+00:00", "level": "INFO", "logger": "studio.agents", "message": "role_capability_preference", "moved": 0, "skipped": 1}
+{"timestamp": "2026-10-13T22:33:05.164391+00:00", "level": "INFO", "logger": "studio.scene_rewrite", "message": "director_ladder", "storyboard_id": "3f72d10c-4df7-4821-ad9e-e518f8f33ec2", "rewritten": [], "left": [1]}
+{"timestamp": "2026-10-13T22:33:05.263560+00:00", "level": "INFO", "logger": "studio.scene_rewrite", "message": "director_ladder", "storyboard_id": "3f72d10c-4df7-4821-ad9e-e518f8f33ec2", "rewritten": [], "left": [1]}
+{"timestamp": "2026-10-13T22:33:05.362517+00:00", "level": "INFO", "logger": "studio.scene_rewrite", "message": "director_ladder", "storyboard_id": "3f72d10c-4df7-4821-ad9e-e518f8f33ec2", "rewritten": [], "left": [1]}
+------------------------------ Captured log call ------------------------------
+INFO     studio.agents:services.py:1436 role_capability_preference
+INFO     studio.scene_rewrite:scene_rewrite.py:4110 director_ladder
+INFO     studio.scene_rewrite:scene_rewrite.py:4110 director_ladder
+INFO     studio.scene_rewrite:scene_rewrite.py:4110 director_ladder
+=========================== short test summary info ===========================
+FAILED tests/test_mail.py::test_an_analysis_without_its_object_is_asked_again_with_native_thinking
+FAILED tests/test_daily_run_stages.py::test_under_mode_a_first_still_that_never_passes_is_bought_once_not_every_day
+FAILED tests/test_daily_run_stages.py::test_under_mode_a_hero_that_fails_clip_qc_twice_is_bought_once_not_every_day
+3 failed, 858 passed in 376.37s (0:06:16)
+
+FINAL TARGETED RECHECK AFTER EXPECTATION UPDATES
+........................................................................ [ 31%]
+........................................................................ [ 63%]
+........................................................................ [ 94%]
+............                                                             [100%]
+228 passed in 59.35s

@@ -1,6 +1,11 @@
-"""Offline regression tests for test owner choice continues film.
+"""His free choice on the sheet walks the film on, as his paid yes and his take decisions do.
 
-Providers are faked; all data is synthetic."""
+2026-10-10 (film babcf272): he chose LOCAL_MOVE for scene 5 (held for him after its clip came
+out as three stacked panels) at 08:46 UTC, and nothing moved: only an approved paid step and an
+approved take queued FILM_CONTINUE, so the film waited for a daily run that was not coming.
+Choosing a scene's model (LOCAL_MOVE included) now queues the continuation in the same
+transaction. Nothing is bought by the choice: the walk asks for anything paid under his rule.
+"""
 
 from __future__ import annotations
 

@@ -91,7 +91,7 @@ def test_one_stage_that_ran_is_said_in_the_singular() -> None:
 
 def test_an_old_run_keeps_the_film_its_legacy_publish_artefact_names() -> None:
     """The one count an old record can give truthfully: the publication it names by id."""
-    published = {"publication_id": "0000010e", "publication_status": "PUBLISHED"}
+    published = {"publication_id": "86fe911d", "publication_status": "PUBLISHED"}
     stages = [*OLD_DAY[:8], {"stage": "publish", "status": "COMPLETED", "artefacts": published}]
     assert produced_by(stages[-1]) == 1
     summary = stored_summary(stages)["summary"]

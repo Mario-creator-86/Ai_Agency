@@ -16,8 +16,9 @@ test('living studio: backend-only diverse gestures, bounded contacts/props, real
  try {
   await page.route('**/*',r=>{const u=new URL(r.request().url());
    if(u.pathname.startsWith('/assets/pixel/'))return r.fulfill({contentType:'image/png',body:readFileSync(path.join(ROOT,'public/assets/pixel',path.basename(u.pathname)))});
+   if(u.pathname.startsWith('/sounds/ui/'))return r.fulfill({body:readFileSync(path.join(ROOT,'public',u.pathname))});
    if(u.pathname==='/fixture.mp4'&&process.env.E2E_VIDEO)return r.fulfill({contentType:'video/mp4',body:readFileSync(process.env.E2E_VIDEO)});
-   if(u.pathname==='/')return r.fulfill({contentType:'text/html',body:'<meta charset="utf-8"><style>body{margin:0;background:#222538;color:#efdfb6;font:18px monospace}canvas{width:1600px;height:1000px;image-rendering:pixelated}.studio-living-controls{position:absolute;top:50px;left:10px}</style><p>AMN-AI · SCENARII DE TEST · gesturi din politica backend</p><div id="scene-viewport"><canvas width="1600" height="1000"></canvas></div>'});
+   if(u.pathname==='/')return r.fulfill({contentType:'text/html',body:'<meta charset="utf-8"><style>body{margin:0;background:#222538;color:#efdfb6;font:18px monospace}canvas{width:1600px;height:1000px;image-rendering:pixelated}.studio-living-controls{position:absolute;top:50px;left:10px}</style><p>AMN-AI · SCENARII DE TEST · gesturi din politica backend</p><button id="media-preview-btn" style="position:fixed;top:8px;right:8px">Filmele studioului</button><div id="scene-viewport"><canvas width="1600" height="1000"></canvas></div>'});
    return r.abort();
   });
   await page.goto('http://living.invalid/');await page.addScriptTag({content:code});await page.evaluate(()=>Living.mountFixture());
@@ -65,12 +66,12 @@ test('living studio: backend-only diverse gestures, bounded contacts/props, real
   });
   proof.monitorRepair=monitorRepair;
   assert.equal(proof.steps,360);assert.equal(proof.maxPapers,8);assert.ok(proof.paused);
-  await page.getByRole('button',{name:'Sunetul studioului'}).click();
+  await page.getByRole('button',{name:'Sunetul interfeței'}).click();
   assert.equal(await page.evaluate(()=>window.__livingFixture.engine.audio.status().unlocked),true);
   await page.evaluate(()=>window.advanceTime(1000));
-  await page.getByRole('button',{name:'Sunetul studioului'}).click();
+  await page.getByRole('button',{name:'Sunetul interfeței'}).click();
   await page.waitForFunction(()=>window.__livingFixture.engine.audio.context.state==='suspended');
-  await page.getByRole('button',{name:'Filmele de pe monitoare'}).click();
+  await page.getByRole('button',{name:'Filmele studioului'}).click();
   assert.ok(await page.getByText('Nu există încă un film redabil în biblioteca studioului.',{exact:true}).isVisible());
   await page.getByRole('button',{name:'Închide'}).click();
   if(process.env.E2E_VIDEO){

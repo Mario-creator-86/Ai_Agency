@@ -1,0 +1,19 @@
+{
+  "observed_at": "2026-10-14T16:29:13.547767+00:00",
+  "current_film_budget": {
+    "limit_usd_micros": 20000000,
+    "spent_usd_micros": 12843153,
+    "remaining_usd_micros": 7156847,
+    "limit_ro": "20,00 USD",
+    "spent_ro": "12,84 USD",
+    "source": "buget_zilnic"
+  },
+  "active_daily_limit_usd": 20,
+  "llm_context_multiplier": 10,
+  "old_refusal_event": 21777,
+  "old_refusal_outcome": "CLOSED",
+  "old_refusal_reused_by_new_code": false,
+  "production_mutations": false,
+  "model_calls": 0,
+  "new_gpu_requests": 0
+}

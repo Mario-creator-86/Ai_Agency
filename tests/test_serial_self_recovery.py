@@ -1,6 +1,24 @@
-"""Offline regression tests for test serial self recovery.
+"""The serial makes its episode by itself: a writer held to the review before its draft is
+kept, and a refused day told again.
 
-Providers are faked; all data is synthetic."""
+Measured on a copy of the Owner's database (2026-10-10): 17 episodes and none approved. The
+16 drafts since 2026-09-19 were all REJECTED by the Director's computed checks, her model
+never asked: the cast check in 14 of them (five to seven speakers against the Owner's two to
+four, because the writer gave a line to everyone who acts in an event it cites), the length
+in 12, privacy in 4. And once a day's two drafts were refused nothing wrote it again: the
+script for tomorrow said the day "is already written (rejected)", the morning's stage told
+only a day after the last one told, and the serial made nothing at all.
+
+These tests hold the three changes, in the order a day meets them:
+
+- the brief names two to four SPEAKERS, and an answer is measured by the review's own checks
+  before it is stored: a refusal is asked again once, with the reasons, and the better of
+  the two answers is kept; a beat the camera cannot film in one clip is one of the refusals;
+- a day whose every draft was refused is told again by a later run, with the reasons, up to
+  three drafts a day; then the oldest day the serial passed over;
+- end to end on fakes: a writer that first casts six people and then obeys makes episode 1,
+  approved by the Director, storyboarded the next morning and due for filming then.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +43,7 @@ from app.runbook.stages import serial_films_due
 from app.services import append_event, utc_now
 from app.story.lines import NameBook
 from app.story.models import DailyStudioLog, StoryEpisode
-from app.story.review import beat_clip_seconds, episode_checks, review_episode
+from app.story.review import beat_clip_seconds, episode_checks, failed_rules, review_episode
 from app.story.serial_stage import (
     MAX_DRAFTS_PER_DAY,
     run_serial_next_stage,
@@ -134,7 +152,7 @@ def answer_to(prompt: str, obedient: bool, title: str = "The Cut Runs Long") -> 
                     {"speaker": speakers[index % len(speakers)], "text": SPOKEN[0]},
                     {"speaker": speakers[(index + 1) % len(speakers)], "text": SPOKEN[1]},
                 ],
-                "event_ids": [cited[index % len(cited)]["id"]],
+                "event_ids": [cited[index % len(cited)]["id"]] if cited else [],
             }
         )
     return json.dumps(
@@ -296,7 +314,7 @@ def test_six_speakers_are_asked_again_with_the_reasons_and_the_obedient_draft_ke
     assert speakers == set(_listed(retry, "SPEAKERS")[:2])
     assert episode["continuity"]["write_checks"]["failed"] == []
     assert "vorbesc 6 personaje" in episode["continuity"]["write_checks"]["first_refusal"]
-    assert all(check["passed"] for check in checks_of(engine, episode["id"]).values())
+    assert failed_rules(checks_of(engine, episode["id"])) == []
 
 
 def test_a_draft_that_still_fails_is_kept_and_the_review_names_the_same_reasons(
@@ -318,8 +336,9 @@ def test_a_draft_that_still_fails_is_kept_and_the_review_names_the_same_reasons(
 
     assert review["verdict"] == "FAIL" and review["status"] == "REJECTED"
     assert calls == [] and review["model_used"] is False
-    failed = [name for name, check in review["checks"].items() if not check["passed"]]
-    assert failed == ["cast"]  # the offered speakers steer the writer; the cast rule decides
+    # The offered speakers steer the writer; the cast rule decides (the length floor and the
+    # narration are recommendations, 2026-10-16).
+    assert failed_rules(review["checks"]) == ["cast"]
     assert review["reasons"] == [review["checks"]["cast"]["reason"]]
     assert review["checks"]["cast"]["reason"] in measured["first_refusal"]
     assert len(writer.prompts) == 2
@@ -337,7 +356,13 @@ def test_the_better_of_the_two_answers_is_kept(engine, staffed, monkeypatch):
             text = answer_to(prompt, obedient=False, title="The First Answer")
         else:
             worse = json.loads(answer_to(prompt, obedient=False, title="The Second Answer"))
-            worse["beats"] = worse["beats"][:2]  # short, and no structure: more refusals
+            everyone = list(
+                dict.fromkeys(line["speaker"] for beat in worse["beats"] for line in beat["lines"])
+            )
+            worse["beats"] = worse["beats"][:2]  # no structure: one refusal more
+            worse["beats"][0]["lines"] = [
+                {"speaker": name, "text": SPOKEN[0]} for name in everyone
+            ]  # and still everyone speaks
             text = json.dumps(worse)
         return {"id": str(uuid4()), "status": "SUCCEEDED", "output_text": text}
 
@@ -379,18 +404,21 @@ def test_numbers_said_in_words_and_the_breath_between_speakers_count():
         {"speaker": "Sarah (Director)", "text": "In 1964 we shipped it."},
         {"speaker": "Kael (Video Editor)", "text": "Twice."},
     ]
-    # "1964" is said as three words: 8 words x 0.40 s, one 0.3 s breath between the two
-    # takes, the estimate's 10 % and the scene's 0.12 s closing breath.
-    assert beat_clip_seconds(lines) == round((8 * 0.40 + 0.3) * 1.10 + 0.12, 2)
-    # One speaker's two lines are one take: no breath between them.
+    # "1964" is said as three words: 8 words at the cast's high rate (0.375 s, pinned), the
+    # estimate's 10 %, the speaker change between the two takes (the conversational gap,
+    # 0.236 s) and the longest pause a shot can be followed by (the film's END, the narrator's
+    # paragraph pause, 0.767 s), on whole frames («pauza vocii», 2026-10-16).
+    assert beat_clip_seconds(lines) == round(104 / 24, 3)
+    assert 8 * 0.375 * 1.10 + 0.236 + 0.767 <= 104 / 24 < 8 * 0.375 * 1.10 + 1.003 + 1 / 24
+    # One speaker's two lines are one take: no turn between them.
     alone = [{**line, "speaker": "Sarah (Director)"} for line in lines]
-    assert beat_clip_seconds(alone) == round(8 * 0.40 * 1.10 + 0.12, 2)
+    assert beat_clip_seconds(alone) == round(98 / 24, 3)
 
 
 def test_a_beat_longer_than_one_clip_is_refused_and_the_writer_told(engine, staffed, monkeypatch):
-    """22 written words pass the words-per-beat rule; four years said in words (30 spoken)
-    and the breaths between three takes make the beat 14 s, longer than a 10 s clip slowed
-    by a quarter (12.5 s)."""
+    """22 written words pass the words-per-beat rule; four years said in words (30 spoken),
+    the two speaker changes between three takes and the pause at the beat's end make the beat
+    13.3 s, longer than a 10 s clip slowed by a quarter (12.5 s)."""
     from app.story import services
 
     a_motion_model(engine, longest=10)
@@ -424,7 +452,7 @@ def test_a_beat_longer_than_one_clip_is_refused_and_the_writer_told(engine, staf
     assert checks["filmable"]["limit_seconds"] == 12.5
     assert checks["filmable"]["needed_seconds"][2] > 12.5
     assert episode["continuity"]["write_checks"]["failed"] == ["filmable"]
-    assert "14,0 s" in episode["continuity"]["write_checks"]["first_refusal"]
+    assert "13,3 s" in episode["continuity"]["write_checks"]["first_refusal"]
 
 
 def test_every_beat_inside_one_clip_passes_the_filming_check(engine, staffed, monkeypatch):
@@ -491,8 +519,8 @@ def test_a_day_out_of_drafts_gives_way_to_the_oldest_day_passed_over(
     engine, staffed, settings, monkeypatch
 ):
     older = events_on(engine, NOON_DAYS_AGO(3))
-    for days in (3, 1):
-        close_daily_log(engine, TZ, date_days_ago(days))
+    # No closed day after D-2: a quiet D-1 would be told first since 2026-10-16.
+    close_daily_log(engine, TZ, date_days_ago(3))
     refused_twice(engine, monkeypatch, settings, NOON_DAYS_AGO(2))
     hire(monkeypatch, Writer(unruly=99))
     third = run_serial_stage(engine, registry(), settings)
@@ -615,3 +643,37 @@ def test_a_retold_day_is_readied_but_its_days_media_stage_waits_for_it_to_be_ove
     with Session(engine) as session:
         boards = list(session.scalars(select(Storyboard)))
         assert serial_films_due(session, boards, business_date(TZ)) == []
+
+
+def test_a_day_already_at_the_cap_ships_its_newest_draft_once_she_may_approve(
+    engine, staffed, settings, monkeypatch
+):
+    """15.10, 14:19Z: episode 3 had used the day's three drafts on the Director's reading and
+    «serialul trece la altă zi». The evening script of a later run finds the day at its cap,
+    every draft refused by her reading, and ships the newest draft under the cap (the Owner,
+    2026-10-15: «publicăm ce avem»): approved, readied, its filming queued. A writer whose
+    drafts the computed checks refused (``unruly``) never ships — the test above keeps that."""
+    a_crowded_day(engine)
+    writer = hire(monkeypatch, Writer(unruly=0))
+    fake_director(monkeypatch, "FAIL", notes="Rebuild around one situation that changes.")
+    for _ in range(3):
+        run_serial_next_stage(engine, registry(), settings)
+    rows = episode_rows(engine)
+    assert len(rows) == MAX_DRAFTS_PER_DAY
+    assert all(row.status == "REJECTED" and row.reviewed_by == "director" for row in rows)
+    # Her approval alone is not in the channel's policy yet: nothing ships.
+    spent = run_serial_next_stage(engine, registry(), settings)
+    assert spent["artefacts"]["approved"] == 0
+    assert f"ziua și-a folosit cele {MAX_DRAFTS_PER_DAY} ciorne" in spent["reason"]
+
+    allow_director_approval(engine)
+    prompts_before = len(writer.prompts)
+    shipped = run_serial_next_stage(engine, registry(), settings)
+
+    artefacts = shipped["artefacts"]
+    assert artefacts["approved"] == 1 and artefacts.get("cap_shipped") is True, shipped
+    assert artefacts["resumed"] == "cap" and artefacts["storyboard_id"], shipped
+    assert "se expediază sub plafonul ciornelor" in shipped["reason"]
+    assert len(writer.prompts) == prompts_before  # nothing written again
+    rows = episode_rows(engine)
+    assert [row.status for row in rows] == ["REJECTED", "REJECTED", "APPROVED"]

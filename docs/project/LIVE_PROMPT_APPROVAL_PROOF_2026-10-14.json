@@ -1,0 +1,196 @@
+{
+  "storyboard_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
+  "scene_index": 4,
+  "stored_package": {
+    "story_purpose": "REVEAL",
+    "narration": "My close went out twice today. Same figures, same period, two letters.\nWithin limit, both times?",
+    "writer_visual": "Ground floor, quiet office, Nadia at her ledger desk, brass pen on its chain, two cups of tea cooling.",
+    "seconds": 6.4,
+    "subject": "Medium close-up single on Nadia Accountant in Accounting & Treasury on the ground floor: Nadia at her ledger desk facing the viewer, chestnut hair in a low bun, round tortoiseshell glasses, plum blouse under a dark violet cardigan, small brass pen on a chain, the green ledger book open before her, a calculator with a paper roll and a jar of sharpened pencils on the desk, two cups of tea cooling",
+    "action": "Nadia sits at her ledger desk facing the viewer, even, a pause before the number, the brass pen on its chain resting in her hand over the blank green ledger; Sarah's right shoulder and upper arm only lean in at the right frame edge, her face off camera, measured.",
+    "environment": "the AMN-AI headquarters, the studio's own building",
+    "camera": "Medium close-up single on Nadia, eye level, Sarah only a shoulder at the frame edge; the camera does not move, zoom or reframe at any point.",
+    "lighting": "the series look",
+    "composition": "subject centred in a vertical frame, readable on a phone",
+    "motion": "the subject carries on with its action; shadows drift and the light shifts around it",
+    "emotion": "Nadia even and attentive, pausing before the number; Sarah measured, pressing for confirmation.",
+    "background": "Quiet ground-floor office: wooden desk, warm brass lamps, bookshelves and plants soft behind; the blank green ledger book open before Nadia, calculator with paper roll, jar of sharpened pencils and two cups of tea cooling on the desk; background life stays soft and does not compete with the",
+    "continuity": "Matches the series look word for word; Nadia's chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, plum blouse under a dark violet cardigan and small brass pen on a chain exactly as the bible; Sarah's right shoulder and upper arm at the right frame edge wear her full locked outfit word for word: crisp navy two-piece executive blazer, white collared shirt and sky-blue",
+    "ending_frame": "The same medium close-up on Nadia at her desk facing the viewer, brass pen in hand over the blank green ledger, Sarah's shoulder and upper arm still at the right frame edge.",
+    "audio_intent": "Nadia even, a pause before the number: 'My close went out twice today. Same figures, same period, two letters.' Sarah measured: 'Within limit, both times?'",
+    "transition": "Cut to scene 5.",
+    "avoid": [
+      "photorealistic live-action footage",
+      "glossy 3D CGI render look",
+      "chibi or toy proportions",
+      "warped or extra hands and fingers",
+      "faces or clothes changing between shots",
+      "writing on walls, boards or screens",
+      "watermarks or logos",
+      "on-screen text or captions",
+      "plastic or waxy skin",
+      "cartoon or 3D-render look when realism is asked for",
+      "unmotivated camera movement",
+      "clothing, hair or weather changing without reason",
+      "faces or bodies morphing mid-shot"
+    ],
+    "characters": [
+      {
+        "id": "7b52b75e-380d-4ad8-826a-6327c4e54098",
+        "name": "Nadia Accountant",
+        "face_hair": "Chestnut hair in a low bun, round tortoiseshell glasses; attentive hazel eyes",
+        "outfit": "Plum blouse under a dark violet cardigan, small brass pen on a chain",
+        "props": "Green ledger book, a calculator with a paper roll, a jar of sharpened pencils.",
+        "never": "Do not depict Nadia without her glasses or with a laptop in place of the ledger."
+      },
+      {
+        "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+        "name": "Sarah Executive",
+        "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+        "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+        "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+        "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+      }
+    ],
+    "camera_move": "static",
+    "source": "model",
+    "location": "Accounting & Treasury, ground floor",
+    "shot_size": "single",
+    "in_frame": [
+      {
+        "id": "7b52b75e-380d-4ad8-826a-6327c4e54098",
+        "name": "Nadia Accountant",
+        "face_hair": "Chestnut hair in a low bun, round tortoiseshell glasses; attentive hazel eyes",
+        "outfit": "Plum blouse under a dark violet cardigan, small brass pen on a chain",
+        "props": "Green ledger book, a calculator with a paper roll, a jar of sharpened pencils.",
+        "never": "Do not depict Nadia without her glasses or with a laptop in place of the ledger."
+      }
+    ],
+    "series_look_version": 3,
+    "from_model": true,
+    "motion_prompt": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame. Nadia sits at her ledger desk facing the viewer, even, a pause before the number, the brass pen on its chain resting in her hand over the blank green ledger; Sarah's right shoulder and upper arm only lean in at the right frame edge, her face off camera, measured. The shot ends on the same medium close-up on Nadia at her desk facing the viewer, brass pen in hand over the blank green ledger, Sarah's shoulder and upper arm still at the right frame edge. Continuous, seamless shot. No subtitles, no on-screen text.",
+    "still_prompt": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Accounting & Treasury, ground floor. Medium close-up single at eye level on Nadia, facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Nadia: Chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, wearing plum blouse under a dark violet cardigan, small brass pen on a chain. Nadia sits at her ledger desk facing the viewer; Sarah's right shoulder and upper arm only lean in at the right frame edge, her face off camera, measured. Nadia even and attentive, pausing before the number; Sarah measured, pressing for confirmation. Behind them, quiet ground-floor office: wooden desk, warm brass lamps, bookshelves and plants soft behind; the blank green ledger book open before Nadia, calculator with paper roll, jar of sharpened pencils and two cups of tea cooling on the desk; background life stays soft and does not compete with the. As in the shot before: matches the series look word for word; Nadia's chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, plum blouse under a dark violet cardigan and small brass pen on a chain exactly as the bible; Sarah's right shoulder and upper arm at the right frame edge wear her full locked outfit word for word: crisp navy two-piece executive blazer, white collared shirt and sky-blue.",
+    "composition_issues": []
+  },
+  "review_event": 21758,
+  "review": {
+    "verdict": "TREATS",
+    "reason_ro": "Toate cele cinci constatări sunt tratate: promptul rescris numește acum poziția exactă a lui Sarah (umărul și brațul drept la marginea dreaptă, fața în afara cadrului) și ținuta completă a Nadiei din biblie, dar remarc o clauză de fundal trunchiată și ținuta lui Sarah terminată înainte de ultimul articol — defecte minore de formulat, nu motive de refuz.",
+    "findings": [
+      {
+        "id": 1,
+        "qc_text": "The clip zooms and loses Sarah",
+        "finding": "The clip zooms and loses Sarah",
+        "treated": true,
+        "by": "Nadia sits at her ledger desk facing the viewer; Sarah's right shoulder and upper arm only lean in at the right frame edge, her face off camera, measured.",
+        "why_not": "",
+        "severity": "serious",
+        "layer": "still",
+        "accepted": false,
+        "field": "",
+        "locked": false,
+        "lock": "",
+        "source": "film"
+      },
+      {
+        "id": 2,
+        "qc_text": "Scene 4: the picture is not what the scene asked for — The frame shows a woman with chestnut hair in a low bun and round tortoiseshell glasses holding a pen over a blank green ledger in a warm studio office, but she wears a sage green button-up shirt instead of the plum blouse and dark violet cardigan, and Sarah is not visible even as a shoulder at the",
+        "finding": "The picture is not what the scene asked for: sage green shirt instead of plum blouse and dark violet cardigan, Sarah not visible",
+        "treated": true,
+        "by": "As in the shot before: matches the series look word for word; Nadia's chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, plum blouse under a dark violet cardigan and small brass pen on a chain exactly as the bible; Sarah's right shoulder and upper arm at the right frame edge wear her full locked outfit word for word: crisp navy two-piece executive blazer, white collared shirt and sky-blue.",
+        "why_not": "",
+        "severity": "serious",
+        "layer": "still",
+        "accepted": false,
+        "field": "",
+        "locked": false,
+        "lock": "",
+        "source": "film"
+      },
+      {
+        "id": 3,
+        "qc_text": "Scene 4: Nadia Accountant is not the character the bible describes — Hair, glasses and the brass pen over a blank green ledger match, but she wears a sage green button-up shirt, not the plum blouse under a dark violet cardigan.",
+        "finding": "Nadia is not the character the bible describes: sage green button-up shirt, not plum blouse under dark violet cardigan",
+        "treated": true,
+        "by": "As in the shot before: matches the series look word for word; Nadia's chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, plum blouse under a dark violet cardigan and small brass pen on a chain exactly as the bible; Sarah's right shoulder and upper arm at the right frame edge wear her full locked outfit word for word: crisp navy two-piece executive blazer, white collared shirt and sky-blue.",
+        "why_not": "",
+        "severity": "serious",
+        "layer": "still",
+        "accepted": false,
+        "field": "",
+        "locked": false,
+        "lock": "",
+        "source": "film"
+      },
+      {
+        "id": 4,
+        "qc_text": "Scene 4: Sarah Executive is not the character the bible describes — Sarah is not in the frame at all; the scene asks for her shoulder and arm leaning in at the right edge, but no second person is visible.",
+        "finding": "Sarah is not in the frame at all; the scene asks for her shoulder and arm at the right edge",
+        "treated": true,
+        "by": "Nadia sits at her ledger desk facing the viewer; Sarah's right shoulder and upper arm only lean in at the right frame edge, her face off camera, measured.",
+        "why_not": "",
+        "severity": "serious",
+        "layer": "still",
+        "accepted": false,
+        "field": "",
+        "locked": false,
+        "lock": "",
+        "source": "film"
+      },
+      {
+        "id": 5,
+        "qc_text": "Scena 4: privit la 1080 px: nu arată ce cere planul («The clip shows Nadia correctly in the studio office with the blank green ledger, but the camera slowly zooms in from a medium shot to a close-up instead of holding the requested static medium close-up, and Sarah is not visible at the right edge in the later frames.»)",
+        "finding": "At 1080 px the clip zooms from medium shot to close-up and Sarah is not visible at the right edge in later frames",
+        "treated": true,
+        "by": "Nadia sits at her ledger desk facing the viewer; Sarah's right shoulder and upper arm only lean in at the right frame edge, her face off camera, measured.",
+        "why_not": "",
+        "severity": "serious",
+        "layer": "still",
+        "accepted": false,
+        "field": "",
+        "locked": false,
+        "lock": "",
+        "source": "film"
+      }
+    ],
+    "observations": [
+      "The rewritten background sentence now trails off mid-clause: 'background life stays soft and does not compete with the.' — the same truncation pattern that caused the wardrobe defect, now in the background field; it should end with a full word such as 'speakers'.",
+      "The rewritten continuity sentence ends 'white collared shirt and sky-blue.' — it drops 'tie' and Sarah's brunette professional bob, so her locked outfit is named incompletely; the fixed in_frame sentence still carries Nadia's full wardrobe, which covers finding 3, but Sarah's outfit clause should en",
+      "The motion prompt was also rewritten with Sarah's exact position and a static ending frame; the motion layer was not under review on this still-layer rewrite, but its new words are consistent with the still.",
+      "No readable text appears anywhere in the prompts; the only markings are the blank ledger and blank screens, which carry no writing."
+    ],
+    "run_id": "5b7ad35c-84b2-4e43-96e9-3fc55c2dcb21",
+    "cause": "The still prompt's continuity clause trailed off mid-sentence ('the green ledger is') leaving Nadia's outfit unfinished for the model to invent, and named Sarah only as 'a shoulder at the frame edge' with no side, no visible parts and no outfit, so the model dropped her from the frame.",
+    "lesson": "Write every clause of the prompt as a complete sentence that ends with its final word — the last garment, the last named object — so no description trails off mid-sentence for the model to finish.",
+    "lesson_recorded": true,
+    "lesson_scope": "serial",
+    "lesson_provisional": true,
+    "rounds": 1,
+    "refused": []
+  },
+  "reviewed_still_prompt": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Accounting & Treasury, ground floor. Medium close-up single at eye level on Nadia, facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Nadia: Chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, wearing plum blouse under a dark violet cardigan, small brass pen on a chain. Nadia sits at her ledger desk facing the viewer; Sarah's right shoulder and upper arm only lean in at the right frame edge, her face off camera, measured. Nadia even and attentive, pausing before the number; Sarah measured, pressing for confirmation. Behind them, quiet ground-floor office: wooden desk, warm brass lamps, bookshelves and plants soft behind; the blank green ledger book open before Nadia, calculator with paper roll, jar of sharpened pencils and two cups of tea cooling on the desk; background life stays soft and does not compete with the. As in the shot before: matches the series look word for word; Nadia's chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, plum blouse under a dark violet cardigan and small brass pen on a chain exactly as the bible; Sarah's right shoulder and upper arm at the right frame edge wear her full locked outfit word for word: crisp navy two-piece executive blazer, white collared shirt and sky-blue.",
+  "actual_jobs": [
+    {
+      "id": "df44a5ea-2fa2-4232-970c-559cb61df0bb",
+      "model": "Qwen-Image-2512",
+      "status": "FAILED",
+      "created_at": "2026-10-14T16:47:24.271837+00:00",
+      "error_code": "EXPIRED_UNDELIVERED",
+      "prompt": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Accounting & Treasury, ground floor. Medium close-up single at eye level on Nadia, facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Nadia: Chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, wearing plum blouse under a dark violet cardigan, small brass pen on a chain. Nadia sits at her ledger desk facing the viewer; Sarah's right shoulder and upper arm only lean in at the right frame edge, her face off camera, measured. Nadia even and attentive, pausing before the number; Sarah measured, pressing for confirmation. Behind them, quiet ground-floor office: wooden desk, warm brass lamps, bookshelves and plants soft behind; the blank green ledger book open before Nadia, calculator with paper roll, jar of sharpened pencils and two cups of tea cooling on the desk; background life stays soft and does not compete with the. As in the shot before: matches the series look word for word; Nadia's chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, plum blouse under a dark violet cardigan and small brass pen on a chain exactly as the bible; Sarah's right shoulder and upper arm at the right frame edge wear her full locked outfit word for word: crisp navy two-piece executive blazer, white collared shirt and sky-blue."
+    },
+    {
+      "id": "7fd5375d-9922-4a45-bc1f-abf5831535f8",
+      "model": "Qwen-Image-2512",
+      "status": "FAILED",
+      "created_at": "2026-10-14T16:47:24.282953+00:00",
+      "error_code": "EXPIRED_UNDELIVERED",
+      "prompt": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Accounting & Treasury, ground floor. Medium close-up single at eye level on Nadia, facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Nadia: Chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, wearing plum blouse under a dark violet cardigan, small brass pen on a chain. Nadia sits at her ledger desk facing the viewer; Sarah's right shoulder and upper arm only lean in at the right frame edge, her face off camera, measured. Nadia even and attentive, pausing before the number; Sarah measured, pressing for confirmation. Behind them, quiet ground-floor office: wooden desk, warm brass lamps, bookshelves and plants soft behind; the blank green ledger book open before Nadia, calculator with paper roll, jar of sharpened pencils and two cups of tea cooling on the desk; background life stays soft and does not compete with the. As in the shot before: matches the series look word for word; Nadia's chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, plum blouse under a dark violet cardigan and small brass pen on a chain exactly as the bible; Sarah's right shoulder and upper arm at the right frame edge wear her full locked outfit word for word: crisp navy two-piece executive blazer, white collared shirt and sky-blue."
+    }
+  ],
+  "live_cost_value": "0 recorded, not reconciled invoice",
+  "owner_gpu_off_event": 22320,
+  "cancelled_redo_reported_bought_event": 22331,
+  "production_writes_by_codex": false,
+  "model_calls_by_codex": 0,
+  "request_identity_verification": "Both actual request prompt strings match reviewed_still_prompt exactly. SHA-256 is reproducible from the saved UTF-8 strings."
+}

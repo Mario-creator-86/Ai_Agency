@@ -12,7 +12,7 @@ Final local production assets (unmodified copies of built-in image_gen.imagegen 
   Runtime samples this plate through traced chair silhouettes ONLY; the original scene
   remains the base. This edit is not a wholesale replacement of the building.
 
-Source output IDs, in C:/Users/mario/.codex/generated_images/00000000-0000-4000-8000-000000000002/:
+Source output IDs, in C:/Users/mario/.codex/generated_images/01a117b7-74db-7ad3-a99b-9e6a0194302e/:
 
 - Final A: exec-8ea5b066-ad7d-43fc-858c-dc53820a0e7b.png
 - Final B: exec-9f80bf82-d35a-4be5-b524-98a25ab6c63d.png

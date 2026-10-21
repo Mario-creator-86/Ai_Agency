@@ -207,12 +207,17 @@ def test_a_film_that_is_gone_or_retired_is_not_continued(engine, settings, monke
 
 
 def _a_paid_shot(engine, tmp_path) -> tuple[str, str]:
+    from hashlib import sha256
+
+    from app.media.assembler import motion_fields, scene_clip_context, take_hash
     from app.media.models import SceneTake
     from test_film_costing import a_film
 
     storyboard_id = a_film(engine, tmp_path, scenes=2)
     clip = tmp_path / "hero.mp4"
     clip.write_bytes(b"a clip")
+    scene, still_sha, _ = scene_clip_context(engine, storyboard_id, 1)
+    identity = take_hash(motion_fields(scene, still_sha, from_prompt=False), "seedance2_5")
     take_id = str(uuid4())
     with Session(engine) as session, session.begin():
         session.add(
@@ -221,12 +226,12 @@ def _a_paid_shot(engine, tmp_path) -> tuple[str, str]:
                 storyboard_id=storyboard_id,
                 scene_number=1,
                 kind="test_shot",
-                prompt_hash="p" * 64,
+                prompt_hash=identity,
                 model_id="seedance2_5",
                 resolution="1080:1920",
                 status="PAID",
                 path=str(clip),
-                sha256="s" * 64,
+                sha256=sha256(clip.read_bytes()).hexdigest(),
                 created_at="2026-10-02T10:00:00+00:00",
                 updated_at="2026-10-02T10:00:00+00:00",
             )
@@ -464,3 +469,126 @@ def test_a_studio_started_beside_a_running_worker_runs_no_worker_of_its_own(
     again = acquire_worker_lock(path)
     assert again is not None
     again.release()
+
+
+def test_a_task_a_dead_worker_left_claimed_is_queued_again_at_the_next_start(engine):
+    """2026-10-15 20:08Z: two FILM_CONTINUE tasks of one film, claimed by processes the Owner
+    had stopped by hand, stood CLAIMED for an hour; the day-goal pass read «a film at work»
+    and queued nothing. One worker per database: at its start every claimed task is an
+    orphan and goes back to the queue, attempts untouched."""
+    from app.workflows.services import new_lease_token, release_orphaned_claims
+    from sqlalchemy.orm import Session
+
+    task_id = enqueue_task(
+        engine, FILM_CONTINUE_TASK, {"storyboard_id": "x"}, priority=5, max_attempts=1
+    )["id"]
+    with Session(engine) as session, session.begin():
+        task = session.get(TaskQueueItem, task_id)
+        task.status = "CLAIMED"
+        task.attempts = 1
+        task.lease_token = new_lease_token("worker_main")
+        task.lease_expires_at = "2099-01-01T00:00:00+00:00"
+    assert release_orphaned_claims(engine) == 1
+    with Session(engine) as session:
+        task = session.get(TaskQueueItem, task_id)
+        assert task.status == "QUEUED" and task.lease_token is None and task.attempts == 1
+    assert release_orphaned_claims(engine) == 0  # nothing claimed: nothing to release
+
+
+def _day_begun(engine, task_id: str) -> str:
+    """The day's row and start event, written as `execute_daily_run` writes them after its
+    free preflight (`runbook.services._begin_run`): what a process killed in a stage leaves."""
+    from datetime import UTC, datetime
+
+    from app.runbook.services import _begin_run, _stage
+
+    run_id = str(uuid4())
+    _begin_run(
+        engine,
+        run_id=run_id,
+        date_iso=datetime.now(UTC).date().isoformat(),
+        preflight={"status": "READY"},
+        stages=[_stage("preflight", "COMPLETED", "pregătit")],
+        started_at=datetime.now(UTC).isoformat(),
+        payload={},
+        correlation_id=task_id,
+    )
+    return run_id
+
+
+def _claimed_by_a_dead_worker(engine) -> str:
+    """The Owner's GO, CLAIMED by a worker that is gone, its lease far from lapsing; under his
+    stop, so nothing claims it at the next start and what is seen is what the start did."""
+    from app.workflows.services import new_lease_token
+    from app.workflows.worker import DAILY_RUN
+
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = True
+    task_id = enqueue_task(engine, DAILY_RUN, {"manual": True}, priority=10, max_attempts=1)["id"]
+    with Session(engine) as session, session.begin():
+        task = session.get(TaskQueueItem, task_id)
+        task.status = "CLAIMED"
+        task.attempts = 1
+        task.lease_token = new_lease_token("worker_main")
+        task.lease_expires_at = "2099-01-01T00:00:00+00:00"
+    return task_id
+
+
+def _day_letters(engine) -> list[Any]:
+    from app.agents.models import AgentMessage
+    from app.runbook.services import DAY_INTERRUPTED_LETTER
+
+    with Session(engine) as session:
+        return [
+            row
+            for row in session.scalars(select(AgentMessage))
+            if isinstance(row.body_json, dict)
+            and row.body_json.get("kind") == DAY_INTERRUPTED_LETTER
+        ]
+
+
+def test_a_day_a_dead_worker_left_claimed_is_closed_at_the_next_start_not_queued(settings, engine):
+    """Review 2026-10-16: the start gave every claimed task back to the queue, a day too, so
+    the Owner's GO left by a killed process ran again from its start — a second subject, a
+    second film. The start now closes it INTERRUPTED, even one written after this module was
+    imported (only the start's own release counts every leased task an orphan), for the
+    watchdog to resume its run from the stage it stopped in. Under his stop nothing is
+    claimed, so what is seen is what the start did."""
+    from app import main
+    from fastapi.testclient import TestClient
+
+    task_id = _claimed_by_a_dead_worker(engine)
+    run_id = _day_begun(engine, task_id)
+
+    app = main.create_app(settings.model_copy(update={"worker_enabled": True}))
+    with TestClient(app):
+        assert app.app.state.worker_running is True
+    with Session(engine) as session:
+        task = session.get(TaskQueueItem, task_id)
+        assert task.status == "DEAD_LETTER", task.status
+        assert str(task.error_detail).startswith("INTERRUPTED") and task.attempts == 1
+        assert session.get(DailyRun, run_id).status == "INTERRUPTED"
+    assert len(_day_letters(engine)) == 1
+
+
+def test_a_day_a_dead_worker_left_claimed_before_its_run_began_is_queued_again_at_the_start(
+    settings, engine
+):
+    """Review 2026-10-16: closed like a day whose run began, the Owner's GO killed in its free
+    preflight was dead-lettered with a letter saying «o reiau singur», and with no run to
+    resume nothing ever ran it. It had bought nothing: the start gives it back to the queue,
+    attempts untouched, and tells the Owner nothing."""
+    from app import main
+    from fastapi.testclient import TestClient
+
+    task_id = _claimed_by_a_dead_worker(engine)
+
+    app = main.create_app(settings.model_copy(update={"worker_enabled": True}))
+    with TestClient(app):
+        assert app.app.state.worker_running is True
+    with Session(engine) as session:
+        task = session.get(TaskQueueItem, task_id)
+        assert task.status == "QUEUED", (task.status, task.error_detail)
+        assert task.lease_token is None and task.attempts == 1 and task.error_detail is None
+        assert session.scalars(select(DailyRun)).first() is None
+    assert _day_letters(engine) == []

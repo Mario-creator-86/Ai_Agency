@@ -48,13 +48,13 @@ three seated-v3 PNGs, prompts and register_staff_frames.py. Backup before calibr
 data/pixel-actors-2026-10-08/before-seat-alignment/. Restore only task-owned differences
 and rebuild the combined sources; preserve concurrent changes and old weather/navigation.
 
-New original outputs under C:/Users/mario/.codex/generated_images/00000000-0000-4000-8000-000000000002/:
+New original outputs under C:/Users/mario/.codex/generated_images/01a117b7-74db-7ad3-a99b-9e6a0194302e/:
 
 | Current PNG | Built-in imagegen output | SHA-256 |
 |---|---|---|
-| staff-a-seated-v3.png | exec-00000000-0000-4000-8000-0000000000d9.png | ad2c41a290db8cf4b16f6c8ac0ca81602194b4ed0121215437c9619bcd868c88 |
-| staff-b-seated-v3.png | exec-00000000-0000-4000-8000-00000000012d.png | 6959d06530f71537b154b9af7a38faafa6c6975510a0f47c9dceb0d8a62c8099 |
-| staff-idle-seated-v3.png | exec-00000000-0000-4000-8000-0000000000ec.png | 2caa787bca862a179ab5add0f5dacf8acbb1a48da070ec8dc736ed784f9b575b |
+| staff-a-seated-v3.png | exec-64e06ca7-bfd5-4ad1-8800-77c712f1cc4a.png | ad2c41a290db8cf4b16f6c8ac0ca81602194b4ed0121215437c9619bcd868c88 |
+| staff-b-seated-v3.png | exec-92d6547c-ec04-4eff-809f-7b3851e2b5f5.png | 6959d06530f71537b154b9af7a38faafa6c6975510a0f47c9dceb0d8a62c8099 |
+| staff-idle-seated-v3.png | exec-70600753-698f-472a-b584-ec76052a85a3.png | 2caa787bca862a179ab5add0f5dacf8acbb1a48da070ec8dc736ed784f9b575b |
 
 All PNGs remain unchanged RGBA originals, 1254×1254. The correction uses the project's own
 staff sheets and chair reference board, not game artwork. Generation service terms apply;
@@ -150,14 +150,14 @@ Exact prompts are in art-source/pixel/actors-v2; hashes/registration are in pixe
 
 | Project PNG | Original built-in imagegen output ID | SHA-256 |
 |---|---|---|
-| town-walk-v2.png | exec-00000000-0000-4000-8000-0000000000c9.png | e96edca9fd853de35aac21ff157e73ee52b7368e8481aa602d8f4d0daca6313b |
-| town-cycle-pets-v2.png | exec-00000000-0000-4000-8000-0000000001a5.png | 95488858189a92107181bf2a24f89075e511d90340d5749a98afce28b366f60a |
-| staff-a-v2.png | exec-00000000-0000-4000-8000-0000000001b8.png | bf53fb6bcfc6cfd00aac19e5781e677f2e73de2478ae7dbb8bcead182b225fca |
-| staff-b-v2.png | exec-00000000-0000-4000-8000-0000000001d9.png | ed7456047cb224ea3dc67fdffa47e9ce5647c64d6bdbda736e9f94279520d65a |
-| staff-idle-v2.png | exec-00000000-0000-4000-8000-00000000000f.png | c94ec9bb5e5f87e8c449660c3524c9a3e62a0f96d7e58f442fcc4d5c739370c2 |
+| town-walk-v2.png | exec-5f99d674-5ef8-4b68-a9a9-49f11355b4ef.png | e96edca9fd853de35aac21ff157e73ee52b7368e8481aa602d8f4d0daca6313b |
+| town-cycle-pets-v2.png | exec-d1d94fb4-79a4-411f-97ec-3b5a366ab6fb.png | 95488858189a92107181bf2a24f89075e511d90340d5749a98afce28b366f60a |
+| staff-a-v2.png | exec-dac8d351-304c-4625-ba70-4ccda116d2c8.png | bf53fb6bcfc6cfd00aac19e5781e677f2e73de2478ae7dbb8bcead182b225fca |
+| staff-b-v2.png | exec-ea2975c9-e068-4d6e-8e76-8a45a4433c3e.png | ed7456047cb224ea3dc67fdffa47e9ce5647c64d6bdbda736e9f94279520d65a |
+| staff-idle-v2.png | exec-0b1f9cef-8aaa-470e-881f-48c985a310dd.png | c94ec9bb5e5f87e8c449660c3524c9a3e62a0f96d7e58f442fcc4d5c739370c2 |
 
 Original outputs are under
-C:/Users/mario/.codex/generated_images/00000000-0000-4000-8000-000000000002/.
+C:/Users/mario/.codex/generated_images/01a117b7-74db-7ad3-a99b-9e6a0194302e/.
 Each PNG is an unchanged 1254×1254 RGBA output. Tiny near-transparent fringe pixels retain
 the original alpha and are effectively transparent in Canvas; no raster cleanup was applied.
 

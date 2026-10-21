@@ -1,6 +1,17 @@
-"""Offline regression tests for test prompt compiler one moment.
+"""A still prompt is one moment, and its look block is whole sentences.
 
-Providers are faked; all data is synthetic."""
+Film babcf272 «The Particle That Shouldn't Exist (But Does)» (2026-10-09): scene 5's still
+came back as three stacked panels (a tunnel with a glowing atom, a flat black band, an empty
+tunnel) and its clip animated the triptych. The compiled still prompt described a sequence:
+"... holding together as atoms, then the empty accelerator tunnel from scene 1. First the
+near-black void of scenes 2 and 3, then the identical tunnel from scene 1", and its look
+block opened with fragments of the bible ("two interconnected spaces: the, The setting is
+entirely, None, The environment is a controlled", "Muted natural palette of A core palette
+of ..."). The prompt lint, the still gate, the vision check and the clip QC all passed it.
+
+These tests replay that scene's package and a bible shaped like that film's through the
+compiler. Nothing here calls a provider.
+"""
 
 from __future__ import annotations
 
@@ -224,7 +235,7 @@ def test_the_look_block_of_a_prose_bible_has_no_fragment(bible: dict[str, Any]) 
     assert "overcast" not in block.lower()
     # Every scene of the film opens with the look: the same rendering, palette and lens. A
     # scene that names its own place or light leaves those slots to its own words
-    # (2026-10-11, 00000160), so its block is the film's with those sentences unsaid.
+    # (2026-10-11, aa170155), so its block is the film's with those sentences unsaid.
     rendering = block.split(". ")[0] + "."
     for scene in (SCENE_3, SCENE_5):
         compiled = compile_prompts(scene, bible, {"model_id": "seedance2_5"})
@@ -406,3 +417,20 @@ def test_a_pointer_at_another_scene_leaves_no_broken_words() -> None:
     assert _clauses_of(own) == [own]
     codes = {f.code for f in lint_still_prompt(f"{own}.", scene=1)}
     assert "SCENE_REFERENCE" not in codes, codes
+
+
+def test_a_hyphenated_compound_ending_in_a_particle_is_a_whole_word():
+    """2026-10-15 19:03Z, 7c26a7ce scene 3: «facing the viewer straight-on» was read as a
+    clause breaking off at «on» (REQUIRED_CONTENT_LOST), and the Editor was told to rewrite
+    the whole sentence three rounds running though his words were whole."""
+    from app.media.prompt_lint import dangling
+
+    assert not dangling("The constants card rests on the bench, facing the viewer straight-on")
+    assert not dangling("the collision seen head-on")
+    assert not dangling("a lamp switched-on")
+    assert dangling("the card resting on")
+    assert dangling("the card seen straight on")
+    # 19:43Z, the same scene: «stay exactly as they are» is a whole clause; «the lamps are» is not.
+    assert not dangling("the bench and the equipment behind stay exactly as they are")
+    assert not dangling("the room left as it is")
+    assert dangling("the lamps are")

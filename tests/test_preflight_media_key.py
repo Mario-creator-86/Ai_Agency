@@ -1,6 +1,11 @@
-"""Offline regression tests for test preflight media key.
+"""The preflight's image and voice lines when a chosen, verified connection gives no generator.
 
-Providers are faked; all data is synthetic."""
+W31, the release judge, on a copy of the Owner's database: the copy keeps his connections but
+not their keys, so the connection is chosen and verified (readiness READY, whose sentence is
+empty) while no adapter can be built. The line then read « Până atunci randările folosesc
+substitute, …»: a sentence with its subject missing, starting with a space. The same happens in
+his studio whenever a stored key cannot be used. The line now says what is wrong.
+"""
 
 from __future__ import annotations
 

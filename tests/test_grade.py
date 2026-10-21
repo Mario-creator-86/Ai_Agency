@@ -167,7 +167,10 @@ def test_a_long_spoken_scene_gets_a_second_framing_at_a_caption_boundary():
         {**_scene(4, 6.0), "prompt_json": {"second_framing": {"centre_x": 0.3, "centre_y": 0.6}}},
     ]
     cues = assembler.caption_cues(scenes)
-    framings = plan_second_framings(scenes, cues, assembler.film_finish())
+    # The punch-in is off since 2026-10-16 (the montage cuts); the planner still knows it.
+    finish = assembler.film_finish()
+    finish = {**finish, "second_framing": {**finish["second_framing"], "enabled": True}}
+    framings = plan_second_framings(scenes, cues, finish)
     assert framings[1] is None  # under 3.2 s of words
     assert framings[2] is None  # a card is never reframed
     first, last = framings[0], framings[3]
@@ -417,7 +420,12 @@ def _yavg(film: Path, at: float) -> float:
 @pytest.mark.skipif(
     FFMPEG is None or not has_filter(FFMPEG, "subtitles"), reason="no libass in the local ffmpeg"
 )
-def test_a_render_records_its_grade_framings_cover_and_closing_card(engine, tmp_path):
+def test_a_render_records_its_grade_framings_cover_and_closing_card(engine, tmp_path, monkeypatch):
+    # The punch-in is off since 2026-10-16 (the montage cuts); the render still records it
+    # when a finish asks for it.
+    finish = assembler.film_finish()
+    finish = {**finish, "second_framing": {**finish["second_framing"], "enabled": True}}
+    monkeypatch.setattr(assembler, "film_finish", lambda: finish)
     board = _storyboard(engine)
     images = TintedImages(tmp_path)
     render = assembler.assemble_video_job(

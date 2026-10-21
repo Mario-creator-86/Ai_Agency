@@ -1,0 +1,60 @@
+{
+  "base": "/sounds/ui/",
+  "max_voices": 2,
+  "minimum_gap_ms": 1500,
+  "coalesce_ms": 100,
+  "keyboard_gap_ms": 900,
+  "max_event_age_ms": 15000,
+  "sounds": {
+    "notification": {
+      "files": [
+        "select_001.ogg"
+      ],
+      "gain": 0.1,
+      "cooldown_ms": 12000,
+      "priority": 1
+    },
+    "task": {
+      "files": [
+        "confirmation_001.ogg"
+      ],
+      "gain": 0.09,
+      "cooldown_ms": 15000,
+      "priority": 2
+    },
+    "project": {
+      "files": [
+        "confirmation_004.ogg"
+      ],
+      "gain": 0.13,
+      "cooldown_ms": 30000,
+      "priority": 3
+    },
+    "warning": {
+      "files": [
+        "question_001.ogg"
+      ],
+      "gain": 0.1,
+      "cooldown_ms": 15000,
+      "priority": 4
+    },
+    "error": {
+      "files": [
+        "error_004.ogg"
+      ],
+      "gain": 0.09,
+      "cooldown_ms": 15000,
+      "priority": 5
+    },
+    "key": {
+      "files": [
+        "keypress-001.wav",
+        "keypress-007.wav",
+        "keypress-019.wav"
+      ],
+      "gain": 0.045,
+      "cooldown_ms": 900,
+      "priority": 0
+    }
+  }
+}

@@ -1,6 +1,40 @@
-"""Licence release: existing local-first media checks.
+"""Uploads held private for their licence alone, made public once it is confirmed (2026-10-10).
 
-Private production traces omitted; implementation unchanged."""
+Film babcf272 passed quality control and the studio uploaded it to «Main Channel A - Factual
+Shorts» private (YouTube IxQIzIulLBU), although the Owner's policy for the channel is public:
+every narration came from ElevenLabs and the connection had no commercial-use evidence, so the
+film's licence was NEEDS_REVIEW, which the publishing gate's rights check (Gate 7) lets go up
+private and nothing more (`runbook.stages._publish_one`). The Owner upgrades his plan and the
+studio records the licence itself (`integrations.plan_licence`); nothing made the film public
+afterwards. The watchdog does it now (`workflows.passes.licence_release`):
+
+- Which uploads. One `_publish_one` made private for its licence carries `HELD_EVENT`. One made
+  before that marker existed is known by what its walk or its day said about it: the reason of
+  the film's `runbook.film_continued` that uploaded it («încărcat privat: licența filmului nu
+  este confirmată»), or the publish stage's ``private_until_licensed`` on that publication in
+  `DailyRun.stages_json`. An upload private because the channel's policy or the Owner wanted it
+  so carries none of the three and is never touched.
+- The licence, read again. Quality control froze NEEDS_REVIEW on the asset and in its report
+  (``rights_qc``), and Gate 7 reads the asset's status, so asking the gate again would refuse
+  for ever. The render's ledger (``production_json["licences"]``) names each component and the
+  connection its evidence was read from; each one without evidence is read again (its take, or
+  the Owner's statement on the connection, `media.factory.vendor_licence`). When every one now
+  carries it the film is LICENSED (`media.assembler.film_licences`), written on the asset and
+  the ledger with `LICENCE_CONFIRMED_EVENT`. Gate 7 is unchanged: a film is seen only LICENSED.
+- Under the channel's policy as it is now. The Owner's mode lets the studio publish
+  (`may_act`: no stop, no safe mode, AUTONOMOUS_CEO), the channel's policy resolves to a public
+  release (public permitted on the channel, the studio in PRODUCTION), and the publishing gate
+  passes the film public under the channel's current policy version, its checks of the file on
+  disk aside (a visibility change uploads nothing; the bytes were checked when they went up).
+  A delay the policy sets is a premiere for a new upload; a held film has waited longer.
+- The change: videos.update on the status part (`YouTubeProvider.update_visibility`). The record
+  says public and which policy version authorised it, `RELEASED_EVENT` is written once, and the
+  Owner gets a short note. A call YouTube did not answer is `RELEASE_FAILED_EVENT` and is asked
+  again on a later pass, 15 minutes later, then twice as long each time up to a day. YouTube
+  saying the video is not there settles it as deleted (as `check_processing` does); YouTube
+  keeping it private (an unaudited Google Cloud project) is recorded as its answer, with the
+  letter the upload path writes for that case.
+"""
 
 from __future__ import annotations
 

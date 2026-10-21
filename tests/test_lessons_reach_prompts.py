@@ -257,11 +257,11 @@ def test_a_lesson_inside_a_longer_one_brings_the_longer_back(engine):
 
 def test_a_lesson_that_is_empty_a_report_or_about_one_film_is_refused(engine):
     ids = studio(engine)
-    long = "word " * 79 + "wordy"  # 400 characters
+    long = "word " * 799 + "wordy"  # 4000 characters
     with Session(engine) as session, session.begin():
         assert record_prompt_lesson(session, "") is False
         assert record_prompt_lesson(session, "   \n ") is False
-        assert record_prompt_lesson(session, long + "!") is False, "401 characters: a report"
+        assert record_prompt_lesson(session, long + "!") is False, "4001 characters: a report"
         assert record_prompt_lesson(session, f"Storyboard {ids['board']}: {LEDGER}") is False
         head = ids["board"][:8]
         assert record_prompt_lesson(session, f"In {head} the ledger had words.") is False
@@ -883,10 +883,8 @@ def test_a_lesson_names_only_the_film_it_was_learned_on(engine):
 
 
 @pytest.mark.usefixtures("staffed")
-def test_the_shot_writer_records_a_scene_whose_ending_cannot_be_said(engine, monkeypatch):
-    """Review of 68fa0b4: an ending left out because the action is too long to say beside it
-    is recorded (``ending_dropped``), so the scene's rewrite asks the editor to shorten the
-    action (free) before a clip is bought on it."""
+def test_the_shot_writer_keeps_an_ending_that_fits_the_native_cap(engine, monkeypatch):
+    """The 95-word target must not remove a visible endpoint that fits the provider cap."""
     board_id = serial_board(engine, monkeypatch)
     count = len(scenes_of(engine, board_id))
     action = (
@@ -902,9 +900,16 @@ def test_the_shot_writer_records_a_scene_whose_ending_cannot_be_said(engine, mon
 
     result = write_shot_prompts(engine, models(), board_id, str(uuid4()))
 
-    assert result["ending_dropped"] == [1]
+    # The editorial word target no longer removes an endpoint that fits the native cap.
+    assert result["ending_dropped"] == []
     with Session(engine) as session:
         written = session.scalars(
             select(DomainEvent).where(DomainEvent.event_type == "media.shot_prompts_written")
         ).all()
-    assert written[-1].payload["ending_dropped"] == [1]
+    assert written[-1].payload["ending_dropped"] == []
+    first = scenes_of(engine, board_id)[0].prompt_json
+    from app.media.prompt_agent import _ending_sentence
+    from app.media.prompt_lint import DEFAULT_PROMPT_MAX_UTF16, utf16_units
+
+    assert _ending_sentence(first["ending_frame"]) in first["motion_prompt"]
+    assert utf16_units(first["motion_prompt"]) <= DEFAULT_PROMPT_MAX_UTF16

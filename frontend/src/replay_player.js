@@ -293,8 +293,11 @@ export class DayReplayPlayer {
    */
   liveArrived(event) {
     if (!this.active) return;
-    this.liveEvents.push(event);
     const d = describeEvent(event, this.deps.names());
+    // The studio's own bookkeeping (ledger.js isBookkeeping) is not live news: it neither prompts
+    // nor ends the replay (interruptsReplay already keeps it out; this is the prompt's own guard).
+    if (d.bookkeeping) return;
+    this.liveEvents.push(event);
     const what = [d.who, d.label].filter(Boolean).join(' · ') + (d.text ? ` · ${d.text}` : '');
     this.el.liveWhat.textContent = what || 'Studioul lucrează acum.';
     if (!this.el.live.hidden) return;

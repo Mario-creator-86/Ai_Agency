@@ -388,6 +388,7 @@ def sound_plan(
     seed: str,
     previous: Mapping[str, Any] | None = None,
     refusal: Mapping[str, Any] | None = None,
+    storyboard_id: str | None = None,
 ) -> PlanOutcome:
     """The film's sound plan: the Voice Artist's when a registry and an active Voice Artist
     exist and her answer validates (asked once more with the refusal when it does not,
@@ -395,8 +396,10 @@ def sound_plan(
 
     ``film`` is {title, core_message}; ``scenes`` `scene_brief` rows. ``previous`` and
     ``refusal`` make it a re-plan after quality control refused the mix (`replan`): the schema
-    then also demands a change and forbids a new lift. Never raises: a fault anywhere here
-    leaves the film with the deterministic plan and the fault's words."""
+    then also demands a change and forbids a new lift. ``storyboard_id`` is the film the plan
+    is for: the call's subject, so her earlier plans for this film are told to her (the
+    task's memory tied to the storyboard, `agents.identity`). Never raises: a fault anywhere
+    here leaves the film with the deterministic plan and the fault's words."""
     fallback_bed = str(previous.get("bed")) if previous and previous.get("bed") else None
     fallback = deterministic_plan(
         library, mood_text=mood_text, seed=seed, scenes=scenes, bed_id=fallback_bed
@@ -448,6 +451,7 @@ def sound_plan(
             "",
             summary=summary,
             max_tokens=MAX_TOKENS,
+            subject={"storyboard_id": storyboard_id} if storyboard_id else None,
         )
     except Exception as exc:  # noqa: BLE001 - a fault never costs the film its mix
         logger.warning("sound_plan_not_asked", extra={"error": type(exc).__name__})

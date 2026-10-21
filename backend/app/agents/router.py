@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -45,31 +45,31 @@ from app.security import require_owner
 
 class ResolveMessageCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    resolution: str = Field(min_length=1, max_length=2000)
+    resolution: str = Field(min_length=1, max_length=20000)
 
 
 class ReplyCommand(BaseModel):
     """The Owner writes back into a thread; the letter goes to whoever wrote last."""
 
     model_config = ConfigDict(extra="forbid")
-    text: str = Field(min_length=1, max_length=8000)
+    text: str = Field(min_length=1, max_length=80000)
     to_agent_id: str | None = Field(default=None, min_length=36, max_length=36)
 
 
 class ForwardCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     to_agent_id: str = Field(min_length=36, max_length=36)
-    note: str = Field(min_length=1, max_length=8000)
+    note: str = Field(min_length=1, max_length=80000)
 
 
 class ChatCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    message: str = Field(min_length=1, max_length=4000)
+    message: str = Field(min_length=1, max_length=40000)
 
 
 class InvalidateMemoryCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    reason: str = Field(min_length=1, max_length=600)
+    reason: str = Field(min_length=1, max_length=6000)
 
 
 #: What a route answers when the database refused a write (PAGE-11: Romanian, never
@@ -218,9 +218,11 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
     def get_agent_identity(
         request: Request,
         agent_id: Annotated[str, Path(min_length=36, max_length=36)],
+        task_type: Annotated[str, Query(max_length=100)] = "",
     ) -> dict:
-        """The identity the model is given: contract, character, memory, the prompt itself."""
-        identity = identity_view(request.app.state.engine, agent_id)
+        """The identity the model is given for a task (``task_type``; none named: who the
+        employee is and the Owner's policies): contract, character, memory, the prompt itself."""
+        identity = identity_view(request.app.state.engine, agent_id, task_type)
         if identity is None:
             raise HTTPException(status_code=404, detail="Angajatul nu există.")
         identity["messages"] = list_messages(request.app.state.engine, agent_id=agent_id, limit=20)

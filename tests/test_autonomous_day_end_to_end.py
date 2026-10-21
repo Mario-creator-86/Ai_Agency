@@ -126,6 +126,23 @@ class StudioModel:
         # Asked in the old order, this stand-in answered the shot plan with a script, and the
         # film went on from template prompts in silence - which is now a lost plan, waiting as
         # NEEDS_SHOT_PLAN (SHOT_PLAN_PARSE, 2026-09-27).
+        if "about to PAY the generation model" in prompt:
+            # The Director's audit of the words before the first purchase (2026-10-15): this
+            # world's prompts are right from the start, so she approves every scene shown.
+            import re as _re
+
+            data_at = prompt.find("<untrusted_source_evidence")
+            indices = sorted(
+                {int(n) for n in _re.findall(r'"scene_index": (\d+)', prompt[data_at:])}
+            )
+            return json.dumps(
+                {
+                    "scenes": [
+                        {"scene_index": index, "approved": True, "reason": "says everything"}
+                        for index in indices
+                    ]
+                }
+            )
         if '"shots": [' in prompt:
             return self._shots(prompt)
         if '"punchline": {' in prompt:
@@ -302,32 +319,10 @@ class StudioModel:
         )
 
     def _shots(self, prompt: str) -> str:
-        indices = sorted({int(n) for n in re.findall(r'"scene_index":\s*(\d+)', prompt)}) or [1]
-        return json.dumps(
-            {
-                "shots": [
-                    {
-                        "scene_index": index,
-                        "story_purpose": "EVIDENCE",
-                        "subject": "the observatory dome against the night",
-                        "action": "the dome turns slowly, its shutter opening on the sky",
-                        "environment": "a cold hillside under clear stars",
-                        "camera": "wide, low angle, static",
-                        "lighting": "moonlight from the left, one warm lamp behind",
-                        "composition": "vertical, the dome low in frame",
-                        "motion": "slow rotation, nothing else moves",
-                        "emotion": "quiet anticipation",
-                        "background": "stars, unmoving",
-                        "continuity": "the same sky as the previous shot",
-                        "ending_frame": "the open shutter, centred",
-                        "audio_intent": "wind, distant",
-                        "transition": "cut",
-                        "avoid": ["text of any kind"],
-                    }
-                    for index in indices
-                ]
-            }
-        )
+        # The very same Kael final-text fixture as the paid-mode day tests.
+        from e2e_shots import make_shot_plan
+
+        return make_shot_plan(prompt)
 
     def _episode(self, prompt: str) -> str:
         # Written as the brief (v3) asks, from its data alone: the names from ALLOWED_NAMES,
@@ -696,6 +691,7 @@ VENDOR_FAKES = (
     ("app.media.factory", "tts_provider"),
     ("app.media.factory", "render_plan"),
     ("app.media.factory", "motion_for_scene"),
+    ("app.media.factory", "reference_image_adapter"),
     ("app.runbook.stages", "selected_youtube"),
     ("app.runbook.stages", "analytics_provider_for_channel"),
     ("app.economy.credits", "credit_balances"),
@@ -735,6 +731,9 @@ def install_vendor_fakes(monkeypatch, *, publisher: Any, motion: FakeMotionChoos
             "plan": {},
         },
         ("app.media.factory", "motion_for_scene"): motion,
+        # Never construct a second RunPod image adapter in an offline day.
+        # The original image adapter is already a fully local test double.
+        ("app.media.factory", "reference_image_adapter"): lambda _engine, _board, adapter: adapter,
         ("app.runbook.stages", "selected_youtube"): lambda *a, **k: publisher,
         ("app.runbook.stages", "analytics_provider_for_channel"): analytics,
         # What the vendors say the account holds: nobody is asked, so nothing is measured,
@@ -1436,8 +1435,9 @@ def test_one_click_films_one_episode_and_writes_the_next(engine, settings, studi
     assert again["serial_next"]["artefacts"]["written"] == 0, again["serial_next"]["reason"]
     assert _episode_prompts(studio) == written_on_d
 
-    # Day D+1: the storyboard built on D is filmed; nothing is readied or written again, and
-    # D+1 itself (quiet: nothing is timestamped on it) gets none.
+    # Day D+1: the storyboard built on D is filmed; nothing of D is readied or written again.
+    # D+1 itself (quiet: nothing is timestamped on it) is asked for its script since
+    # 2026-10-16 (the story is the showrunner's, the day its backdrop).
     monkeypatch.setattr("app.story.services.datetime", _Tomorrow)
     assert business_date(TZ) != day_d
     next_day = click()
@@ -1447,8 +1447,8 @@ def test_one_click_films_one_episode_and_writes_the_next(engine, settings, studi
     assert next_day["serial_queue"]["artefacts"]["storyboard_id"] is None
     assert serial[day_d]["storyboard_id"] == board_d
     assert serial[day_d]["filmed"], next_day["media"]["reason"]
-    assert _episode_prompts(studio) == written_on_d
-    # D+1's own script is not written from a day with nothing on it, and the stage says so.
+    assert _episode_prompts(studio) > written_on_d  # D+1's script was asked for
+    # D+1, quiet, has its own script asked for since 2026-10-16 (the story is the
+    # showrunner's, the day its backdrop); the stage says what became of it.
     assert next_day["serial_next"]["status"] == "COMPLETED", next_day["serial_next"]
-    assert next_day["serial_next"]["artefacts"]["written"] == 0
     assert next_day["serial_next"]["reason"].strip()

@@ -555,7 +555,9 @@ def test_a_still_of_stripes_or_of_nothing_is_caught_and_a_real_picture_is_not(tm
     blank = make("blank.png", "color=c=white:s=540x960")
     noise = make("scene.png", "life=s=540x960:ratio=0.5:random_seed=7,format=rgb24")
 
-    assert "stripes" in (still_is_degenerate(ffmpeg, stripes) or "")
+    # A striped image alone no longer triggers an automatic paid reroll;
+    # the vision model judges whether stripes are part of the intended scene.
+    assert still_is_degenerate(ffmpeg, stripes) is None
     assert "blank" in (still_is_degenerate(ffmpeg, blank) or "")
     assert still_is_degenerate(ffmpeg, noise) is None
     assert still_is_degenerate(None, noise) is None  # unmeasurable is not a refusal

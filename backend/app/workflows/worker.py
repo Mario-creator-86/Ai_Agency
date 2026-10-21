@@ -56,15 +56,23 @@ from app.runbook.weekly import (
 from app.services import FILM_CONTINUE_TASK, append_event
 from app.story.services import business_date
 from app.workflows.services import (
+    PROCESS_STARTED_AT,
+    RESUME_CONTINUATION_HOURS,
     TASK_LEASE_LOST_EVENT,
     LeaseLost,
     claim_task,
     complete_task,
+    continuation_resumed,
+    continuation_resumes,
     enqueue_task,
     fail_task,
     heartbeat_task,
+    interrupt_orphaned_claims,
+    release_orphaned_claims,
+    resume_interrupted_continuations,
     scheduler_tick,
     sweep_interrupted_tasks,
+    unresumed_continuations,
 )
 
 logger = logging.getLogger("studio.worker")
@@ -195,6 +203,8 @@ def build_task_handlers(
             done_id = done.id if done is not None else None
             cut = next((run for run in runs_today if run.status in (INTERRUPTED, RUNNING)), None)
             cut_id = cut.id if cut is not None else None
+            # How many times today was cut off: what bounds its resumes (below).
+            cut_count = sum(1 for run in runs_today if run.status == INTERRUPTED)
             previous = session.get(DailyRun, resume_of) if resume_of else None
             previous_date = previous.business_date if previous is not None else None
             previous_status = previous.status if previous is not None else None
@@ -227,15 +237,22 @@ def build_task_handlers(
                     ),
                     "run_id": later[-1] if later else resume_of,
                 }
-            if attempt > settings.daily_max_attempts:
-                return {
-                    "status": "SKIPPED",
-                    "reason": (
-                        f"Ziua {today} și-a folosit cele {settings.daily_max_attempts} "
-                        "încercări; reluarea ei este decizia Owner-ului."
-                    ),
-                    "run_id": resume_of,
-                }
+            # A resume continues the day the clock already started — its completed stages
+            # are replayed, never done again — so it is not one of the day's re-attempts
+            # (those run the whole day) and their cap does not count it. What bounds it is
+            # how many times the day was cut off. Measured 2026-10-15: a day cut off once,
+            # with three runs on its date (two finished ones before it), had its one resume
+            # refused «și-a folosit cele 3 încercări» and stood still until the Owner.
+            # How many times the day was cut off is logged, never a reason to stop: the
+            # Owner's rule (2026-10-15 15:20Z) is that the day ends on its goal or on a
+            # problem only he can solve, and a resume is asked once per start of the studio
+            # (`passes.resume_interrupted_day`), so a crash loop is bounded by the starts
+            # themselves. 17:17Z: the fifth cut of the day (a developer restart) was refused
+            # «reluarea ei este decizia Owner-ului» and the day stood still.
+            logger.info(
+                "daily_run_resume",
+                extra={"run_id": resume_of, "cut_count": cut_count, "date": today},
+            )
             runners = resume_runners(previous_stages, stage_runners or {}, resume_of)
         elif not manual:
             if cut_id is not None:
@@ -472,7 +489,25 @@ def build_task_handlers(
         ):
             return {"reported": []}
         last_sheet_scan = now
-        return scan_sheet_issues(engine, read_live=True, settings=settings, **repair_wiring())
+        if getattr(settings, "finish_existing_films_first", True):
+            from uuid import uuid4  # noqa: PLC0415
+
+            from app.workflows.passes import WatchdogContext  # noqa: PLC0415
+            from app.workflows.passes.owner_choice_continuation import (  # noqa: PLC0415
+                queue_missed_continuations,
+            )
+            from app.workflows.passes.serial_unfilmed import (  # noqa: PLC0415
+                finish_approved_episodes,
+            )
+
+            context = WatchdogContext(engine, settings, str(uuid4()))
+            # Recover the old films before a newer queued film wins the first claim.
+            # These are the normal idempotent recovery passes; they purchase nothing.
+            queue_missed_continuations(context)
+            finish_approved_episodes(context)
+        return scan_sheet_issues(
+            engine, read_live=True, include_redos=False, settings=settings, **repair_wiring()
+        )
 
     def _environment() -> str:
         from app.models import OwnerPolicy  # noqa: PLC0415
@@ -669,7 +704,16 @@ def work_once(
 def announce_interrupted(engine: Engine, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Tell the Owner about interrupted work he cares for: a day, a film's continuation.
 
-    Called with what `sweep_interrupted_tasks` just dead-lettered, so each is told once.
+    Called with what `sweep_interrupted_tasks` or `interrupt_orphaned_claims` just
+    dead-lettered, so each is told once. A continuation the studio queues again itself is no
+    letter: his rule of 2026-10-12 keeps his letters for accounts, authorisations and security,
+    and review 2026-10-16 measured the letter saying «nu o repornesc singur» seconds before
+    the next pass walked the film. Asked after `resume_interrupted_continuations` ran (the
+    audit of 2026-10-16, SAFE-007): «resumes» only when it was queued again
+    (`continuation_resumed`); «resume_pending» when it is still the studio's to resume but the
+    resume failed — no letter, tried again on the next pass, and a note for the developer if
+    its window closes first (`note_unresumed_continuations`). One the studio does not resume
+    is told, as before.
     """
     told: list[dict[str, Any]] = []
     for task in tasks:
@@ -678,7 +722,12 @@ def announce_interrupted(engine: Engine, tasks: list[dict[str, Any]]) -> list[di
             if task["task_type"] == DAILY_RUN:
                 record["day"] = interrupt_task_day(engine, task)
             elif task["task_type"] == FILM_CONTINUE:
-                record["letter_id"] = _tell_continue_interrupted(engine, task)
+                if continuation_resumed(engine, task["id"]):
+                    record["resumes"] = True
+                elif continuation_resumes(engine, task["id"]):
+                    record["resume_pending"] = True
+                else:
+                    record["letter_id"] = _tell_continue_interrupted(engine, task)
         except Exception as exc:  # noqa: BLE001 - one letter must not lose the others
             logger.error(
                 "interrupted_task_not_announced",
@@ -718,6 +767,97 @@ def _tell_continue_interrupted(engine: Engine, task: dict[str, Any]) -> str:
         return row.id
 
 
+#: The developer's note about a continuation the studio did not resume in its window.
+UNRESUMED_DEFECT = "continuation_not_resumed"
+UNRESUMED_NOTE_SUBJECT = "Pentru dezvoltator: continuarea unui film nu a fost reluată"
+
+
+def note_unresumed_continuations(engine: Engine) -> list[str]:
+    """A note for the developer, once, about each continuation the studio was to resume itself
+    and did not within RESUME_CONTINUATION_HOURS (`unresumed_continuations`): its resume kept
+    failing (a warning in the log only), and past the window nothing resumes it. Never the
+    Owner's letter — his rule of 2026-10-12: his letters are accounts, authorisations and
+    security; a tool's defect is the developer's (the audit of 2026-10-16, SAFE-007). Written
+    in the Director's own thread and resolved at once, as her other developer notes are. The
+    notes written."""
+    return [
+        note_id
+        for item in unresumed_continuations(engine)
+        if (note_id := _note_unresumed(engine, item))
+    ]
+
+
+def _note_unresumed(engine: Engine, item: dict[str, Any]) -> str | None:
+    from app.agents.director import DEVELOPER_DEFECT_KIND  # noqa: PLC0415 - agents import us
+    from app.agents.memory import agent_for_role  # noqa: PLC0415
+    from app.agents.messages import post_message, resolve_message  # noqa: PLC0415
+    from app.agents.models import AgentMessage  # noqa: PLC0415
+    from app.db import lock_for_write  # noqa: PLC0415
+    from app.media.models import Storyboard  # noqa: PLC0415
+
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        for row in session.scalars(
+            select(AgentMessage).where(AgentMessage.subject.like(f"{UNRESUMED_NOTE_SUBJECT}%"))
+        ):
+            body = row.body_json if isinstance(row.body_json, dict) else {}
+            if body.get("defect") == UNRESUMED_DEFECT and body.get("task_id") == item["id"]:
+                return None
+        director = agent_for_role(session, "Director")
+        if director is None:
+            logger.warning("unresumed_continuation_not_noted", extra={"task_id": item["id"]})
+            return None
+        storyboard_id = str(item.get("storyboard_id") or "")
+        board = session.get(Storyboard, storyboard_id) if storyboard_id else None
+        title = str(getattr(board, "title", "") or storyboard_id[:8] or "fără nume").strip()
+        at = str(item.get("interrupted_at") or "")[:16].replace("T", " ")
+        note = (
+            f"Continuarea filmului «{title[:120]}» a fost întreruptă de oprirea procesului la "
+            f"{at} (UTC), iar studioul trebuia s-o reia singur, o dată, în "
+            f"{RESUME_CONTINUATION_HOURS} ore. Reluarea nu s-a făcut în acest timp (un eșec al "
+            "ei apare în jurnalul worker-ului ca «dead_process_work_not_resumed»), iar după "
+            "fereastră studioul nu o mai reia singur. E un defect al uneltei: îl repară "
+            "dezvoltatorul, nu Proprietarul."
+        )
+        row = post_message(
+            session,
+            intent="STATUS",
+            subject=f"{UNRESUMED_NOTE_SUBJECT}: «{title[:80]}»",
+            body={
+                "kind": DEVELOPER_DEFECT_KIND,
+                "defect": UNRESUMED_DEFECT,
+                "task_id": item["id"],
+                "storyboard_id": storyboard_id,
+                "interrupted_at": item.get("interrupted_at"),
+                "note": note,
+            },
+            body_text=note,
+            from_agent_id=director.id,
+            to_agent_id=director.id,
+            correlation_id=item["id"],
+        )
+        resolve_message(
+            session,
+            row.id,
+            resolution="Notat pentru dezvoltator.",
+            resolved_by=director.display_name,
+            status="RESOLVED",
+            correlation_id=item["id"],
+        )
+        return str(row.id)
+
+
+def close_orphaned_days(engine: Engine, *, started_at: str | None = None) -> list[dict[str, Any]]:
+    """A day a dead process left leased after its run began, closed instead of queued again:
+    its task DEAD_LETTER INTERRUPTED (`interrupt_orphaned_claims`, ``started_at`` as in
+    `release_orphaned_claims`), its run INTERRUPTED at the stage it was in and the Owner told
+    (`announce_interrupted`); the watchdog then resumes that run from its stage
+    (`passes.resume_interrupted_day`). Run again whole, it would choose a second subject and
+    buy a second film (review 2026-10-16). One killed before its run began is not here: the
+    release gave it back to the queue, with no letter. What was told."""
+    return announce_interrupted(engine, interrupt_orphaned_claims(engine, started_at=started_at))
+
+
 def worker_pass(
     engine: Engine,
     handlers: dict[str, TaskHandler],
@@ -728,17 +868,48 @@ def worker_pass(
     """One pass: close what died, fire what is due, run what is queued, then answer the mail.
 
     First the queue's dead are named: a task whose lease lapsed with no attempts left was
-    being run by a process that is gone, and becomes DEAD_LETTER INTERRUPTED with a letter to
-    the Owner when it was a day or a film's continuation — never run again on its own (REL-03).
-    The mail comes last and only with a registry to run models through: a letter to an
-    employee is answered by that employee within the pass, so an exchange the Director
-    starts in the evening is a conversation by the next pass, not a note that waits a day.
-    Nothing happens while the studio shuts down.
+    being run by a process that is gone, and becomes DEAD_LETTER INTERRUPTED (REL-03). A day
+    is closed INTERRUPTED and resumed from its stage by the watchdog, never run again whole;
+    a film's continuation is queued again by the studio, once, in this same pass, and only one
+    that is not is told to the Owner. The mail comes last and only with a registry to run
+    models through: a letter to an employee is answered by that employee within the pass, so
+    an exchange the Director starts in the evening is a conversation by the next pass, not a
+    note that waits a day. Nothing happens while the studio shuts down.
     """
     idle: dict[str, Any] = {"answered": [], "refused": []}
     if shutdown_requested(engine):
         return {"triggered": [], "ran": [], "mail": idle, "interrupted": []}
-    interrupted = announce_interrupted(engine, sweep_interrupted_tasks(engine))
+    # What a dead process left: its leases given back (the start's own release may have
+    # failed on a database the stopping process still held, 06:07:53Z 2026-10-16); a day whose
+    # run began is closed instead, since run again from its start it would buy a second film.
+    released = resumed = 0
+    closed: list[dict[str, Any]] = []
+    try:
+        released = release_orphaned_claims(engine, started_at=PROCESS_STARTED_AT)
+        closed = close_orphaned_days(engine, started_at=PROCESS_STARTED_AT)
+    except Exception as exc:  # noqa: BLE001 - tried again on the next pass
+        logger.warning("dead_process_work_not_resumed", extra={"error_class": type(exc).__name__})
+    swept = sweep_interrupted_tasks(engine)
+    try:
+        resumed = resume_interrupted_continuations(engine)
+    except Exception as exc:  # noqa: BLE001 - tried again on the next pass
+        logger.warning("dead_process_work_not_resumed", extra={"error_class": type(exc).__name__})
+    # Told after the resume (SAFE-007): a continuation the studio queued again is no letter
+    # and is said to resume; one whose resume failed waits for the next pass, with no letter;
+    # one it does not resume is told. Until 2026-10-16 this was decided before the resume ran,
+    # and a resume that failed was reported as made.
+    interrupted = closed + announce_interrupted(engine, swept)
+    try:
+        note_unresumed_continuations(engine)
+    except Exception as exc:  # noqa: BLE001 - tried again on the next pass
+        logger.warning(
+            "unresumed_continuation_not_noted", extra={"error_class": type(exc).__name__}
+        )
+    if released or closed or resumed:
+        logger.info(
+            "dead_process_work_resumed",
+            extra={"released": released, "closed": len(closed), "resumed": resumed},
+        )
     if "SCAN_FILM_SHEETS" in handlers:
         try:
             handlers["SCAN_FILM_SHEETS"]({"payload": {}})

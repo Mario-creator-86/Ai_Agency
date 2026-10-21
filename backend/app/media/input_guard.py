@@ -1,6 +1,127 @@
-"""Input guard: existing local-first media checks.
+"""Never buy again an input identical to one that was refused (the Owner, 2026-10-12, 22:00).
 
-Private production traces omitted; implementation unchanged."""
+«Cum este permis să facă 9 încercări… și el să facă același video? DE CE NU SE SCHIMBĂ
+PROMPTUL!» — the studio must think, not repeat; a new seed alone is not a change, and a new still
+(7 credits) comes before another clip (22 credits).
+
+What happened. The cyclotron film (storyboard aa170155, «Why Ernest Lawrence's First Cyclotron
+Barely Fit on a Desk»), scene 1: still 4be4364e was approved by the stills gate at 10:43 UTC with
+four people in it. From 10:45 to 18:25 UTC the motion step asked for 8 clips of it (6 delivered
+and paid, 22 credits each; one stopped before sending, one expired undelivered), every one from
+the same first frame (the JPEG sent to LTX, sha 1948d8e9…) with the same motion words (08a2f75d;
+the clip-QC retries 2da0db70 are the same words plus one sentence). Only the seed moved
+(580970442 → 580970451). Clip QC refused all six, each time for faces in the frames, and each
+time said the picture had to change. Nothing in the code compared a purchase with the ones
+refused before it: the design called a new seed «a new throw» (`assembler._scene_seed`).
+
+Why `scene_take.prompt_hash` is not the identity. It is the scene's identity
+(`assembler.take_hash` of `motion_fields`: the stored package plus the still's PNG sha), recorded
+on every take of a step, including the clip-QC retry whose words differ (`_ShotRounds.submitted`
+writes ``state.identity``): all of them carry b2a94fcd. And a stored package can change while
+the compiled words stay the same (the 10:37 rewrite was compiled back to the sentence the
+Director had deleted). What was bought is in the RunPod journal: ``cloud_generation_job.request``
+keeps the words, the negative, the model, the length and the sha256 of every picture sent, and
+the take finds its row by ``scene_take.remote_task_id == cloud_generation_job.remote_job_id``.
+
+The identity (`PurchaseIdentity`), built the same way at the purchase point
+(`identity_of_request`, from the `BatchRequest` about to be sent) and from history
+(`identity_of_journal`, `identity_of_take`), so the two can never disagree:
+
+- ``kind``: still or motion (a test shot is a clip bought the same way: motion);
+- ``storyboard_id`` and ``scene``: one scene of one film; another scene or film is never compared;
+- ``model``: the model that really draws (after `batch.route_references`);
+- ``seconds``: the clip's length (None for a still);
+- ``prompt_words_hash`` and ``negative_hash``: the words sent, compared as words (`words_hash`:
+  case, spacing and punctuation do not make new words); the negative only on a model that uses
+  it (`NEGATIVE_UNUSED_MODELS`: LTX-2.5 samples at CFG 1.0, so a negative added to the
+  cyclotron's clip words would have bought the same clip once more);
+- ``still_sha``: the sha256 of the first frame the clip model receives (`assembler._first_frame`,
+  the journal's ``request.source_image.sha256``); one still file gives one sha as long as
+  `_first_frame`'s width, quality and ffmpeg stay the same;
+- ``references_sha``: the reference pictures a still is drawn from, in order (None without).
+
+Never the seed, the attempt number, the candidate index or the price.
+
+The rule (`refused_before`), on the scene's takes that ended REJECTED, REFUSED or LOST:
+
+1. ``SAME_INPUT``: an earlier take of exactly this identity was refused for what it showed
+   (`refusal_class` CONTENT): clip QC (QC.CLIP), the stills gate and its picture look
+   (LOCAL.STILL_GATE, for its content phrases), a vendor's safety refusal, the Director's or the
+   Owner's retirement after film QC (REDO.OWNER, REDO.STILL_REPLACED, OWNER.REJECTED).
+2. ``SAME_STILL`` (clips only): an earlier clip from this same first frame was refused for a
+   fault of the picture itself (`still_at_fault`: a face measured in its FIRST frame, a flat band
+   splitting its first frame, the look's «more than one picture», a vendor refusing the input
+   image, a still a redo replaced). New motion words cannot remove a face that is in the
+   still: the scene needs a new still first. Today's QC (`qc._still_must_change`) never read the
+   first frame's faces; this guard does.
+3. ``TECHNICAL_TWICE``: the identical input failed for a technical reason in more than
+   `TECHNICAL_RETRIES` rounds. A technical failure says nothing about the input (the result
+   expired before it was collected, the vendor did not answer, a degenerate picture, a technical
+   gate refusal such as blur or a panel band, `scene_rewrite.refusal_kind`), so the same input
+   may be bought once more — not a third time.
+
+Not a refusal of the input: a request that made nothing and cost nothing (`NOT_MADE_STATES`:
+stopped before sending or by the studio's own stop, never queued, skipped by the worker's time
+guard), our own malformed request (HTTP 4xx), a local generator that did not answer, a duplicate
+file. A purchase still in flight is not refused either, so a resend after a crash goes through.
+A take with no journal row (a purchase before the journal, or a non-RunPod vendor) has no known
+input and is not compared.
+
+Replayed READ-ONLY on the live database (2026-10-12, scene 1 of aa170155): the first paid clip
+(d87a3b24, 12:23 UTC) would have been bought, and every purchase after it refused — e9c9eb66,
+279fb3f4, 1cad4106, 45cc44c2, 81e9a79a and the two requests of 19:46 and 19:48 UTC as
+SAME_INPUT, adeff9cf (the retry's words) as SAME_STILL — 5 paid clips, 110 credits, not bought.
+On the whole record (230 journalled purchases) it refuses 35, and 3 of those came out right:
+one still re-rolled on words the gate had refused for panels, and two motion redos of the
+Director that bought the input of the clip they retired (see `refused_before`'s
+``replacing``): a gamble on the seed each time, which the Owner's rule forbids.
+
+Where round 4 calls it (line numbers of the worktree at ca3db63), always before the money and
+before the Director's second look (`stages._second_look_before_redo`, an LLM call: the guard is
+free and deterministic, a refused input needs no look to be refused):
+
+- ``assembler._ShotRounds._send`` (assembler.py:11079), the one door of every RunPod clip of a
+  step: the first clip (:11341), clip QC's retry (:11304) and the worker-failure retry (:11309).
+  Build the request first (``self._request``), then ``refused_before(session,
+  identity_of_request(request))``; on a refusal set ``state.outcome`` (below), call
+  `record_refusal`, return ``[]``, and do NOT count it in ``state.attempts`` / ``self.sent``.
+  A first round whose every scene is refused never reaches ``run_rounds``: no GPU session opens.
+- ``stills_stage._StillRounds._send`` (stills_stage.py:1496), the one door of every RunPod still
+  round (first round :1771, the gate's re-roll and the figure-one wait :1708, :1714): both
+  candidates share one identity, so check ``identity_of_request(requests[0])``.
+- ``assembler.redo_plan`` → ``_motion_redo_plan`` (assembler.py:14211) and the still redo plan:
+  the request the step would send (`motion_request`, the usable still's `_first_frame`, built
+  locally for free) checked with ``replacing=plan["replaces"]`` (and the finding as
+  ``replacing_why``) before the plan is ``buyable``, so `stages._apply_repairs` (stages.py:5157)
+  refuses before ``economy.spend_reserved`` and before its second look (:5301) and rewrite
+  (:5317) — including the motion that «continues» a still round (:5289), which skips both
+  today. Without ``replacing`` a redo that retires the old clip only after buying (a clip that
+  passed clip QC and film QC refused) is not seen as a refusal at purchase time.
+- The non-RunPod clip path, ``assembler._generate_motion`` (assembler.py:1285), at its callers
+  (:7069, :11922, :12107), with `purchase_identity` (no `BatchRequest` there).
+- The last door, ``providers.runpod.batch.reserve_item`` (batch.py:510), on the branch that
+  creates a NEW journal row (``if row is None:``, :539 with the fresh-seed change in the
+  worktree; never RESEND or TRACK of an existing key), inside its own session: raise
+  ``BatchRefused(REFUSAL_CODE, attempt.reason_ro)``. It refuses the whole round, so it must
+  never be the first door; it only proves no path escapes the rule. The seed it may replace
+  (`batch.fresh_item_seed`) is not part of the identity, so the order of the two does not
+  matter.
+
+What happens on a refusal: nothing is bought, nothing is reserved, 0 credits. The scene's outcome
+is ``{"status": "NOT_BOUGHT", "failure_code": REFUSAL_CODE, "rewrite": True, "layer":
+attempt.layer, "reason": attempt.reason_ro}`` and the register gets ``attempt.reason_ro``
+(`record_refusal`, event `REFUSED_EVENT`; the same refusal of the same input asked again is
+said once). The scene goes to the Director's rewrite of the layer at fault (`scene_rewrite`,
+``layer`` "still": new still words and a new pair of stills judged by the gate before any clip;
+"motion": new motion words) — never to a seed-only retry, and never to
+`stages.director_decides_failed_film`'s immediate re-read (stages.py:4148 must treat
+REFUSAL_CODE like NEEDS_OWNER, not as NOTHING_DONE). A clip refused with ``layer`` "still"
+leaves its still APPROVED: the purchase point sends it back
+(`assembler._send_still_back_for_clip`, which keeps the Owner's own approval), so the still's
+own words are refused too and its redo cannot draw the same picture on a new seed.
+``TECHNICAL_TWICE`` has no layer: the scene is held and the defect is a developer's note, not a
+rewrite.
+"""
 
 from __future__ import annotations
 

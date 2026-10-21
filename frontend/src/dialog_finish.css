@@ -1,0 +1,289 @@
+/* The dashboard's dialogs share its palette. Scope tokens to the dialog so the
+   scene, the live register and semantic success/error colors keep their meaning. */
+.studio-dashboard .studio-dialog {
+  --surface: #1c172b;
+  --surface-sunk: #151120;
+  --surface-quiet: #241c35;
+  --surface-hi: #2b2140;
+  --line: #3a2d50;
+  --line-strong: #554267;
+  --line-field: #746187;
+  --ink: #f0ebf8;
+  --ink-2: #c1b7d2;
+  --ink-3: #b0a2c3;
+  --rail-w: 218px;
+  color: var(--ink);
+  background: #120f1c;
+  border: 1px solid #49365f;
+  border-radius: 16px;
+  box-shadow: 0 24px 90px #0009, inset 0 1px #ffffff0a;
+  scrollbar-color: #766089 transparent;
+  scrollbar-width: thin;
+}
+.studio-dashboard .studio-dialog::backdrop { background: #090610bd; backdrop-filter: blur(7px); }
+.studio-dashboard .studio-dialog .dialog-header {
+  gap: 24px;
+  padding: 24px 28px 22px;
+  background: linear-gradient(120deg, #291e3b80, transparent 65%), #191424;
+  border-bottom-color: var(--line);
+}
+.studio-dashboard .studio-dialog .dialog-title { line-height: 1.3; text-wrap: pretty; }
+.studio-dashboard .studio-dialog .dialog-desc { max-width: 92ch; font-size: 15px; line-height: 1.55; margin-top: 8px; }
+.studio-dashboard .studio-dialog .dialog-eyebrow { color: #c3a3f0; font-size: 10px; letter-spacing: .12em; }
+.studio-dashboard .studio-dialog .dialog-close,
+.studio-dashboard .studio-dialog #inspector-expand {
+  flex: none;
+  border: 1px solid var(--line);
+  background: #261d35;
+  color: #c9b9dc;
+  border-radius: 9px;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+}
+.studio-dashboard .studio-dialog .dialog-close:hover { background: #382649; color: #fff; border-color: #9465bc; }
+.studio-dashboard .studio-dialog :is(button, input, select, textarea, a) { -webkit-tap-highlight-color: transparent; }
+.studio-dashboard .studio-dialog :is(button, input, select, textarea, a):focus-visible { outline: 2px solid #c79bff; outline-offset: 3px; }
+.studio-dashboard .studio-dialog :is(button.primary, .btn-render-video, .media-tab-active, .settings-tabs > .primary) {
+  color: #f8f2ff;
+  background: #653696;
+  border-color: #9a66c7;
+  box-shadow: inset 0 1px #ffffff12;
+}
+.studio-dashboard .studio-dialog :is(button.primary, .btn-render-video):hover:not(:disabled) { background: #7943ad; border-color: #c290ee; }
+.studio-dashboard .studio-dialog :is(button.quiet, button.secondary, .btn-qc-video) {
+  background: #251d33;
+  border-color: #4b385f;
+  color: #d0c2e2;
+  box-shadow: inset 0 1px #ffffff05;
+}
+.studio-dashboard .studio-dialog :is(button.quiet, button.secondary, .btn-qc-video):hover:not(:disabled) { background: #342442; border-color: #9161b7; color: #f4eaff; }
+.studio-dashboard .studio-dialog button:disabled { opacity: .55; cursor: not-allowed; }
+.studio-dashboard .studio-dialog .dialog-rail { margin: 20px 0 20px 20px; padding: 8px; background: #1b1527; border-color: var(--line); border-radius: 11px; }
+.studio-dashboard .studio-dialog .dialog-rail :is(a, .media-tab) { min-height: 38px; padding: 8px 12px; line-height: 1.4; font-size: 13px; }
+.studio-dashboard .studio-dialog .dialog-rail :is(a[aria-current='true'], .media-tab-active) {
+  color: #efdcff;
+  background: #362149;
+  border-left-color: #be83f0;
+}
+.studio-dashboard .studio-dialog .dialog-pane { padding: 24px 28px 28px 22px; }
+.studio-dashboard .studio-dialog .dialog-body.dialog-body-railed { padding: 0; }
+.studio-dashboard .studio-dialog .dialog-body:not(.dialog-body-railed) { padding: 24px 28px 28px; }
+.studio-dashboard .studio-dialog :is(.topics-header-row, .trends-head) { align-items: center; flex-wrap: wrap; gap: 12px; }
+.studio-dashboard .studio-dialog :is(.topics-header-row, .trends-head) > h3 { flex: 1 1 230px; min-width: 0; margin: 0; }
+.studio-dashboard .studio-dialog :is(.topics-header-row, .trends-head) > button { flex: none; margin: 0; }
+.studio-dashboard .studio-dialog :is(.dialog-section-header-bright, .dialog-section-header-bright-compact) { line-height: 1.45; }
+.studio-dashboard .studio-dialog :is(.topic-card, .storyboard-card, .pub-card, .settings-card, .char-card, .budget-card, .person-card) { border-color: var(--line); border-radius: 11px; }
+
+/* A one-word status is inline ink; .text-error also serves full error notices. */
+.studio-dashboard .studio-dialog .storyboard-state {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: inherit;
+  line-height: inherit;
+  text-wrap: inherit;
+}
+.studio-dashboard .studio-dialog .storyboard-container { gap: 12px; }
+.studio-dashboard .studio-dialog .storyboard-card { padding: 18px; contain-intrinsic-size: auto 110px; }
+.studio-dashboard .studio-dialog .storyboard-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 24px; align-items: center; }
+.studio-dashboard .studio-dialog .storyboard-header > div { min-width: 0; }
+.studio-dashboard .studio-dialog .storyboard-title { margin: 0 0 10px; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+.studio-dashboard .studio-dialog .storyboard-meta { align-items: center; gap: 6px 12px; font-size: 12px; line-height: 1.65; }
+.studio-dashboard .studio-dialog .storyboard-meta > span { max-width: 100%; }
+.studio-dashboard .studio-dialog .storyboard-actions { gap: 6px; justify-content: flex-end; }
+.studio-dashboard .studio-dialog .storyboard-actions button { padding: 8px 11px; min-height: 36px; font-size: 12px; margin: 0; }
+.studio-dashboard .studio-dialog :is(.qc-badge-pass, .qc-badge-fail) { font-size: 10px; letter-spacing: .04em; padding: 3px 7px; white-space: normal; }
+.studio-dashboard .studio-dialog .storyboard-detail:not([hidden]) { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+.studio-dashboard .studio-dialog .char-archetype { white-space: normal; overflow-wrap: anywhere; }
+.studio-dashboard .studio-dialog .beat-card { min-width: 0; }
+.studio-dashboard .studio-dialog .beat-card :is(.beat-card-head) { overflow-wrap: anywhere; }
+.studio-dashboard .studio-dialog .pub-overview-grid { align-items: start; }
+.studio-dashboard .studio-dialog .channel-bind-row select { min-width: 0; max-width: 100%; }
+.studio-dashboard .studio-dialog .settings-autonomy-link {
+  align-self: flex-end;
+  width: auto;
+  margin: 12px 28px;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.studio-dashboard .settings-dialog > .dialog-header { padding-bottom: 0; border-bottom: 0; }
+.studio-dashboard .settings-dialog .settings-intro { padding: 8px 28px 16px; font-size: 15px; background: #191424; }
+.studio-dashboard .settings-dialog .settings-tabs { border-radius: 0; margin-bottom: 0; padding: 12px 28px; gap: 6px; }
+.studio-dashboard .settings-dialog .settings-tabs > button { border-radius: 8px; min-height: 36px; font-size: 12px; padding: 7px 12px; }
+.studio-dashboard .settings-dialog .settings-content { padding: 20px 28px 28px; }
+.studio-dashboard .settings-dialog .settings-agent-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 370px), 1fr)); }
+.studio-dashboard .settings-dialog .settings-card > select { flex: none; }
+.studio-dashboard .settings-dialog .settings-card .settings-actions { gap: 8px; }
+.studio-dashboard .settings-dialog .settings-card .helper { line-height: 1.5; }
+.studio-dashboard .studio-dialog .pf-message { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.5; }
+.studio-dashboard .studio-dialog.sheet-drawer[open] { min-height: min(540px, 90dvh); }
+.studio-dashboard .studio-dialog.sheet-drawer[open][data-loading='true'] { width: min(680px, 94vw); height: fit-content; min-height: 0; grid-template-rows: auto auto auto; }
+.studio-dashboard .sheet-drawer[data-loading='true'] .dialog-desc { display: none; }
+.studio-dashboard .sheet-drawer[data-loading='true'] .dialog-title { font-size: 18px; }
+.studio-dashboard .sheet-drawer[data-loading='true'] .sheet-body { align-content: start; }
+.studio-dashboard .sheet-drawer .sheet-loading { display: flex; align-items: center; gap: 8px; width: fit-content; margin: 0; padding: 4px 0; color: var(--ink-2); font-size: 13px; line-height: 20px; }
+.studio-dashboard .sheet-drawer .sheet-loading > span { width: 12px; height: 12px; border: 2px solid var(--line-strong); border-top-color: #c79bff; border-radius: 50%; animation: sheet-loading-turn .8s linear infinite; }
+@keyframes sheet-loading-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .studio-dashboard .sheet-drawer .sheet-loading > span { animation: none; } }
+.studio-dashboard .studio-dialog .mail-reply { padding: 16px 28px; }
+.studio-dashboard .studio-player {
+  width: min(760px, 94vw);
+  max-height: 92dvh;
+  overflow-y: auto;
+  padding: 24px;
+  color: #f0ebf8;
+  background: #191424;
+  border: 1px solid #49365f;
+  border-radius: 14px;
+  box-shadow: 0 24px 90px #0009;
+}
+.studio-dashboard .studio-player::backdrop { background: #090610bd; backdrop-filter: blur(7px); }
+.studio-dashboard .studio-player h2 { margin: 0 0 16px; font-size: 20px; line-height: 1.4; }
+.studio-dashboard .studio-player button { float: none; margin-bottom: 12px; background: #362149; border-color: #9465bc; color: #efdcff; }
+.studio-dashboard .studio-player a { color: #d3abff; }
+.studio-dashboard .studio-dialog.consequence-dialog { width: min(640px, 94vw); }
+.studio-dashboard .consequence-dialog .consequence-words { line-height: 1.65; color: var(--ink-2); }
+
+@media (max-width: 1400px) {
+  .studio-dashboard .studio-dialog .storyboard-header { grid-template-columns: minmax(0, 1fr); }
+  .studio-dashboard .studio-dialog .storyboard-actions { justify-content: flex-start; }
+}
+@media (max-width: 1100px) {
+  /* Long content must not shrink the menu's grid track below its own height. */
+  .studio-dashboard .studio-dialog .dialog-body-railed { display: block; }
+  .studio-dashboard .studio-dialog .dialog-rail { position: static; flex-direction: row; flex-wrap: nowrap; overflow-x: auto; margin: 16px 20px 0; padding: 6px; mask-image: none; }
+  .studio-dashboard .studio-dialog .dialog-rail :is(a, .media-tab) { flex: 0 0 auto; max-width: 230px; white-space: normal; }
+  .studio-dashboard .studio-dialog .dialog-pane { padding: 20px; }
+}
+@media (max-width: 600px) {
+  .studio-dashboard .studio-dialog { border-radius: 12px; max-height: 94dvh; }
+  .studio-dashboard .studio-dialog .dialog-header { padding: 18px 16px; gap: 12px; }
+  .studio-dashboard .studio-dialog .dialog-title { font-size: 20px; }
+  .studio-dashboard .studio-dialog .dialog-desc { font-size: 13px; line-height: 1.5; }
+  .studio-dashboard .studio-dialog .dialog-rail { margin: 12px 12px 0; }
+  .studio-dashboard .studio-dialog :is(.dialog-pane, .dialog-body:not(.dialog-body-railed)) { padding: 16px; }
+  .studio-dashboard .studio-dialog .storyboard-card { padding: 14px; }
+  .studio-dashboard .studio-dialog .storyboard-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .studio-dashboard .studio-dialog .storyboard-actions button { white-space: normal; }
+  .studio-dashboard .studio-dialog .storyboard-meta { gap: 5px 10px; }
+  .studio-dashboard .settings-dialog .settings-autonomy-link { margin: 8px 16px; }
+  .studio-dashboard .settings-dialog .settings-intro { padding-inline: 16px; }
+  .studio-dashboard .settings-dialog .settings-tabs { padding: 10px 16px; flex-wrap: nowrap; overflow-x: auto; }
+  .studio-dashboard .settings-dialog .settings-tabs > button { flex: none; }
+  .studio-dashboard .settings-dialog .settings-content { padding: 16px; }
+  .studio-dashboard .studio-dialog .mail-reply { padding: 12px 16px; }
+}
+
+.studio-dashboard .studio-dialog .beat-card-head { flex-wrap: wrap; gap: 3px 8px; }
+.studio-dashboard .studio-dialog .beat-card-part { overflow-wrap: anywhere; }
+
+/* Keep a form and its action on the same readable measure. */
+.studio-dashboard #research-modal .dialog-form { width: 100%; max-width: var(--measure-lead); }
+.studio-dashboard #research-modal .source-form { grid-template-columns: minmax(0, 1fr) auto; margin-bottom: 12px; }
+.studio-dashboard #research-modal .source-form .dialog-submit-btn { min-width: 0; }
+.studio-dashboard #research-modal .trends-list li { align-items: baseline; }
+.studio-dashboard #research-modal .trends-list li span { min-width: 0; white-space: normal; overflow: visible; overflow-wrap: anywhere; line-height: 1.5; }
+.studio-dashboard .studio-dialog .topics-header-row > .media-actions-bar { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+
+/* Structural grids fill their card; paragraph measure must not cap whole grids. */
+.studio-dashboard #story-modal .episode-room { max-width: none; }
+.studio-dashboard #story-modal :is(.plan-field, .plan-field dd, .thread-chips) { min-width: 0; overflow-wrap: anywhere; }
+.studio-dashboard #runbook-modal .runbook-stages { max-width: none; }
+.studio-dashboard #workforce-modal .workforce-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.studio-dashboard #media-modal .characters-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+
+/* Real section heights make long-dialog navigation stable after lazy layout. */
+.studio-dashboard .studio-dialog .dialog-pane > *,
+.studio-dashboard #runbook-modal #runbook-runs > .runbook-run { content-visibility: visible; contain-intrinsic-size: none; }
+.studio-dashboard .studio-dialog .dialog-pane > [id] { scroll-margin-top: 8px; }
+
+.studio-dashboard #autonomy-modal #budget-cards { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.studio-dashboard #autonomy-modal :is(.budget-overview, .budget-providers) { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 12px; min-width: 0; }
+.studio-dashboard #autonomy-modal .budget-card { min-width: 0; overflow-wrap: anywhere; }
+
+.studio-dashboard .settings-dialog .settings-content { align-content: start; }
+.studio-dashboard .settings-dialog .settings-media-connections { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.studio-dashboard .settings-dialog .settings-media-connections > .settings-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.studio-dashboard .settings-dialog .settings-media-connections > .settings-card > .settings-actions { margin-top: 0; }
+.studio-dashboard .settings-dialog input:is([type='checkbox'], [type='radio']) { width: 18px; height: 18px; min-width: 18px; min-height: 18px; padding: 0; margin: 2px 0 0; flex: none; accent-color: #9a66c7; }
+.studio-dashboard .settings-dialog :is(.settings-fields label.settings-toggle, .channel-policy-check) { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; letter-spacing: normal; text-transform: none; color: var(--ink-2); }
+.studio-dashboard .settings-dialog .settings-fields label.settings-toggle { grid-column: 1 / -1; }
+.studio-dashboard .settings-dialog .settings-fields label.settings-toggle::after { content: none; }
+.studio-dashboard .settings-dialog .channel-policy { display: grid; gap: 8px; min-width: 0; }
+.studio-dashboard .settings-dialog .settings-modules { max-width: none; }
+
+@media (max-width: 760px) {
+  .studio-dashboard .settings-dialog .settings-media-connections { grid-template-columns: minmax(0, 1fr); }
+  .studio-dashboard #workforce-modal .workforce-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .studio-dashboard #research-modal .source-form { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Company facts have different lengths. Group comparable cards together rather
+   than making a three-column row as tall as its longest report. */
+.studio-dashboard #runbook-modal #company-state {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 0 16px;
+}
+.studio-dashboard #runbook-modal :is(.company-overview, .company-channels, .company-analysis) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+.studio-dashboard #runbook-modal .company-analysis { align-items: start; }
+.studio-dashboard #runbook-modal .company-analysis > :only-child { grid-column: 1 / -1; }
+.studio-dashboard #runbook-modal .company-observations { display: grid; align-content: start; gap: 12px; min-width: 0; }
+.studio-dashboard #runbook-modal #company-state .runbook-check {
+  min-width: 0;
+  margin: 0;
+  padding: 16px 18px;
+  gap: 7px;
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+}
+.studio-dashboard #runbook-modal #company-state .runbook-check > strong {
+  margin: 0;
+  font-size: max(11px, .6875rem);
+  line-height: 1.5;
+  letter-spacing: .08em;
+}
+.studio-dashboard #runbook-modal #company-state .runbook-check > div {
+  font-size: max(14px, .875rem);
+  line-height: 1.55;
+}
+.studio-dashboard #runbook-modal #company-state :is(.company-overview, .company-channels) .runbook-check > div:first-of-type {
+  font-size: max(16px, 1rem);
+  line-height: 1.5;
+  font-weight: 600;
+}
+.studio-dashboard #runbook-modal .company-observations .runbook-check > div:first-of-type,
+.studio-dashboard #runbook-modal .runbook-flux > div:first-of-type {
+  font-weight: 400;
+  letter-spacing: normal;
+  color: var(--ink-2);
+}
+.studio-dashboard #runbook-modal .runbook-flux .pipe-row {
+  grid-template-columns: minmax(100px, .7fr) minmax(0, 1fr) 34px;
+  gap: 12px;
+  min-width: 0;
+  padding-block: 3px;
+}
+.studio-dashboard #runbook-modal .runbook-flux .pipe-label { white-space: normal; overflow: visible; font-size: max(12px, .75rem); line-height: 1.4; }
+.studio-dashboard #runbook-modal .runbook-flux .chart-notes { gap: 6px 12px; margin: 4px 0; line-height: 1.5; }
+.studio-dashboard #runbook-modal #company-decisions { gap: 12px; }
+.studio-dashboard #runbook-modal #company-decisions .topic-card { padding: 16px 18px; }
+.studio-dashboard #runbook-modal #company-decisions .motion-reason { max-width: 90ch; font-size: max(14px, .875rem); line-height: 1.6; }
+@media (max-width: 760px) {
+  .studio-dashboard #runbook-modal :is(.company-overview, .company-channels, .company-analysis) { grid-template-columns: minmax(0, 1fr); }
+  .studio-dashboard #runbook-modal #company-state .runbook-check { padding: 14px; }
+  .studio-dashboard #runbook-modal #company-decisions .topic-card { padding: 14px; }
+}

@@ -35,6 +35,16 @@ _DIRECTION = re.compile(r"\(([^()]{1,160})\)|\[([^\[\]]{1,160})\]|\*([^*]{1,160}
 #: is part of what is said.
 _LABEL = re.compile(r"^\s*([^:\n]{1,60}?)\s*:\s*(.+)$", re.DOTALL)
 
+#: Words whose full stop belongs to the word, not to the end of a sentence: the titles before
+#: a name and the abbreviations a script writes mid-sentence ("Dr. Aris", "the U.S. Navy").
+#: Kept without their last stop, as `stops_inside` compares them.
+_ABBREVIATIONS = frozenset(
+    {"dr", "mr", "mrs", "ms", "prof", "st", "jr", "sr", "u.s", "u.k", "e.g", "i.e", "vs"}
+)
+#: What may close a sentence after its mark ('"go."', "(done.)") or open a word before it.
+_CLOSERS = "\"'”’»)]}"
+_OPENERS = "\"'“‘«([{"
+
 
 def _key(text: Any) -> str:
     """A name as compared: case folded, spaces collapsed, outer punctuation off."""
@@ -99,13 +109,59 @@ class NameBook:
 
 def split_direction(text: Any) -> tuple[str, str]:
     """(the words a voice says, the stage directions taken out of them)."""
+    spoken, directions, _places = split_direction_places(text)
+    return spoken, directions
+
+
+#: Where a stage direction stood among the spoken words (`split_direction_places`).
+AT_START = "start"
+AT_END = "end"
+
+
+def split_direction_places(text: Any) -> tuple[str, str, list[dict[str, Any]]]:
+    """(the words a voice says, the stage directions taken out of them, where each direction
+    stood): ``{"direction", "at"}``, ``at`` being AT_START (before the first spoken word),
+    AT_END (after the last) or the number of spoken words before it (in the middle).
+
+    The pause rules read it (the Owner, 2026-10-16): a «(beat)» before a line is a silence
+    before it, after the line a silence after it, in the middle a silence that cuts the line
+    in two takes."""
     raw = str(text or "")
-    directions = [
-        " ".join(next(group for group in match.groups() if group).split())
-        for match in _DIRECTION.finditer(raw)
-    ]
+    directions: list[str] = []
+    places: list[dict[str, Any]] = []
+    total = len(_DIRECTION.sub(" ", raw).split())
+    for match in _DIRECTION.finditer(raw):
+        said = " ".join(next(group for group in match.groups() if group).split())
+        directions.append(said)
+        before = len(_DIRECTION.sub(" ", raw[: match.start()]).split())
+        at: str | int = AT_START if before == 0 else AT_END if before >= total else before
+        places.append({"direction": said, "at": at})
     spoken = " ".join(_DIRECTION.sub(" ", raw).split())
-    return spoken, "; ".join(directions)
+    return spoken, "; ".join(directions), places
+
+
+def pause_place(places: list[dict[str, Any]], is_pause: Any) -> str | int | None:
+    """Where the first direction that asks for a silence stood (``is_pause(direction)``):
+    AT_START, AT_END or the spoken words before it; None when none asks for one."""
+    for place in places:
+        if is_pause(place.get("direction")):
+            at = place.get("at")
+            return at if isinstance(at, str | int) else None
+    return None
+
+
+def _pause_words() -> Any:
+    """The pause rules' reading of a direction that asks for a silence, or None when the rules
+    are not in use (`app.media.pauses.direction_marked`)."""
+    try:
+        from app.media import pauses  # noqa: PLC0415 - the media reads the story
+
+        rules = pauses.active_rules()
+    except Exception:  # noqa: BLE001 - a line is stored whatever the pause rules say
+        return None
+    if rules is None or not rules.switch("marked_beats"):
+        return None
+    return lambda direction: pauses.direction_marked(direction, rules)
 
 
 def split_label(text: Any, names: NameBook | None = None) -> tuple[str | None, str]:
@@ -136,13 +192,19 @@ def clean_line(
     says who talks, and the label would be read aloud. None when nothing is left to say.
     """
     label, rest = split_label(text, names) if names is not None else (None, str(text or ""))
-    spoken, taken = split_direction(rest if label else text)
+    spoken, taken, places = split_direction_places(rest if label else text)
     notes = [part for part in (" ".join(str(direction or "").split()), taken) if part]
     if not spoken:
         return None
     line: dict[str, Any] = {"speaker": speaker, "text": spoken}
     if notes:
         line["direction"] = "; ".join(notes)[:200]
+    # Where a «(beat)» stood in the words (the Owner, 2026-10-16): the storyboard makes it a
+    # silence there. Only written for a direction that asks for one.
+    is_pause = _pause_words() if places else None
+    at = pause_place(places, is_pause) if is_pause is not None else None
+    if at is not None:
+        line["pause_at"] = at
     return line
 
 
@@ -164,6 +226,46 @@ def beat_lines(beat: dict[str, Any], names: NameBook | None = None) -> list[dict
         if line is not None:
             found.append(line)
     return found
+
+
+def stops_inside(word: Any) -> bool:
+    """Whether a word's full stop is part of the word: a title or an abbreviation
+    (`_ABBREVIATIONS`), or a single capital initial ("J. Robert"). "I." is not an initial:
+    "So did I." ends a line far more often than a name starts with it."""
+    bare = str(word or "").strip().rstrip(_CLOSERS).lstrip(_OPENERS)
+    if not bare.endswith(".") or bare.endswith(".."):
+        return False
+    stem = bare[:-1]
+    initial = len(stem) == 1 and stem.isalpha() and stem.isupper() and stem != "I"
+    return initial or stem.casefold() in _ABBREVIATIONS
+
+
+def ends_sentence(word: Any) -> bool:
+    """Whether a word ends its sentence: its last mark, before any closing quote or bracket,
+    is a full stop, a question or an exclamation mark — and the stop is not a title's, an
+    abbreviation's or an initial's (`stops_inside`). A decimal ("3.5") ends nothing: its
+    point is inside the word.
+
+    Measured 2026-10-16: «Dr. Aris guards his numbers.» was two sentences to the narration
+    check and two shots, two voice takes, to the montage, cut between the title and the name.
+    """
+    bare = str(word or "").strip().rstrip(_CLOSERS)
+    if not bare or bare[-1] not in ".!?":
+        return False
+    return not stops_inside(bare)
+
+
+def sentence_count(text: Any) -> int:
+    """How many sentences ``text`` holds (`ends_sentence`); words after the last full stop
+    are one more, and marks with no word before them are none."""
+    count, open_sentence = 0, False
+    for word in str(text or "").split():
+        if any(char.isalnum() for char in word):
+            open_sentence = True
+        if open_sentence and ends_sentence(word):
+            count += 1
+            open_sentence = False
+    return count + (1 if open_sentence else 0)
 
 
 def spoken_text(lines: Iterable[dict[str, Any]]) -> str:

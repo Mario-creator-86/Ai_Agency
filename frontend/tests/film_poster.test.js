@@ -68,7 +68,7 @@ test('the render bay samples distinct key frames across the film, in the order t
 });
 
 test('the frame kept is the brightest that is a picture, measured on the Owner\'s film', () => {
-  // ffmpeg on backend/storage/media/000000d5-.../final_short_9_16.mp4, the six key frames: mean luma
+  // ffmpeg on backend/storage/media/63e3da7c-.../final_short_9_16.mp4, the six key frames: mean luma
   // and the spread between a 4x7 grid of block means. The two brightest are near-flat stripes.
   const film = [
     { mean: 67.8, detail: 44.2 }, // a page of notes on black

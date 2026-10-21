@@ -29,7 +29,7 @@
 import { dayTrack, runStageWord, shortDate } from './hud_charts.js';
 import { lastTasks } from './hq_readouts.js';
 import { boardTopics } from './hq_screens.js';
-import { runDoneLine } from './ledger.js';
+import { isBookkeeping, runDoneLine } from './ledger.js';
 
 /** How long the whole run lasts on the page at 1×: about a minute, whatever its real length. */
 export const REPLAY_TARGET_MS = 60000;
@@ -874,12 +874,14 @@ export function captionLines(text, width = 56, max = 2) {
 /**
  * Whether a live event changes the world, and so ends a replay: an employee's state, speech or
  * task, a stage of a run, a workflow that moves to a stage, a film, a publication, the serial,
- * a fact, a review, money. The watchdog's routine rows and a catalogue refresh do not.
+ * a fact, a review, money. The watchdog's routine rows and a catalogue refresh do not, nor does
+ * the studio closing its own stale asks (ledger.js isBookkeeping): it changes nothing he sees.
  * @param {any} event
  */
 export function interruptsReplay(event) {
   const type = String((event && event.event_type) || '');
   if (!type) return false;
+  if (isBookkeeping(event)) return false;
   if (type.startsWith('workflow.')) return Boolean(event.payload && event.payload.current_stage);
   return /^(agent|runbook|media|publishing|story|factual|director|economy)\./.test(type);
 }

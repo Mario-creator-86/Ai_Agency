@@ -27,6 +27,9 @@ import { sheetKeyFor } from './sheet_key.js';
 const STEP_PLACE = { stills: 'imagini', test_shot: 'cadrul de probă', motion: 'mișcare', assemble: 'narațiune', scene_redo: 'o refacere' };
 
 /** How a film was published, in words. */
+/** Refusals of the walk that are the Director's to answer, never the Owner's. */
+const DIRECTOR_REFUSALS = new Set(['NEEDS_PROMPT_APPROVAL', 'LINT_BLOCKED', 'NEEDS_SHOT_PLAN', 'LADDER', 'NEEDS_STILL', 'NEEDS_OWNER_LOOK', 'STOPPED']);
+
 const PRIVACY_WORDS = { private: 'privat', unlisted: 'nelistat', public: 'public' };
 
 /**
@@ -104,6 +107,12 @@ export function filmOfTheDay(run) {
     return { label, value: `te așteaptă la ${place}`, note, tone: 'warn', sheet };
   }
   const first = films[0];
+  // A film that waits on the Director's own rounds (her audit of the words, the lint's blocks,
+  // her ladder) is hers, never «decizia ta» (the Owner, 2026-10-15 19:40Z: «Asta nu ar trebui să
+  // fie pentru directoare?»); only a film that waits on HIS cap or budget is his.
+  if (first && first.status === 'WAITING' && DIRECTOR_REFUSALS.has(String(first.refusal || ''))) {
+    return { label, value: 'Directoarea și Kael lucrează la foaia de filmare', note, tone: 'ok', sheet };
+  }
   if (first && first.status === 'WAITING') return { label, value: 'așteaptă decizia ta pe foaia de filmare', note, tone: 'warn', sheet };
   if (first && first.status === 'HELD') return { label, value: 'oprit înainte de un pas plătit', note, tone: 'warn', sheet };
   if (first && first.status === 'REFUSED') return { label, value: 'asamblarea a fost refuzată', note, tone: 'alert', sheet };

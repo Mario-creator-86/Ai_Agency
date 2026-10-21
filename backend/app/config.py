@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DIRECTOR_TOKEN_MULTIPLIER = 2
+DEFAULT_LLM_CONTEXT_MULTIPLIER = 10
 #: How many versions of one script the Director's editorial judgement scores before the
 #: best-scored one ships (the Owner, 2026-10-11, 23:30: «vreau să încerce de 10 ori»). The
 #: module that runs the rounds imports it (`app.agents.editorial_judgement.EDITORIAL_ROUNDS`).
@@ -54,6 +55,7 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1024, le=65535)
     sheet_blocker_scan_seconds: int = Field(default=300, ge=30, le=86400)
+    sheet_probe_workers: int = Field(default=4, ge=1, le=8)
     allowed_hosts: list[str] = ["localhost", "127.0.0.1"]
     #: LOCAL_AUTO_LOGIN (2026-10-08). The Owner: «Te rog sa elimini pagina de logare, nu trebuie
     #: momentan». On, the page opened on this machine at the studio's own loopback address is
@@ -261,9 +263,10 @@ class Settings(BaseSettings):
     #: motion, paid redos), in dollars (STUDIO_FILM_BUDGET_USD). Before every paid step of the
     #: shooting sheet, what the books already hold for the film plus the step's cap must fit
     #: under it, otherwise the step is refused OVER_FILM_BUDGET (the Owner's explicit consent
-    #: on the sheet may go over it). Unset, it is `motion_budget_usd` plus the stills cap of a
-    #: six-scene film at the published price (`shooting_sheet.film_ceiling_micros`): 15.24 USD
-    #: with the defaults. Measured 2026-10-01: a six-shot seedance2_5 sheet at 1080p caps at
+    #: on the sheet may go over it). Unset, it follows the Owner's active daily budget;
+    #: shared daily/monthly reservations still constrain every purchase. With no daily
+    #: budget, the configuration fallback is motion plus six-scene stills (15.24 USD).
+    #: Measured 2026-10-01: a six-shot seedance2_5 sheet at 1080p caps at
     #: about 26 USD, twice the per-film figure the preflight used to show; the real figure is
     #: the Owner's to set.
     film_budget_usd: float | None = Field(default=None, ge=0.0, le=100_000.0)
@@ -289,8 +292,9 @@ class Settings(BaseSettings):
     #: Owner last decided about it on the shooting sheet, whatever its prompt
     #: (STUDIO_MAX_PAID_ATTEMPTS_PER_SCENE). Past it the scene waits for him: a scene that
     #: fails is not bought again every day, and a prompt rewritten every day is not a new
-    #: allowance every day. 3 covers one stills request and its two re-rolls, or a shot, its
-    #: technical retry and clip QC's retry.
+    #: allowance every day. 3 covers a shot, its technical retry (a request that made
+    #: nothing) and clip QC's retry; the renders cap (`renders_per_layer`) binds before it on
+    #: what was made.
     max_paid_attempts_per_scene: int = Field(default=3, ge=1, le=20)
 
     #: How many days a factual film may stand still before the Director retires it
@@ -311,13 +315,38 @@ class Settings(BaseSettings):
     #: same takes) are applied without a limit of their own, once per failed film. 0 turns the
     #: paid redos off. The Owner, 2026-10-11: a film is redone until QC passes and only money
     #: stops it, so the defaults are the most these allow; the money gates decide the rest.
-    film_max_paid_redos_per_scene: int = Field(default=5, ge=0, le=5)
+    #: Unset (None), the per-scene figure is what the renders cap leaves after the first
+    #: purchase (`renders_per_layer` - 1, `media.renders_cap.paid_redos_per_scene`); a number
+    #: the Owner sets only lowers it, never past the cap, which counts every render whatever
+    #: the route (the first purchase, the re-rolls, the retries and the paid redos).
+    film_max_paid_redos_per_scene: int | None = Field(default=None, ge=0, le=5)
     film_max_paid_redos: int = Field(default=20, ge=0, le=20)
 
-    #: How long a short should be. The Owner's answer: about thirty seconds, and the story
-    #: decides — twenty-four when that is the film, thirty-four when a premium story needs it.
-    #: The writer is briefed with it, and the story review measures the narration against it.
-    target_video_seconds: int = 30
+    #: How many times one layer of one shot — its picture, its motion — is made, the first
+    #: purchase included (STUDIO_RENDERS_PER_LAYER); past it nothing of that layer is bought
+    #: again, the Director keeps what is closest to the plan and the film is published as it
+    #: stands. The Owner, 2026-10-15: three. The Owner, 2026-10-16 ~12:00Z, the montage's shots
+    #: being longer and dearer: «limităm acum la 2 randări, pentru că sunt mai lungi și mai
+    #: costisitoare, maxim încă o randare». Read at call time through
+    #: `media.renders_cap.renders_per_layer`, never copied into a constant.
+    renders_per_layer: int = Field(default=2, ge=1, le=5)
+
+    #: Montage (the Owner, 2026-10-16, after a Seedance fan film of 150 shots: «o mică poveste,
+    #: mișcare, efecte cinematice»): a filmed scene is cut into shots of about
+    #: ``montage_shot_seconds`` each (STUDIO_MONTAGE_SHOT_SECONDS), at most
+    #: ``montage_max_shots_per_scene`` (STUDIO_MONTAGE_MAX_SHOTS_PER_SCENE), each its own
+    #: ordinary storyboard scene with its own still, clip and camera move (`media.montage`).
+    #: STUDIO_MONTAGE_ENABLED=0 leaves every scene one shot, as before. Only storyboards built
+    #: after the switch are cut; open films are never touched.
+    montage_enabled: bool = True
+    montage_shot_seconds: float = Field(default=4.0, ge=2.0, le=9.0)
+    montage_max_shots_per_scene: int = Field(default=3, ge=1, le=4)
+
+    #: How long a short should be. The Owner, 2026-10-16: a short carries a small story a
+    #: stranger can follow — 60 to 180 seconds (YouTube's Shorts limit), aiming at 160 —
+    #: after a month of 30-second films that read as a list of facts. The writer is briefed
+    #: with it, and the story review measures the narration against it.
+    target_video_seconds: int = 160
 
     #: How many scenes of a render may be generated as motion. None means every scene; a
     #: small number is what a test render uses, so seeing how a film reads costs one shot
@@ -418,11 +447,23 @@ class Settings(BaseSettings):
     #: ceiling. The figure is the Owner's; none is chosen for him here.
     agent_daily_token_budget: int = Field(default=0, ge=0)
 
+    #: Whole generation lifetime, including an active thinking stream. A socket idle timeout
+    #: cannot end a model that keeps sending progress without completing its answer.
+    llm_generation_deadline_seconds: float = Field(default=1200, ge=1, le=3300)
+
     #: Scale each explicitly bounded Director generation, including both structured-output
     #: attempts (STUDIO_DIRECTOR_TOKEN_MULTIPLIER). Owner, 2026-10-11: double her allowance
     #: after the cyclotron QC retry exhausted 6,000 tokens without a visible answer. Other
     #: employees and the independent daily token/USD gates keep their own limits.
     director_token_multiplier: int = Field(default=DEFAULT_DIRECTOR_TOKEN_MULTIPLIER, ge=1, le=4)
+    #: Owner, 2026-10-14: ten times the internal LLM allowance, with complete messages.
+    #: This scales bounded output once; actual provider limits and financial gates remain.
+    llm_context_multiplier: int = Field(default=DEFAULT_LLM_CONTEXT_MULTIPLIER, ge=1, le=100)
+
+    #: Shot-plan output, independent of the Owner's daily token/USD gates. A demonstrated
+    #: exhausted native-thinking call is retried as whole single-scene work, with this cap.
+    shot_plan_output_tokens: int = Field(default=7000, ge=1000, le=65_536)
+    shot_plan_recovery_output_tokens: int = Field(default=21_000, ge=1000, le=65_536)
 
     #: How many versions of one script the Director's editorial judgement reads before the
     #: best-scored one ships (STUDIO_EDITORIAL_ROUNDS): the draft the structural review passed,
@@ -454,7 +495,10 @@ class Settings(BaseSettings):
     # scheduled jobs and executes the tasks they enqueue. Off in tests, where a loop that starts
     # the day on its own would make every other test's timing a coincidence.
     worker_enabled: bool = True
+    finish_existing_films_first: bool = True
     worker_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    #: Director backlog checks, also while waiting for GPU, without another paid task.
+    director_check_interval_seconds: int = Field(default=300, ge=30, le=3600)
 
     # ------------------------------------------------------------- the day and the clock
     #: When the day starts, on the studio's own wall clock (HH:MM in `timezone`). The daily

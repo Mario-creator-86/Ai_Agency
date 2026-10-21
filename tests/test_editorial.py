@@ -297,7 +297,7 @@ def test_the_director_watches_and_approves_and_the_verdict_is_a_record(engine, s
     assert result["verdict"] == "APPROVE" and result["model_used"] is True
     assert "AUDIENCE LANGUAGE: English" in seen["prompt"]
     assert "science.nasa.gov/webb" in seen["prompt"] and "golden mirror" in seen["prompt"]
-    assert model.calls[0]["extra"] == {"format": "json"}  # no frames: the file is not there
+    assert model.calls[0]["extra"] == {"format": "json", "think": False}  # no frames; structured answers disable thinking for this model
     with Session(engine) as session:
         review = latest_editorial(session, ids["asset"])
         assert review.verdict == "APPROVE" and review.story.startswith("A rocky world")
@@ -401,14 +401,14 @@ def test_only_her_lesson_is_kept_unverified_for_its_kind_of_film(engine, staffed
     [
         "The rocky world with water is lit differently in every shot.",
         "Scene 4's ledger shows digits; ask for blank pages.",
-        "x" * 401,
+        "x" * 4001,
         "   ",
     ],
 )
 def test_a_lesson_about_this_film_or_a_report_is_not_kept(engine, staffed, lesson):
     """Her lesson goes through the store's own refusal with the film it was learned on: its
     title (here «A rocky world with water», most of its words), a scene by its number, a
-    report over 400 characters, nothing at all."""
+    report over LESSON_MAX_CHARS (4000) characters, nothing at all."""
     from app.media.prompt_agent import prompt_lessons
 
     ids = a_film(engine, voiceover=ENGLISH, with_source=True, title="A rocky world with water")
@@ -667,8 +667,71 @@ def test_frames_are_sent_only_to_a_model_the_provider_says_can_see(engine, staff
     blind = editorial_review(engine, registry, ids["asset"], language="en")
     assert blind["frames_seen"] == 0 and blind["verdict"] == "APPROVE"
     assert "You cannot see the film itself" in seen["prompt"]
-    assert model.calls[0]["extra"] == {"format": "json"}
+    assert model.calls[0]["extra"] == {"format": "json", "think": False}
 
     _give_vision(engine, director.id)
     with Session(engine) as session:
         assert model_can_see(session, director.id) is True
+
+
+def test_a_rejection_of_a_film_accepted_under_the_owners_cap_is_notes_not_a_veto(engine, staffed):
+    """12:49Z, 2d276038: six seconds after the Director accepted the film under the Owner's cap
+    («publicăm ce avem»), her viewing refused it — first for the studio's own captions read as
+    «burned-in writing» — put the storyboard on REJECTED and told four departments to remake
+    it. Under the cap her viewing is notes: the verdict is recorded APPROVE with her reasons,
+    no department is told to remake anything, the lesson is kept, a storyboard an earlier
+    viewing refused stands RENDERED again, and the brief says the captions are the film's."""
+    from app.agents.editorial import accepted_under_cap, instructions_for
+    from app.media.director_qc import record_decision
+
+    ids = a_film(engine, voiceover=ENGLISH, with_source=True)
+    record_decision(
+        engine,
+        {
+            "report_id": str(uuid4()),
+            "media_asset_id": ids["asset"],
+            "storyboard_id": ids["board"],
+            "decided_by": "Director",
+            "decision": "ACCEPT",
+            "summary": "Acceptat sub plafonul Proprietarului.",
+            "verdicts": [],
+            "repairs": [],
+            "outcome": "ACCEPTED",
+            "final": True,
+            "accepted_under_cap": {"limited": [2, 4], "reason_ro": "plafonul"},
+        },
+        "c",
+    )
+    with Session(engine) as session, session.begin():
+        session.get(Storyboard, ids["board"]).status = "REJECTED"  # an earlier viewing's
+    with Session(engine) as session:
+        assert accepted_under_cap(session, ids["asset"])["accepted_under_cap"]["limited"] == [2, 4]
+    seen: dict = {}
+
+    def answer(prompt):
+        seen["prompt"] = prompt
+        return json.dumps(
+            {
+                "verdict": "REJECT",
+                "story": "A night of rewrites.",
+                "reasons": ["burned-in caption text in every frame", "the wrong room"],
+                "notes_for": {"VideoEditor": "Do not publish; a new still pass."},
+                "lesson": "Name only objects whose purpose is complete without content.",
+            }
+        )
+
+    registry, _model = registry_with(staffed, answer)
+    result = editorial_review(engine, registry, ids["asset"], language="en")
+
+    assert result["verdict"] == "APPROVE" and result["letters"] == 0
+    assert "never writing in the picture" in instructions_for(True, "")
+    assert "burns its own captions" in seen["prompt"]
+    with Session(engine) as session:
+        review = latest_editorial(session, ids["asset"])
+        assert review.verdict == "APPROVE"
+        assert review.reasons_json == ["burned-in caption text in every frame", "the wrong room"]
+        assert session.get(Storyboard, ids["board"]).status == "RENDERED"
+        assert (
+            session.scalar(select(AgentMessage).where(AgentMessage.subject.like("Refăcut:%")))
+            is None
+        )

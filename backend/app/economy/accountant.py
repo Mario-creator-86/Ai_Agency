@@ -732,7 +732,7 @@ def _letter_once_a_day(
         message = post_message(
             session,
             intent="ESCALATE",
-            subject=subject[:200],
+            subject=subject,
             body={**body, "kind": kind, "date": date_iso},
             body_text=body_text,
             from_agent_id=author.id,
@@ -793,7 +793,7 @@ def _letter_each_time(
         message = post_message(
             session,
             intent="ESCALATE",
-            subject=subject[:200],
+            subject=subject,
             body={**body, "kind": kind, "owner_attention": True},
             body_text=body_text,
             from_agent_id=author.id if author is not None else None,
@@ -821,10 +821,10 @@ def booking_refused_letter(
         engine,
         "booking_refused",
         subject="O cheltuială nu a putut fi trecută în registru",
-        body={"reference": reference, "reason": reason[:300]},
+        body={"reference": reference, "reason": reason},
         body_text=(
             f"Către Owner. O cumpărare de {amount_ro} nu a putut fi trecută în registru "
-            f"(referința {reference}): {reason[:300]}\n"
+            f"(referința {reference}): {reason}\n"
             "Banii au ieșit din cont, dar bugetul nu îi vede până nu sunt înregistrați. "
             "Verificați registrul furnizorului și înregistrați suma de mână dacă lipsește."
         ),
@@ -854,10 +854,10 @@ def paid_step_interrupted_letter(
         engine,
         "paid_step_interrupted",
         subject=f"Pasul «{step_words}» s-a oprit după ce a plătit",
-        body={"storyboard_id": storyboard_id, "booked": booked, "reason": reason[:300]},
+        body={"storyboard_id": storyboard_id, "booked": booked, "reason": reason},
         body_text=(
             f"Către Owner. Pasul «{step_words}» al filmului {storyboard_id[:8]} a trimis "
-            f"cereri plătite și apoi s-a oprit: {reason[:300]}\n"
+            f"cereri plătite și apoi s-a oprit: {reason}\n"
             f"Cheltuit sau posibil taxat: {credits_ro} ({amount_ro}). {books}\n"
             "Pasul nu se reia automat și nimic nu se cumpără din nou; cadrele deja cerute se "
             "ridică de la furnizor fără plată. Decideți pe foaia de filmare."
@@ -1207,7 +1207,7 @@ def reconcile_day(
         accountant_id = accountant.id
 
     prompt = _INSTRUCTIONS + wrap_in_inert_boundary(
-        json.dumps(figures, ensure_ascii=False, default=str)[:12000], "books"
+        json.dumps(figures, ensure_ascii=False, default=str), "books"
     )
     from app.agents.structured import structured_run  # noqa: PLC0415
 
@@ -1288,7 +1288,7 @@ def reconcile_day(
                 {
                     "message_id": m.id,
                     "amount_usd": m.body_json.get("amount_usd"),
-                    "justification": str(m.body_json.get("justification") or "")[:500],
+                    "justification": str(m.body_json.get("justification") or ""),
                     "week": m.body_json.get("week"),
                 }
                 for m in budget_requests
@@ -1317,7 +1317,7 @@ def reconcile_day(
             remember(
                 session,
                 memory_class="AGENT_OPINION",
-                content="Daily close: " + report.summary[:400],
+                content="Daily close: " + report.summary,
                 source_type="run",
                 source_id=result["id"],
                 agent_id=accountant_id,

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { eventMatchesAgent, nowLine } from '../src/live_window.js';
 
-const ID = '00000000-0000-4000-8000-0000000000aa';
+const ID = '4df0b539-49dc-41aa-b68f-748c67d87532';
 
 test('an agent event matches by aggregate, by payload, and by message participation', () => {
   assert.ok(eventMatchesAgent({ event_type: 'agent.state_changed', aggregate_id: ID, payload: {} }, ID));

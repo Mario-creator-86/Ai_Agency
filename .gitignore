@@ -16,6 +16,9 @@ output/
 .playwright-cli/
 *.egg-info/
 backend/storage/
+# The voices' measured pauses (app.media.pauses.load_profiles), derived from the kept
+# narration takes beside the films and rebuilt by itself: never committed.
+voice_pause_profiles.json
 Claude outputs/
 # Unreal reference project: everything the editor generates from the checked-in scripts
 art-source/unreal/AMNReference/Saved/
@@ -57,35 +60,5 @@ art-source/unreal/env_report.before_day_state.json
 # The Owner's licensed music files beside config/music_library.json (scripts/music_add.py):
 # never committed, never shipped (redistributable: false).
 config/music/
-
-# Source publication: local secrets, model weights and temporary developer artefacts
-venv/
-.env*
-!.env.example
-*.credentials.key
-*.pem
-*.pfx
-*.p12
-*.db
-*.db-wal
-*.db-shm
-*.sqlite*
-*.safetensors
-*.gguf
-*.ggml
-*.onnx
-*.pt
-*.pth
-*.ckpt
-*.log
-*.tmp
-*.bak
-scratch/
-.coverage*
-htmlcov/
-frontend/test-results/
-frontend/playwright-report/
-
-# Derived code-map output; Markdown summaries and generator source are retained.
-/docs/project/backend_map/callgraph.json
-/docs/project/backend_map/inventory.json
+# The YuNet face model is machine-managed (source, SHA-256 and licence in the media notices).
+backend/app/media/models/*.onnx

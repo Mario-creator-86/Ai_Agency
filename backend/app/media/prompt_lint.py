@@ -19,6 +19,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from runpod_worker.contract import MAX_PROMPT, WORKFLOWS
+
 from app.wording import count as count_ro
 
 BLOCK = "BLOCK"
@@ -35,15 +37,37 @@ VEO_MOTION_CLOSING = "Continuous, seamless shot."
 
 # Runway's promptText maxLength, when the contract does not state one.
 DEFAULT_PROMPT_MAX_UTF16 = 1000
+#: What each connected image route allows for one prompt, in characters, by model id: the
+#: GPU worker declares MAX_PROMPT for every workflow it serves (`runpod_worker.contract`);
+#: another vendor declares its own here. A model absent is linted on the explicit terms of
+#: its contract, else on Runway's legacy figure. A serial's complete prompt is never cut to
+#: fit (2026-10-14), so the route it is bought on must be the one it is judged against.
+ALLOWANCES: dict[str, int] = {model: MAX_PROMPT for model in WORKFLOWS}
 
-STILL_WORDS = (60, 120)
+# The still prompt's band of words: the studio's own editorial bound, not a vendor's — the
+# RunPod worker allows 20 000 characters (`runpod_worker.contract.MAX_PROMPT`), Runway 1 000
+# UTF-16 units (`DEFAULT_PROMPT_MAX_UTF16`, kept by the composer's cap). 60-120 since the
+# money staircase after the Nepal film (2026-10-01: long prompts drew mixed-up pictures);
+# 60-900 since 2026-10-15 20:07Z — the Owner: «de ce 120 de cuvinte? cine o impune?», then
+# «MUTĂ LA 900! PENTRU AMBELE! DACĂ NE PERMITE» — so a full subject, the action, the room, the
+# light and the composition fit together instead of giving way to one another (7c26a7ce
+# scene 2: four rounds for a room the budget had cut). It permits: the vendor's character cap
+# still bounds the composed prompt (`prompt_cap`) — on the RunPod route 20 000 characters
+# (about 3 000 words), on Runway's legacy figure 1 000.
+STILL_WORDS = (60, 900)
 # The motion prompt's band of words. 20-70 since the Nepal film (2026-09-27); 25-95 since
 # «Mișcare v2» (2026-10-11): a camera move said with its path and its tempo, a second beat
 # of camera on a clip of seven seconds or more, the subject's own action and the world in
 # motion do not fit in seventy words, and the live prompts of film aa170155 that did fit
 # («Slow push-in toward the subject. A slow drift of dust motes ... barely moving.») were
-# what the Owner saw as «doar un zoom, și mișcări mici».
-MOTION_WORDS = (25, 95)
+# what the Owner saw as «doar un zoom, și mișcări mici». 25-110 since 2026-10-15 16:50Z
+# (a4ecf40a scenes 6 and 7): the serial clip also names who is in the frame and nobody
+# else, and that the faces keep their features — the two causes of the day's paid refusals —
+# and those did not fit beside the ending and the room's life in ninety-five.
+# 25-900 since 2026-10-15 20:07Z, the Owner's figure for both prompts (see STILL_WORDS): the
+# move, the whole action, the ending, the cast, the faces and the room's life all fit; the
+# vendor's character cap (`prompt_cap`) is the bound that remains.
+MOTION_WORDS = (25, 900)
 MAX_INLINE_EXCLUSIONS = 2
 EVIDENCE_CHARS = 120
 
@@ -103,6 +127,134 @@ SHOT_SIZE = re.compile(
     r"\s+(?:shot|view|angle)\b",
     re.IGNORECASE,
 )
+
+# A still is one frozen moment: a camera move, a tempo or a span of the clip's seconds is
+# the motion prompt's and has no place in the picture's words (the Owner, 2026-10-13: «în
+# promptul de imagine nu are ce să caute indicații de mișcare»). The compiler leaves them out
+# of the still (`prompt_agent._clauses_of`: a clause that moves the camera is dropped, a tempo
+# is taken out of its clause) and `lint_still_prompt` says when a stored still prompt still
+# carries one (STILL_MOTION).
+#: A tempo or a span of the clip inside a clause: taken out of the still's words.
+STILL_TEMPO = re.compile(
+    r"\b(?:slowly|steadily|gradually|gently|smoothly|quickly|rapidly|swiftly|briskly"
+    r"|continuously|unhurriedly|over\s+the\s+(?:clip|shot)(?:'s)?(?:\s+seconds)?"
+    r"|throughout\s+the\s+(?:clip|shot)|for\s+the\s+whole\s+(?:clip|shot)"
+    r"|across\s+the\s+(?:whole\s+)?(?:clip|shot)|over\s+\d+\s+seconds?"
+    r"|as\s+the\s+(?:clip|shot)\s+(?:goes\s+on|runs|ends)"
+    r"|by\s+the\s+end\s+of\s+the\s+(?:clip|shot)|from\s+the\s+first\s+frame\s+to\s+the\s+last"
+    r"|frame\s+by\s+frame|second\s+by\s+second)\b",
+    re.IGNORECASE,
+)
+#: The camera itself as the subject of a verb of movement: the whole clause is the motion's.
+#: Only the camera, the lens and a drone: «the frame holds only the place and the things
+#: named» (`prompt_agent.NO_PEOPLE_SENTENCE`) is a composition, and «the shot shows» a
+#: picture; and only verbs that move it — a camera that «holds» or «stays» is a still.
+CAMERA_MOVING = re.compile(
+    r"\b(?:the\s+)?(?:camera|lens|drone)\s+"
+    r"(?:(?:slowly|gently|steadily|smoothly|then)\s+)?"
+    r"(?:moves?|moving|glides?|gliding|push(?:es|ing)|pulls?|pulling|tracks?|tracking"
+    r"|follows?|following|circles?|circling|orbits?|orbiting|rises?|rising|descends?"
+    r"|descending|sweeps?|sweeping|drifts?|drifting|pans?|panning|tilts?|tilting|zooms?"
+    r"|zooming|cranes?|craning|arcs?|arcing|travels?|travell?ing|swings?|swinging|creeps?"
+    r"|creeping|floats?|floating|clos(?:es|ing)\s+in|eases?\s+(?:in|out|closer|back)"
+    r"|easing\s+(?:in|out|closer|back))\b",
+    re.IGNORECASE,
+)
+#: The named moves a still prompt may say without moving anything: a locked camera is a
+#: composition, a handheld look is grain.
+_STILL_MAY_NAME = frozenset({"static", "handheld drift"})
+#: Where a named move is the camera's and not the subject's own: the clause names the camera
+#: or its stand-ins, or the move is said in the cinema's own words. «Earth orbits the Sun»
+#: and «she pulls back the curtain» are the subject's moment and stay (the Codex review of
+#: c6dc05c, 2026-10-13: a bare «orbits» emptied an astronomy scene's still).
+_CAMERA_CONTEXT = re.compile(
+    r"\b(?:camera|lens|shot|frame|framing|view|viewpoint|drone|pov|point\s+of\s+view)\b",
+    re.IGNORECASE,
+)
+_CAMERA_ONLY_MOVE = re.compile(
+    r"\b(?:doll(?:y|ies|ying)|crane(?:s|ing)?|pedestal|boom(?:s|ing)?\s+(?:up|down)"
+    r"|track(?:s|ing)?\s+(?:shot\s+)?(?:to\s+the\s+)?(?:left|right)|truck(?:s|ing)?"
+    r"|pan(?:s|ning)?\s+(?:left|right)|push[- ]in|pull[- ](?:back|out)|aerial\s+drift"
+    r"|rack[- ]focus|focus\s+(?:racks?|pulls?|pulling)|pull(?:s|ing)?\s+focus|zoom\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def _camera_moves_in(text: str) -> list[tuple[int, str]]:
+    """(start, words) of each named move in ``text`` that is the camera's: not a locked camera
+    or a handheld look (`_STILL_MAY_NAME`), and either said beside the camera
+    (`_CAMERA_CONTEXT`) or in the cinema's own words (`_CAMERA_ONLY_MOVE`)."""
+    lowered = text.lower()
+    beside_the_camera = bool(_CAMERA_CONTEXT.search(text))
+    found: list[tuple[int, str]] = []
+    for move, written in camera_moves(text):
+        if move in _STILL_MAY_NAME:
+            continue
+        if not beside_the_camera and not _CAMERA_ONLY_MOVE.search(written):
+            continue
+        at = lowered.find(written.lower())
+        if at >= 0:
+            found.append((at, written))
+    return found
+
+
+def still_motion(text: str) -> str:
+    """The earliest words of a still prompt that move the camera (a named move of the camera,
+    or the camera as the subject of a verb of movement) or give a tempo or a span of the
+    clip, else ""."""
+    found: list[tuple[int, str]] = []
+    for pattern in (CAMERA_MOVING, STILL_TEMPO):
+        match = pattern.search(text)
+        if match:
+            found.append((match.start(), match.group(0).strip()))
+    found += _camera_moves_in(text)
+    return min(found)[1] if found else ""
+
+
+def moves_the_camera(text: str) -> bool:
+    """Whether a clause of a plan field moves the camera (`CAMERA_MOVING`, or a named move
+    that is the camera's, `_camera_moves_in`)."""
+    return bool(CAMERA_MOVING.search(text)) or bool(_camera_moves_in(text))
+
+
+#: What joins a subject's moment to the camera's move in one clause ("the mercury rises as
+#: the camera pushes in"): cut off with the move, the moment stays.
+_BEFORE_CAMERA = re.compile(r"\s*(?:,|;|\b(?:as|while|and|with|then|before|until)\b)\s*$")
+
+
+def static_clause(text: str) -> str:
+    """A clause of a plan field as a still may say it: without the camera's movement. A clause
+    that only moves the camera is "" (the motion prompt's); one that says a moment first
+    ("the mercury rises as the camera pushes in on the scale") keeps the moment ("the mercury
+    rises") when at least two words of it stay whole."""
+    starts = [match.start() for match in CAMERA_MOVING.finditer(text)]
+    starts += [at for at, _written in _camera_moves_in(text)]
+    if not starts:
+        return text
+    first = min(starts)
+    head = _BEFORE_CAMERA.sub("", text[:first]).strip()
+    # The move was named by a subject of its own ("the camera"): the head ends before it.
+    head = re.sub(r"\s*\b(?:the|a|an)\s*$", "", head, flags=re.IGNORECASE).strip(" ,;")
+    if len(head.split()) < 2 or dangling(head):
+        return ""
+    # A head that is only the camera's own name ("the view", "the camera") says no picture.
+    if _CAMERA_CONTEXT.fullmatch(re.sub(r"^(?:the|a|an)\s+", "", head, flags=re.IGNORECASE)):
+        return ""
+    return head
+
+
+def without_tempo(text: str) -> str:
+    """``text`` with its tempo and clip-span words taken out (`STILL_TEMPO`), the spacing and
+    the punctuation closed up: "cloud rolls steadily across the ridges" is "cloud rolls across
+    the ridges"."""
+    said = STILL_TEMPO.sub(" ", text)
+    # Removing the last adverb in "faintly and steadily" must not leave a dangling
+    # conjunction: the compiler otherwise discards the whole visible-state clause.
+    if said != text:
+        said = re.sub(r"\s+\b(?:and|or|but)\b(?=\s*[,;.!?]|\s*$)", "", said)
+    said = re.sub(r"\s+([,;.!?])", r"\1", re.sub(r"\s{2,}", " ", said))
+    return said.strip()
+
 
 # The tempo a motion prompt must say once. "Smooth", "fluid", "deliberate" and "sweeping"
 # are the cinema's tempo words for an ample move (2026-10-11); "fast" and "quick" stay for a
@@ -288,8 +440,12 @@ _PANEL_LABEL_IN_PROMPT = re.compile(
 #: The head of a broken sentence: a clause that ends in an article, a preposition, a
 #: conjunction or "is" ("The film exists in two interconnected spaces: the", babcf272).
 #: Lower-case "a" only, so "Plan A" stays whole. Read it through dangling().
+#: A hyphenated compound that ends in one of these words is a whole word («straight-on»,
+#: «head-on», «switched-on», «close-up», «drive-in»): 2026-10-15 19:03Z, 7c26a7ce scene 3,
+#: «facing the viewer straight-on» was read as a clause breaking off at «on», and the Editor
+#: was told to rewrite a whole sentence three rounds running.
 DANGLING_END = re.compile(
-    r"(?:\b(?i:the|an|of|in|on|at|to|and|or|with|from|by|for|is|are)|\ba)\s*$"
+    r"(?<!-)(?:\b(?i:the|an|of|in|on|at|to|and|or|with|from|by|for|is|are)|\ba)\s*$"
 )
 #: "In", "on" and "by" after a verb of motion are adverbs, and the clause is whole: "fog
 #: rolling in", "clouds drift by", "the lamps switched on" are the world motion a clip wants.
@@ -306,9 +462,24 @@ _PARTICLE_END = re.compile(
 )
 
 
+#: «stay exactly as they are», «the room as it is», «left where they were»: a clause that ends
+#: in a form of «to be» after «as / how / where / what + pronoun» is whole, not broken.
+#: 2026-10-15 19:43Z, 7c26a7ce scene 3: the Editor's whole sentence «… and the bench and the
+#: equipment behind stay exactly as they are» was refused as a fragment three repairs running.
+_WHOLE_END = re.compile(
+    r"\b(?:as|how|where|what|the\s+way)\s+(?:they|it|she|he|we|you|things|everything)\s+"
+    r"(?:are|is|were|was)\s*$",
+    re.IGNORECASE,
+)
+
+
 def dangling(text: str) -> bool:
     """Whether a clause breaks off: it ends in a function word that needs what follows."""
-    return bool(DANGLING_END.search(text)) and not _PARTICLE_END.search(text)
+    return (
+        bool(DANGLING_END.search(text))
+        and not _PARTICLE_END.search(text)
+        and not _WHOLE_END.search(text)
+    )
 
 
 _ASIDE = re.compile(r"\s*\(([^()]*)\)")
@@ -429,6 +600,46 @@ BIBLE_NO_FACES = re.compile(
     r"|shown|seen))\b|\bwithout\s+(?:human\s+)?faces\b",
     re.IGNORECASE,
 )
+# Explicitly contradictory first-frame geometry, not an AI aesthetic judgement.
+# These narrow checks prevent paying for physically impossible compositions; unrelated
+# back views and visible faces remain fully allowed.
+_BACK_TO_CAMERA = re.compile(
+    r"\b(?:seen|shown|viewed|filmed)\s+(?:only\s+)?from\s+behind\b"
+    r"|\b(?:their|his|her|the)\s+backs?\s+to\s+(?:the\s+)?camera\b",
+    re.IGNORECASE,
+)
+_MEDAL_AT_FRONT = re.compile(
+    r"\bmedals?\b[^.!?;]{0,100}\b(?:at|on|over|across)\s+"
+    r"(?:their|his|her|the)\s+(?:chests?|fronts?|lapels?)\b",
+    re.IGNORECASE,
+)
+_REFLECTED_FRONT = re.compile(r"\b(?:mirror|reflection|reflected)\b", re.IGNORECASE)
+_VACUUM_SPACE = re.compile(
+    r"\b(?:pure\s+vacuum|deep\s+space|intergalactic\s+(?:space|void)"
+    r"|void\s+black|unbroken\s+darkness)\b",
+    re.IGNORECASE,
+)
+_TERRESTRIAL_CAMERA = re.compile(
+    r"\b(?:ground|road)\s+(?:sliding|moving|rolling|passing)\s+beneath\b"
+    r"|\bhorizon\s+(?:opening|rising|extending)\s+ahead\b",
+    re.IGNORECASE,
+)
+_REAL_SURFACE = re.compile(
+    r"\b(?:earth(?:'s)?|planet(?:ary)?|moon|landscape|terrain|surface)\b",
+    re.IGNORECASE,
+)
+_NO_SURFACE = re.compile(
+    r"\b(?:no|without|lacking)\s+(?:an?\s+|the\s+|visible\s+)?"
+    r"(?:ground|planet|moon|surface|terrain)"
+    r"(?:\s+(?:or|and)\s+(?:ground|planet|moon|surface|terrain))*\b",
+    re.IGNORECASE,
+)
+_TEMPORAL_STILL = re.compile(
+    r"\b(?:brightens?\s+and\s+dims?|dims?\s+and\s+brightens?"
+    r"|pulses?\s+and\s+fades?)\b",
+    re.IGNORECASE,
+)
+
 BIBLE_AVOID_FACES = re.compile(
     r"^\s*(?:visible\s+|human\s+|recogni[sz]able\s+|any\s+)*faces?(?:\s+visible)?\s*$",
     re.IGNORECASE,
@@ -472,6 +683,7 @@ class LintScene:
     motion_prompt: str = ""
     model_id: str | None = None
     contract: Mapping[str, Any] | None = None
+    composition_issues: tuple[str, ...] = ()
 
 
 class PromptLintBlocked(Exception):
@@ -555,29 +767,39 @@ def model_family(model_id: str | None) -> str | None:
     return None
 
 
-def prompt_cap(contract: Mapping[str, Any] | None, target: str) -> int:
-    """The promptText limit in UTF-16 units from a contract, else Runway's 1000."""
+def _prompt_limit(contract: Mapping[str, Any] | None, target: str) -> tuple[int, bool]:
+    """(allowance, measured in characters): explicit terms, the route's declared allowance
+    (`ALLOWANCES`), legacy Runway."""
     if not contract:
-        return DEFAULT_PROMPT_MAX_UTF16
-    for key in ("prompt_max_utf16", "prompt_max"):
+        return DEFAULT_PROMPT_MAX_UTF16, False
+    for key in ("prompt_max_utf16", "prompt_max_chars", "prompt_max"):
         value = contract.get(key)
         if isinstance(value, bool):
             continue
         if isinstance(value, int) and value > 0:
-            return value
+            return value, key == "prompt_max_chars"
         if isinstance(value, Mapping):
             task = "text_to_image" if target == "still" else "image_to_video"
             chosen = value.get(task)
             if isinstance(chosen, int) and not isinstance(chosen, bool) and chosen > 0:
-                return chosen
+                return chosen, key == "prompt_max_chars"
             numbers = [
                 v
                 for v in value.values()
                 if isinstance(v, int) and not isinstance(v, bool) and v > 0
             ]
             if numbers:
-                return min(numbers)
-    return DEFAULT_PROMPT_MAX_UTF16
+                return min(numbers), key == "prompt_max_chars"
+    model_id = contract.get("still_model_id") if target == "still" else None
+    model_id = model_id or contract.get("model_id") or contract.get("model")
+    if isinstance(model_id, str) and model_id in ALLOWANCES:
+        return ALLOWANCES[model_id], True
+    return DEFAULT_PROMPT_MAX_UTF16, False
+
+
+def prompt_cap(contract: Mapping[str, Any] | None, target: str) -> int:
+    """The explicit vendor allowance or the selected route's declared request limit."""
+    return _prompt_limit(contract, target)[0]
 
 
 def _sequence_in(text: str) -> str:
@@ -615,8 +837,17 @@ def classify_kind_phrase(text: str) -> tuple[str, str] | None:
 
 
 def bible_face_rule(bible: Mapping[str, Any] | None) -> str | None:
-    """The bible's own words when it forbids faces, else None."""
+    """Return an intentional no-visible-faces rule, never a blanket platform ban.
+
+    Explicit ALLOW/REQUIRE override legacy generated "no faces" prose. Explicit HIDE
+    preserves the restriction even if the bible does not repeat it in words.
+    Bibles without a policy keep their previous semantics: old films are not silently
+    reinterpreted in the middle of a paid production.
+    """
     if not isinstance(bible, Mapping):
+        return None
+    policy = str(bible.get("face_policy") or "").strip().upper()
+    if policy in ("ALLOW", "REQUIRE"):
         return None
     rules: list[str] = []
     for key in ("continuity_rules", "rules", "people_rule"):
@@ -634,6 +865,8 @@ def bible_face_rule(bible: Mapping[str, Any] | None) -> str | None:
             text = str(item)
             if BIBLE_AVOID_FACES.match(text) or BIBLE_NO_FACES.search(text):
                 return text
+    if policy == "HIDE":
+        return "Faces must not be visible (explicit face_policy: HIDE)"
     return None
 
 
@@ -686,7 +919,9 @@ def _finding(code: str, severity: str, scene: int | None, evidence: str, message
 # --- checks shared by both prompts -----------------------------------------------------------
 
 
-def _hygiene(text: str, scene: int | None, target: str, cap: int) -> list[Finding]:
+def _hygiene(
+    text: str, scene: int | None, target: str, cap: int, *, characters: bool = False
+) -> list[Finding]:
     where = WHERE_RO[target]
     findings: list[Finding] = []
 
@@ -757,17 +992,18 @@ def _hygiene(text: str, scene: int | None, target: str, cap: int) -> list[Findin
             )
         )
 
-    units = utf16_units(text)
+    units = len(text) if characters else utf16_units(text)
     if units > cap:
-        overflow = text[_index_at_units(text, cap) :]
+        overflow = text[cap if characters else _index_at_units(text, cap) :]
         shown = _excerpt(overflow, 60)
+        measure = "caractere" if characters else "unități"
         findings.append(
             _finding(
                 "OVER_CAP",
                 BLOCK,
                 scene,
                 overflow,
-                f"Promptul {where} are {units} unități, peste limita de {cap} a modelului. "
+                f"Promptul {where} are {units} {measure}, peste limita de {cap} a modelului. "
                 f"Partea care nu încape începe cu „{shown}”. Promptul nu se taie: "
                 "se rescrie mai scurt.",
             )
@@ -787,7 +1023,8 @@ def lint_still_prompt(
     kind: str = LIVE,
 ) -> list[Finding]:
     """Findings for the prompt sent to the image model for one LIVE scene."""
-    findings = _hygiene(text, scene, "still", prompt_cap(contract, "still"))
+    cap, characters = _prompt_limit(contract, "still")
+    findings = _hygiene(text, scene, "still", cap, characters=characters)
 
     exclusions = [match.group(0) for match in INLINE_EXCLUSION.finditer(text)]
     if len(exclusions) > MAX_INLINE_EXCLUSIONS:
@@ -861,6 +1098,50 @@ def lint_still_prompt(
                 f"Promptul imaginii trimite la altă scenă („{pointer.group(0)}”). Modelul de "
                 "imagine nu știe cum arată „scena N” și poate desena mai multe tablouri "
                 "într-unul; descrieți locul în cuvinte.",
+            )
+        )
+    # WARN, as STILL_SEQUENCE: the compiler keeps movement out of the still (2026-10-13); this
+    # tells the Owner when a stored prompt still carries a camera move, a tempo or a span.
+    moving = still_motion(text)
+    if moving:
+        findings.append(
+            _finding(
+                "STILL_MOTION",
+                WARN,
+                scene,
+                moving,
+                f"Promptul imaginii cere mișcare („{moving}”). O imagine este un singur moment "
+                "nemișcat: mișcarea camerei, tempoul și durata clipului se spun doar în "
+                "promptul de mișcare. Descrieți ce se vede în acel moment.",
+            )
+        )
+
+    # A front-of-chest medal cannot be visible on someone explicitly shown only
+    # from behind, unless a reflection is deliberately part of the shot.
+    back = _BACK_TO_CAMERA.search(text)
+    medal = _MEDAL_AT_FRONT.search(text)
+    if back and medal and not _REFLECTED_FRONT.search(text):
+        findings.append(
+            _finding(
+                "PHYSICAL_MEDAL_ORIENTATION",
+                BLOCK,
+                scene,
+                medal.group(0),
+                "Promptul imaginii cere oameni văzuți din spate, dar medalii vizibile "
+                "la piept/în față. Poziționați camera în față sau la trei sferturi "
+                "ori descrieți o compoziție fizic coerentă înainte de generare.",
+            )
+        )
+    temporal = _TEMPORAL_STILL.search(text)
+    if temporal:
+        findings.append(
+            _finding(
+                "STILL_TEMPORAL_CHANGE",
+                WARN,
+                scene,
+                temporal.group(0),
+                "Promptul imaginii descrie o schimbare în timp. Păstrați în imagine "
+                "o singură stare a luminii și descrieți variația în promptul video.",
             )
         )
 
@@ -937,7 +1218,28 @@ def lint_motion_prompt(
     contract: Mapping[str, Any] | None = None,
 ) -> list[Finding]:
     """Findings for the promptText sent with the approved still to the video model."""
-    findings = _hygiene(text, scene, "motion", prompt_cap(contract, "motion"))
+    cap, characters = _prompt_limit(contract, "motion")
+    findings = _hygiene(text, scene, "motion", cap, characters=characters)
+    # Catch a concrete terrestrial camera move pasted into a vacuum scene.
+    # Do not infer an Earth horizon from astronomy words alone; an explicit
+    # planet, moon or landscape in the planned still makes the move legitimate.
+    ground = _TERRESTRIAL_CAMERA.search(text)
+    if (
+        ground
+        and _VACUUM_SPACE.search(still_prompt)
+        and not _REAL_SURFACE.search(_NO_SURFACE.sub("", still_prompt))
+    ):
+        findings.append(
+            _finding(
+                "PHYSICAL_COSMIC_GROUND",
+                BLOCK,
+                scene,
+                ground.group(0),
+                "Mișcarea cere sol/orizont terestru sub cameră, dar imaginea "
+                "descrie vid cosmic fără suprafață. Descrieți deplasarea camerei "
+                "printre filamente/galaxii, fără elemente de pe Pământ.",
+            )
+        )
     family = model_family(model_id)
     model_name = model_id or "modelul video"
 
@@ -1117,7 +1419,9 @@ def lint_scene(
 ) -> list[Finding]:
     """Findings for one scene: its kind, then its prompts if it is filmed."""
     kind = (scene.kind or "").upper()
-    terms = scene.contract if scene.contract is not None else contract
+    terms = dict(scene.contract if scene.contract is not None else contract or {})
+    if scene.model_id:
+        terms.setdefault("model_id", scene.model_id)
     if kind not in SCENE_KINDS:
         return [
             _finding(
@@ -1145,6 +1449,8 @@ def lint_scene(
             )
         ]
     findings: list[Finding] = []
+    for issue in scene.composition_issues:
+        findings.append(_finding("REQUIRED_CONTENT_LOST", BLOCK, scene.scene, issue, issue))
     if not scene.still_prompt.strip():
         findings.append(
             _finding(
@@ -1204,7 +1510,7 @@ def _camera_language(
             return [
                 _finding(
                     "SAME_CAMERA_EVERY_SCENE",
-                    BLOCK,
+                    WARN if first[1] == "static" else BLOCK,
                     None,
                     first[2],
                     "Toate cele "

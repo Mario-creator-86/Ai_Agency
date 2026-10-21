@@ -1,6 +1,23 @@
-"""Offline regression tests for test serial ladder.
+"""The serial rung of the Director's ladder (2026-10-12).
 
-Providers are faked; all data is synthetic."""
+Live, film f06808c9 («The Zero Script Club»): the stills of scenes 3 and 4 came back as stacked
+panels on every candidate and re-roll, the composer was fixed (48bbcd1), and the walk after the
+restart stopped on «Directoarea nu a putut încă rescrie scenele 3, 4 … (Scena nu este una pe
+care studioul o rescrie (card, serial, film închis))»: the Director's rewrite reads no serial
+scene, a redo would have bought the stored words again, and the film waited for the Owner —
+which his rule forbids. A serial scene's words are the composer's: said again with today's
+composer when they changed, written as her decision on the scene, so the stills step buys
+again on the new words; a scene whose words are already today's says so and is not rewritten.
+
+Later that day the Owner, on scene 4 redone and redone («Cum să lași de 5 ori refacerea
+scenei? Nu este clar că este o problemă?»): the gate had refused «two women facing each other
+across the ledger instead of the requested medium close-up single on Nadia with Sarah only at
+frame edge», and the rung asked the same words again with another seed. Now a technical refusal
+of the gate (panels, blur) is still another picture on the same words; a content refusal (the
+gate's, a clip QC block, the film QC's findings) goes to her brief, his rewrite and her review,
+and the serial composer says the rewritten fields again — who is in frame, the room, the shot's
+size and the look stay the studio's. Every provider is faked; nothing is bought.
+"""
 
 from __future__ import annotations
 
@@ -464,6 +481,41 @@ def test_a_stale_serial_scene_is_composed_again_as_her_decision(engine, staffed,
         assert serial_recomposition(session, board_id, 3) is None
 
 
+def test_a_serial_scene_whose_clip_words_alone_are_stale_keeps_its_picture(
+    engine,
+    staffed,  # noqa: F811
+    monkeypatch,
+):
+    """2026-10-16: the composer's faces and life sentences changed the clip's words of every
+    serial shot and the picture's words of none but the establishing ones. A refused clip whose
+    picture words are today's is said again on the motion layer: the decision clears the clip,
+    and the stills step does not buy the unchanged picture again."""
+    board_id = described_board(engine, monkeypatch)
+    with Session(engine) as session, session.begin():
+        scene = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == board_id, StoryboardScene.scene_index == 2
+            )
+        )
+        package = dict(scene.prompt_json or {})
+        still = package["still_prompt"]
+        package["motion_prompt"] = STALE_MOTION + str(package.get("action"))
+        scene.prompt_json = package
+    refused_by_clip_qc(engine, board_id, 2, "the hands lift off the desk")
+
+    outcome = rewrite_failed_scene(engine, models(), board_id, 2, "c-2")
+
+    assert outcome["rewritten"] is True and outcome["layer"] == MOTION, outcome
+    assert outcome["reason"] == SERIAL_RECOMPOSE_REASON
+    assert "doar mișcarea" in outcome["summary_ro"]
+    (event,) = rewritten_events(engine)
+    assert event.payload["layer"] == MOTION and event.payload["decided_by"] == "director"
+    assert event.payload["still_prompt"] == event.payload["old_still_prompt"] == still
+    assert not event.payload["motion_prompt"].startswith(STALE_MOTION)
+    with Session(engine) as session:
+        assert serial_recomposition(session, board_id, 2) is None
+
+
 def test_a_serial_scene_with_todays_words_is_not_rewritten_and_says_so(
     engine,
     staffed,  # noqa: F811
@@ -747,9 +799,14 @@ def test_a_serial_motion_rewrite_whose_finding_is_in_the_kept_action_turns_to_th
     # sentence the layer keeps (2026-10-12 evening review of a50407e).
     assert MOVE_SENTENCES[terms["camera_move"]] not in fixed
     assert terms["said_by_his_fields"]["camera_move"][0] == MOVE_SENTENCES[terms["camera_move"]]
-    # Only the composer's sentences the prompt carries: the room's life gave way to the budget.
+    # Only the composer's sentences the prompt carries. The clip's life follows the plan since
+    # 2026-10-16 (a pose or a steady room in the ending takes it out): it is the ending_frame's
+    # sentence, his to change, never one the layer keeps.
     assert all(sentence in motion_said for sentence in fixed)
-    assert (SERIAL_LIFE_SENTENCE in fixed) == (SERIAL_LIFE_SENTENCE in motion_said)
+    assert SERIAL_LIFE_SENTENCE not in fixed
+    assert (SERIAL_LIFE_SENTENCE in motion_said) == (
+        SERIAL_LIFE_SENTENCE in terms["said_by_his_fields"].get("ending_frame", [])
+    )
     # The still is kept whole and is in the prompts beside the terms: not said again.
     assert terms["still_kept_whole"] == STILL_KEPT_WHOLE
     assert review_data["prompts_after"]["still"] not in terms["fixed_sentences"]["still"]

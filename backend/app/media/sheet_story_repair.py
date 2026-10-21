@@ -16,7 +16,7 @@ from app.agents.messages import post_message
 from app.db import lock_for_write
 from app.factual.agent_pipeline import NoVerifiedClaims, ScriptRejected, agent_write_script
 from app.factual.models import ScriptDraft
-from app.factual.story_review import latest_review, review_story, story_gate
+from app.factual.story_review import latest_review, review_story, rewrite_notes, story_gate
 from app.media.models import Storyboard
 from app.media.services import generate_storyboard_from_script
 from app.models import DomainEvent
@@ -171,6 +171,7 @@ def repair_story(
         passed, why = story_gate(session, script_id)
         review = latest_review(session, script_id)
         notes = list((review.notes_json or {}).get("notes") or []) if review else []
+        retention = review.retention_json if review else None
     # SCENE_TOO_LONG (2026-10-10): a scene no clip of the motion model carries, even slowed
     # down locally. No prompt makes it shorter; the story is rewritten with the scene split.
     split = [i for i in issues if i["code"] == "SCENE_TOO_LONG"]
@@ -181,6 +182,7 @@ def repair_story(
         _handoff(engine, board_id, parent, "Director", why, correlation)
         reading = review_story(engine, registry, script_id, correlation, continuous=True)
         notes = list(reading.get("notes") or [])
+        retention = reading.get("retention")
         with Session(engine) as session:
             passed, why = story_gate(session, script_id)
         if passed and not visual_rewrite and script_id == original_script_id:
@@ -200,7 +202,8 @@ def repair_story(
                 if split
                 else []
             ),
-            *notes[:5],
+            # Her notes and the retention row she judged the story against (`rewrite_notes`).
+            *rewrite_notes(notes[:5], retention),
             *[i["detail"] for i in visual_rewrite[:2]],
         ]
         _handoff(engine, board_id, parent, "ScriptWriter", "\n".join(notes), correlation)

@@ -5,7 +5,7 @@ that showed no price, asked nothing, and was judged only after everything was pa
 module walks one film up the staircase the way the Owner's page does, through the studio's
 own HTTP routes, and proves what each stair buys:
 
-  plan   the Nepal shot plan (the model's own answer, tests/fixtures/factual_sample/
+  plan   the Nepal shot plan (the model's own answer, tests/fixtures/nepal_1d530880/
          shot_pack.txt) is parsed and compiled into a still prompt and a motion prompt per
          filmed scene; the chart and the black screen get no paid prompt at all;
   lint   the compiled prompts carry no BLOCK;
@@ -54,7 +54,7 @@ from test_stills_stage import SpyJudge, SpyStills
 
 pytestmark = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
 
-FIXTURES = Path(__file__).parent / "fixtures" / "factual_sample"
+FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
 SHOT_PACK = FIXTURES / "shot_pack.txt"
 PROMPTS = json.loads((FIXTURES / "prompts.json").read_text(encoding="utf-8"))
 

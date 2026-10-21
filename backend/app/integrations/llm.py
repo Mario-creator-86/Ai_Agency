@@ -4,27 +4,39 @@ This is the adapter behind every connection made in Settings — the Owner's Oll
 included — not `app.providers.ollama`, which serves only the seeded local endpoint. Anything
 that must hold for the studio's real runs belongs here first.
 
-Ollama generation asks for thinking off. Ollama counts a model's private reasoning against
-`num_predict`, so a thinking model asked for 700 tokens could spend all 700 reasoning and
-return an empty `response` — seventeen of eighteen fact-checks did exactly that, recorded
-as successes with nothing under them. The whole budget now goes to the answer, and the
+Local Ollama generation asks for thinking off. Ollama counts a model's private reasoning
+against `num_predict`, so a thinking model asked for 700 tokens could spend all 700 reasoning
+and return an empty `response` — seventeen of eighteen fact-checks did exactly that, recorded
+as successes with nothing under them. The whole budget goes to the answer there, and the
 response's `done_reason` travels back so an empty answer can say why.
+
+Ollama Cloud is asked nothing about thinking (2026-10-15). It gets no `num_predict` either, so
+reasoning cannot starve the answer; and `think: false` was breaking a model: glm-5.3-flash,
+told not to think, narrated its reasoning INTO the visible answer — 38,000 to 74,000 tokens of
+«Let me work through this carefully…» and no JSON, four episodes in a row, three scripts —
+while every model asked natively put its reasoning in the separate `thinking` field and
+answered the object (probed on the Owner's account: deepseek-v4-pro, deepseek-v4.1-flash,
+glm-5.3-flash, kimi-k3, mistral-large-4; with `format: json` as well). The reasoning is never
+returned to a caller; only its length is, as `thinking_chars`. A caller that must say
+(`extra={"think": ...}`, `agents.structured`) still can.
 """
 
 import asyncio
 import http.client
 import json
+import time
 from typing import Any
 from urllib.parse import urlsplit
 
 from app.economy.prices import PriceLookup, llm_cost_vr
 from app.providers.base import GenerateResult, HealthResult, LLMProvider, ModelInfo
+from app.providers.media_http import _DeadlineGuard
 from app.providers.retry import SAFE_TO_RESEND_STATUSES, call_with_retries, parse_retry_after
 
 BASE_URLS = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
 
-#: How long one generation may take. The daily run's worker lease is an hour; an answer that
-#: needs ten minutes is slow, not broken.
+#: Socket idle timeout. The configurable whole-generation deadline also bounds a stream
+#: that remains active without completing an answer.
 REQUEST_TIMEOUT_SECONDS = 600
 
 
@@ -42,6 +54,7 @@ class ProviderHTTPError(ValueError):
         *,
         word: str | None = None,
         keyless: bool = False,
+        reason_code: str | None = None,
     ) -> None:
         super().__init__(f"Provider request failed (HTTP {http_status})")
         self.http_status = http_status
@@ -49,12 +62,77 @@ class ProviderHTTPError(ValueError):
         #: The vendor's own one-word code for the refusal («unauthorized», «PERMISSION_DENIED»)
         #: when its body carried one; never the body's message, which can quote the request.
         self.word = word
+        self.reason_code = reason_code
         #: The call carried no key of the studio's (the seeded local endpoint): a refused
         #: authorisation is that service's own sign-in, not a key to re-enter in Settings.
         self.keyless = keyless
         #: A 5xx the vendor does not call safe to retry may come after the model wrote (and
         #: billed) the answer: a generation is not asked again on it.
         self.unanswered = 500 <= http_status <= 599 and http_status not in SAFE_TO_RESEND_STATUSES
+
+
+def refusal_reason(data: Any) -> str | None:
+    """Classify a vendor refusal; no quoted message or request enters the record."""
+    error = data.get("error") if isinstance(data, dict) else None
+    if isinstance(error, dict):
+        error = error.get("message") or error.get("code")
+    if not isinstance(error, str):
+        return None
+    text = error.casefold()
+    if "num_predict" in text:
+        return "OUTPUT_LIMIT"
+    if any(
+        k in text for k in ("max_tokens", "max_completion_tokens", "num_predict", "output tokens")
+    ) and any(
+        k in text for k in ("less than", "maximum", "exceed", "too large", "at most", "range")
+    ):
+        return "OUTPUT_LIMIT"
+    if any(k in text for k in ("context window", "context length", "input tokens")) and any(
+        k in text for k in ("exceed", "too long", "maximum", "limit")
+    ):
+        return "CONTEXT_LIMIT"
+    if "thinking" in text and any(
+        k in text for k in ("does not support", "unsupported", "not supported")
+    ):
+        return "UNSUPPORTED_THINKING"
+    return None
+
+
+def _read_ollama_stream(response: Any, *, deadline: float | None = None) -> dict[str, Any]:
+    """Read complete progress within both socket and whole-generation deadlines."""
+    chunks: list[str] = []
+    thinking_chars = 0
+    while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ProviderUnreachable("Provider generation deadline exceeded", unanswered=True)
+        line = response.readline(4_000_001)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ProviderUnreachable("Provider generation deadline exceeded", unanswered=True)
+        if not line:
+            raise ProviderUnreachable("Provider stream ended before completion", unanswered=True)
+        if len(line) > 4_000_000:
+            raise ValueError("Provider response line exceeds limit")
+        if not line.strip():
+            continue
+        part = json.loads(line)
+        if not isinstance(part, dict):
+            raise ValueError("Provider response has invalid stream shape")
+        if part.get("error"):
+            raise ProviderUnreachable("Provider stream reported a failure", unanswered=True)
+        chunk = part.get("response") or ""
+        if not isinstance(chunk, str):
+            raise ValueError("Provider response has invalid text shape")
+        chunks.append(chunk)
+        thinking = part.get("thinking") or ""
+        thinking_chars += len(thinking) if isinstance(thinking, str) else 0
+        if part.get("done") is True:
+            return {
+                "response": "".join(chunks),
+                "done_reason": part.get("done_reason"),
+                "prompt_eval_count": part.get("prompt_eval_count"),
+                "eval_count": part.get("eval_count"),
+                "thinking_chars": thinking_chars,
+            }
 
 
 class ProviderUnreachable(OSError):
@@ -86,6 +164,19 @@ class ConfiguredLLM(LLMProvider):
         #: the tokens. With a price for the model, the run carries what it cost; without
         #: one it still says None, never zero.
         self.price_lookup = price_lookup
+        from app.config import Settings  # noqa: PLC0415
+
+        settings = Settings()  # type: ignore[call-arg]
+        self.generation_deadline_seconds = float(
+            config.get(
+                "generation_deadline_seconds",
+                settings.llm_generation_deadline_seconds,
+            )
+        )
+        if not 0 < self.generation_deadline_seconds <= 3300:
+            raise ValueError(
+                "Generation deadline must be positive and shorter than the worker lease"
+            )
 
     def request(self, method: str, path: str, body: dict | None = None) -> dict:
         """One call to the provider, asked again a bounded number of times on 429, 502, 503,
@@ -118,6 +209,9 @@ class ConfiguredLLM(LLMProvider):
             headers.update({"x-api-key": self.key, "anthropic-version": "2023-06-01"})
         elif self.key:
             headers["Authorization"] = f"Bearer {self.key}"
+        generation = method.upper() == "POST" and not path.endswith(("/api/show", "/api/me"))
+        deadline = time.monotonic() + self.generation_deadline_seconds if generation else None
+        guard = _DeadlineGuard(connection, deadline) if deadline is not None else None
         try:
             # Two failure phases, told apart for the retry policy: before the request left
             # (nothing happened at the vendor) and after (it may be answering). Neither
@@ -130,20 +224,43 @@ class ConfiguredLLM(LLMProvider):
                     headers,
                 )
             except (OSError, http.client.HTTPException) as exc:
+                if guard is not None and guard.fired:
+                    raise ProviderUnreachable(
+                        "Provider generation deadline exceeded", unanswered=True
+                    ) from exc
                 raise ProviderUnreachable("Provider could not be reached", unsent=True) from exc
             try:
                 response = connection.getresponse()
+                if guard is not None:
+                    guard.watch_response(response)
                 if response.status != 200:
+                    try:
+                        refused = json.loads(response.read(16_384))
+                    except (ValueError, TypeError):
+                        refused = None
                     raise ProviderHTTPError(
-                        response.status, parse_retry_after(response.getheader("Retry-After"))
+                        response.status,
+                        parse_retry_after(response.getheader("Retry-After")),
+                        reason_code=refusal_reason(refused),
                     )
+                if (
+                    self.kind == "ollama"
+                    and path == "/api/generate"
+                    and body
+                    and body.get("stream")
+                ):
+                    return _read_ollama_stream(response, deadline=deadline)
                 data = response.read(4_000_001)
             except (OSError, http.client.HTTPException) as exc:
                 raise ProviderUnreachable("Provider did not answer", unanswered=True) from exc
+            if deadline is not None and time.monotonic() >= deadline:
+                raise ProviderUnreachable("Provider generation deadline exceeded", unanswered=True)
             if len(data) > 4_000_000:
                 raise ValueError("Provider response exceeds limit")
             return json.loads(data)
         finally:
+            if guard is not None:
+                guard.cancel()
             connection.close()
 
     async def health_check(self) -> HealthResult:
@@ -210,7 +327,11 @@ class ConfiguredLLM(LLMProvider):
     ) -> GenerateResult:
         body: dict[str, Any] = {"model": model}
         if self.kind == "ollama":
-            body.update(prompt=prompt, stream=False, think=False)
+            body.update(prompt=prompt, stream=self.is_ollama_cloud)
+            if not self.is_ollama_cloud:
+                # Local only: `num_predict` counts the reasoning there. Cloud models think
+                # natively (see the module docstring); `extra` may still say otherwise.
+                body["think"] = False
             if system:
                 body["system"] = system
             options: dict[str, Any] = {}
@@ -221,6 +342,12 @@ class ConfiguredLLM(LLMProvider):
             body["options"] = options
             if extra:
                 body.update(extra)
+            if self.is_ollama_cloud and max_tokens is None:
+                # Cloud validation refuses local unlimited sentinels. Let the vendor
+                # select its valid output allowance rather than sending an invented cap.
+                body["options"] = {
+                    k: v for k, v in body.get("options", {}).items() if k != "num_predict"
+                }
             data = await asyncio.to_thread(self.request, "POST", "/api/generate", body)
             return GenerateResult(
                 data.get("response") or "",
@@ -232,7 +359,7 @@ class ConfiguredLLM(LLMProvider):
                 # Never the reasoning itself — only that there was some, and how the call ended.
                 raw_response={
                     "done_reason": data.get("done_reason"),
-                    "thinking_chars": len(data.get("thinking") or ""),
+                    "thinking_chars": data.get("thinking_chars", len(data.get("thinking") or "")),
                 },
             )
         messages = [{"role": "user", "content": prompt}]

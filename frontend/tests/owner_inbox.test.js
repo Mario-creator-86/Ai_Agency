@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { escapeHtml } from '../src/html.js';
 import { inboxHtml, lettersWord, ownerMarkWords, readLetters, resolveCommand } from '../src/owner_inbox.js';
 
-const ID = '00000000-0000-4000-8000-00000000008e';
+const ID = '3ec1740c-0000-4000-8000-000000000001';
 const SHEET_LETTER = {
   id: 'm-1',
   thread_id: 't-1',

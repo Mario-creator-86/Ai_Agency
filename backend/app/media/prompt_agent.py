@@ -49,13 +49,16 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.agents.memory import agent_for_role, remember
+from app.agents.memory import LESSON_MARKER, agent_for_role, remember
 from app.db import lock_for_write
 from app.factual.editorial import SCENE_PURPOSES
-from app.factual.models import FactualClaim, ScriptDraft
+from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media import prompt_lint as lint
+from app.media.markings import markings_kept, planned_markings, still_exclusions
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
+from app.media.montage import beat_of, keep_frozen, shot_tag
+from app.media.script_entries import row_entries
 from app.media.series_look import (
     LIGHT_SLOTS,
     PART_PURPOSES,
@@ -64,6 +67,7 @@ from app.media.series_look import (
     load_factual_look,
     load_series_look,
     look_block,
+    room_sentence,
     serial_shot_size,
     series_bible,
 )
@@ -75,8 +79,8 @@ logger = logging.getLogger("studio.prompt_agent")
 #: about video models writes the instructions those models are given.
 PROMPT_ROLE = "VideoEditor"
 BIBLE_TEMPLATE = "visual-bible-v1"
-SHOTS_TEMPLATE = "shot-prompts-v1"
-SERIAL_SHOTS_TEMPLATE = "serial-shot-prompts-v1"
+SHOTS_TEMPLATE = "shot-prompts-v3"
+SERIAL_SHOTS_TEMPLATE = "serial-shot-prompts-v3"
 
 #: The marks of an office-serial film, as `storyboard_from_episode` writes them (the same
 #: marks `app.agents.editorial.is_serial_film` reads; that module imports this one).
@@ -113,9 +117,10 @@ REQUIRED_SHOT_FIELDS = (
     "motion",
 )
 
-#: Where prompt lessons are kept. Reuses the studio's own memory rather than a new table: a
-#: lesson is a studio-wide fact about how a vendor's model reads instructions.
-LESSON_MARKER = "prompt lesson:"
+#: Where prompt lessons are kept: rows of the studio's own memory whose content begins with
+#: `LESSON_MARKER` (defined in `app.agents.memory`), rather than a new table: a lesson is a
+#: studio-wide fact about how a vendor's model reads instructions. `recall()` leaves them out
+#: of every identity, so a lesson reaches a call only through `prompt_lessons` in its data.
 
 #: The Owner, 2026-10-12, 16:50, after 11.05 USD of the day's 19.50 went on redos and all three
 #: films still failed QC: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI! DAR TREBUIE SĂ ÎNȚELEAGĂ DE CE
@@ -137,14 +142,14 @@ LESSONS_REFUTED_GIVEN = 4
 LESSON_MIN_WORDS = 3
 #: How many new lessons the Director reads in one call of `reconcile_prompt_lessons`; the rest
 #: wait for the next writer.
-LESSONS_READ_AT_ONCE = 6
+LESSONS_READ_AT_ONCE = 60
 #: How many of the newest live lessons of its scope a new one is compared with before it is
 #: kept, and how many of the newest live lessons are read at all.
-LESSONS_COMPARED = 40
+LESSONS_COMPARED = 400
 LESSONS_SCANNED = 200
 #: A lesson longer than this is a report, not a rule: refused whole, never cut (a cut rule
 #: says half of what it meant and is then obeyed as written).
-LESSON_MAX_CHARS = 400
+LESSON_MAX_CHARS = 4000
 #: A new lesson whose content words are at least this share inside an older one says the
 #: same thing (`lesson_overlap`, measured from the NEW lesson's words): it replaces the older
 #: (a correction wins, a recurring lesson comes back to the top), never the reverse.
@@ -218,8 +223,8 @@ REFUTED_RULE = (
 #: What the payload of each call may take, in characters of JSON. Whole claims and then scenes
 #: are dropped to fit (`trim_payload`); nothing is ever sliced mid-string. The studio's lessons
 #: ride whole on top of this budget (`fit_with_lessons`), never trimmed for the film's sake.
-MAX_BIBLE_PAYLOAD_CHARS = 12000
-MAX_SHOTS_PAYLOAD_CHARS = 16000
+MAX_BIBLE_PAYLOAD_CHARS = 120000
+MAX_SHOTS_PAYLOAD_CHARS = 160000
 
 #: A storyboard whose model shot plan could not be read, even after the one re-ask. It is
 #: not rendered until a plan is written: template prompts are a TEST convenience only.
@@ -271,7 +276,7 @@ class VisualBible(BaseModel):
     camera_language: str = Field(default="", max_length=400)
     weather: str = Field(default="", max_length=200)
     continuity_rules: list[str] = Field(default_factory=list, max_length=10)
-    avoid: list[str] = Field(default_factory=list, max_length=12)
+    avoid: list[str] = Field(default_factory=list)
     season: str = Field(default="", max_length=100)
     # The only place a hex colour is kept: the local card compositor reads it, no image or
     # video model ever does (`_coerce` moves every hex it finds in a prompt-bound field here).
@@ -335,7 +340,7 @@ class ShotPrompt(BaseModel):
     """One shot, described the way a director would brief a camera crew."""
 
     model_config = ConfigDict(extra="ignore")
-    scene_index: int = Field(ge=1, le=60)
+    scene_index: int = Field(ge=1, le=120)
     story_purpose: str = Field(default="", max_length=20)
     subject: str = Field(default="", max_length=400)
     action: str = Field(default="", max_length=500)
@@ -350,13 +355,18 @@ class ShotPrompt(BaseModel):
     ending_frame: str = Field(default="", max_length=300)
     audio_intent: str = Field(default="", max_length=200)
     transition: str = Field(default="", max_length=200)
-    avoid: list[str] = Field(default_factory=list, max_length=10)
+    avoid: list[str] = Field(default_factory=list)
     # One move from prompt_lint.CAMERA_MOVES; anything else is ignored by the compiler.
     camera_move: str = Field(default="", max_length=40)
     # A closer framing of the same picture the edit may cut to inside the scene, for nothing
     # (assembler.plan_second_framings): {"subject", "centre_x", "centre_y"}. Any shape is
     # accepted here and read by _second_framing, so a rough answer never costs the shot.
     second_framing: Any = None
+    # New architecture: Kael writes the EXACT vendor payload, not component
+    # phrases for a Python composer to rearrange. No legacy field is removed.
+    still_prompt: str = Field(default="", max_length=lint.MAX_PROMPT)
+    motion_prompt: str = Field(default="", max_length=lint.MAX_PROMPT)
+    negative_prompt: str = Field(default="", max_length=400)
 
 
 class ShotPack(BaseModel):
@@ -376,6 +386,10 @@ _BIBLE_INSTRUCTIONS = (
     "must never appear. Respect the physical setting: for an airless scene describe vacuum "
     "and direct sunlight, not terrestrial weather, haze or wind. Vertical 9:16, watched on "
     "a phone: the subject has to stay readable. "
+    "AI-generated adult faces are allowed. Do not add a blanket no-faces or faceless "
+    "rule to the visual bible. Describe people's appearance, expression and consistency "
+    "when the story calls for people; only hide a face when a particular scene's story "
+    "or rights requirements explicitly need it. "
     "Be specific and brief — a rule that could describe any film is not a rule. Write every "
     "value in plain English words, the way a photographer would say it: the place by its "
     "name and what it looks like, the season, the weather, the light, and colours named in "
@@ -404,6 +418,16 @@ _SHOTS_INSTRUCTIONS = (
     "emotion, at a believable intensity; the background life, which must not compete with the "
     "subject; what must match the previous shot (continuity); what the last frame should be "
     "left on; the audio intent; the transition into the next shot; and what to avoid.\n\n"
+    "The still is drawn from the subject, the action, the environment, the camera's framing, "
+    "the lighting and the composition at the shot's FIRST moment, so those fields describe "
+    "what is seen then — a pose, a state, a place — never a camera move, a speed or a span of "
+    "the clip's seconds: those belong only in the camera's move, in motion and in "
+    "ending_frame.\n\n"
+    "The film's target_audience, core_message and takeaway (in the film's data) are Marcus's "
+    "mission, already approved by Sarah. For each scene preserve its story_purpose and "
+    "writer_visual: make the exact causal beat readable in the first still and its motion. "
+    "Do not change the promised payoff, imply facts Marcus never said, or fill a missing "
+    "audience detail with your own demographic assumptions.\n\n"
     "Show the information rather than narrating it twice: if the narration says a storm grew "
     "stronger, the picture shows cloud, wind, water and a reaction, not a caption. Never ask "
     "for writing in the picture — no text overlay, title, label, caption or written number: a "
@@ -413,7 +437,7 @@ _SHOTS_INSTRUCTIONS = (
     "unless the scene says so. Detailed does not mean long — every phrase must earn its "
     "place.\n\n"
     "The camera: name the shot size (a wide establishing shot, a medium shot, or a detail "
-    "of hands, objects or texture; never a close-up of a face) and the lens (24mm wide, "
+    "of hands, objects, texture or a face when the story needs it) and the lens (24mm wide, "
     "50mm, 85mm compression), and choose exactly one camera_move from this list: dolly in, "
     "dolly out, tracking left, tracking right, crane up, crane down, slow orbit, handheld "
     "drift, aerial drift forward, pedestal up, tilt up, tilt down, slow pan left, slow pan "
@@ -422,8 +446,9 @@ _SHOTS_INSTRUCTIONS = (
     "where it ends over the clip's seconds (a steady dolly in from the whole room to her "
     "hands on the ledger; a crane up from the bench that reveals the hall). Keep static for "
     "a shot the story holds its breath on, and rack focus only beside a clear action of the "
-    "subject. Vary the size and the move across the film; never the same one three scenes "
-    "in a row. Optionally give second_framing: a closer framing of the same picture the "
+     "subject. Vary shot size and movement only when a dramatic change makes them useful. "
+    "A static or repeated framing is right when a gesture or reaction needs time; never "
+    "move just to fulfill a novelty quota. Optionally give second_framing as a closer crop the "
     "editor can cut to halfway through a long scene, at no extra cost — what it shows and "
     "where its centre is, as fractions of the frame's width and height (0 left or top, 1 "
     "right or bottom). In motion, say what the subject does across the clip's seconds, as "
@@ -433,8 +458,15 @@ _SHOTS_INSTRUCTIONS = (
     "the wall), without camera words. Ample is not spectacle: nothing happens that the "
     "story does not say, and the shot keeps its one primary visual idea. Name colours in "
     "words, never as hex codes or codes in capitals. When the bible says people's faces must "
-    "not be seen, show people only from behind, small and distant, or their hands. Return "
-    "only JSON: "
+    "not be seen, show people only from behind, small and distant, or their hands.\n\n"
+    "Some scenes carry a beat field {scene_number, shot, of, size}: they are the shots of ONE "
+    "moment of the story, cut together, about four seconds each, and their narration is one "
+    "sentence carried on across the cut. Describe them as a continuous moment seen at the "
+    "size the beat asks — wide: the place; medium: the subject; detail: hands, objects, "
+    "texture — with the same subject, light, weather and positions in every shot of the "
+    "beat, each shot starting where the one before ends (its continuity is the previous "
+    "shot's ending_frame), nothing new entering between them. Choose a camera move only if it tells this part of the story better; a repeated "
+    "static move is valid when it preserves a character's reaction. Return only JSON: "
     '{"shots": [{"scene_index": 1, "story_purpose": "HOOK", "subject": "...", '
     '"action": "...", "environment": "...", "camera": "...", "camera_move": "dolly in", '
     '"lighting": "...", "composition": "...", "motion": "...", "emotion": "...", '
@@ -450,24 +482,129 @@ _SHOTS_INSTRUCTIONS = (
 #: rooms. What a shot of the serial needs from the editor is the people: who is in frame,
 #: what they do and feel, and where the camera stands.
 _SERIAL_SHOTS_INSTRUCTIONS = (
+    "Before choosing the camera, identify what must change emotionally or causally in each "
+    "shot: a choice, a discovery, an embarrassing mistake, a betrayal, relief or a joke. "
+    "Frame whose action or REACTION makes that change legible. Never invent a plot beat, "
+    "cast member or prop just to fill the frame.\n\n"
     "You are the studio's video editor, and this is an approved episode of the studio's own "
     "office serial, Inside The Nexus. The beats are as they will be filmed and must not "
     "change. The series has one look, given below as series_look: it is fixed, it opens every "
     "prompt word for word, and you do not describe style, rendering, light or palette "
     "yourself. Each beat is set in the room its location names, one of the studio's own "
     "rooms, and nowhere else.\n\n"
-    "For every beat describe one shot: who is in frame, facing the viewer; what they are "
-    "doing, as movement rather than a label, and their expression, both taken from the "
-    "line's direction and from what they say; the camera, varied across the episode (an "
-    "establishing wide shot for the opening beat, two-shots while people talk, a single or a "
-    "close-up for a turn or a reaction); the background life, which must not compete with "
-    "the speakers; and what must match the previous shot. What people say is heard, never "
-    "drawn. Never ask for writing in the picture: no text, sign, label, title, screen words or "
-    "written number, because a generator draws letters as gibberish. Do not add events, "
-    "objects or people the beat does not have. Return only JSON: "
+    "Each shot tells the beat as a scene of a story, not as a portrait: the people are alive "
+    "and the feeling of the beat — comedy, suspense, fear, relief, whatever the lines carry — "
+    "shows in their bodies before it shows in their words (the Owner, 2026-10-15: «Trebuie să "
+    "avem dinamică, suspans dacă este cazul, caractere vii; comedie, suspans, frică; creează o "
+    "scenă, spune o poveste»).\n\n"
+    "For every scene describe one shot, complete the first time, so that nothing has to be "
+    "bought twice:\n"
+    "- subject: who is in frame, facing the viewer, and in what room; name the room ONLY by "
+    "its own objects (the penthouse: a wide mahogany desk, a big window onto the city, a "
+    "brass lamp, bookshelves, plants; the render bay: wooden desks, its monitors switched off "
+    "and dark; the research room: a plain wooden desk, a lamp, bookshelves), never another "
+    "room's equipment, and no screen anywhere unless the beat needs one, and then dark.\n"
+    "- action: the first thing seen as ONE short clause, before any desk or room detail — the "
+    "pose, where the hands are (below the frame edge when the framing cannot hold them), and "
+    "the position of any worn prop (a headset pushed up off one ear) — then the movement of "
+    "the beat as a chain of two or three moments with a beginning and an end inside the shot "
+    "(she leans in, slaps the folder shut, sits back; he stands, crosses to the window, turns): "
+    "the still is drawn from the first moment, the clip plays the chain.\n"
+    "- emotion: the feeling and how it shows — the eyes, the mouth, the shoulders, the pace of "
+    "the hands; a laugh held back, a breath held, a flinch, a slow smile.\n"
+    "- camera and camera_move: choose what the spectator needs to understand or feel. "
+    "A wide establishes the conflict, a two-shot shows an evolving relationship and a "
+    "reaction close-up reveals what somebody does not say. Cut to the listener when their "
+    "reaction is more important than the speech. Use a push-in only for earned pressure, "
+    "tracking for real movement, and STATIC framing for awkwardness, grief, revelation, "
+    "a held laugh or a decisive beat. Repeating static or a similar shot size is allowed "
+    "when it improves the performance or continuity. No decorative pan, orbit, zoom or "
+    "constant cutting merely to vary shots.\n"
+    "- background: the room's own life that does not compete with the speakers (a lamp's "
+    "glow, a plant, a colleague passing far behind).\n"
+    "- continuity: what must match the previous shot; ending_frame: the last gesture of the "
+    "beat, with no camera words.\n"
+    "What people say is heard, never drawn. Never ask for writing in the picture: no text, "
+    "sign, label, title, screen words or written number, because a generator draws letters "
+    "as gibberish. Name no object that carries writing in real life — a nameplate, a sign, a "
+    "poster, a badge, a label, a book spine, a printed page, a sticky note, a screen with "
+    "content: leave such objects out (a «blank nameplate» invites a name, a negation invites "
+    "the thing). Do not add events, objects or people the beat does not have. Choose one "
+    "camera_move from: " + ", ".join(lint.CAMERA_MOVES) + ". "
+    "A beat may be cut into several scenes by the montage (each carries beat: {scene_number, "
+    "shot, of, size, on}): one scene per speaker's run, cut with the dialogue, about four "
+    "seconds each. Its shots are ONE continuous moment: the room, the light and everyone's "
+    "position stay exactly as in the shot before, and each shot's continuity is the "
+    "ending_frame of the one before it. A shot whose size is reaction is on the person named "
+    "in on, listening with lips closed, eyes on the speaker beside the frame, while the words "
+    "go on in off; nobody's lips move. Choose a move for the beat's meaning, even if it repeats the prior static shot. "
+    "Preserve each speaker's reaction and spatial continuity. Return only JSON: "
     '{"shots": [{"scene_index": 1, "subject": "...", "action": "...", "emotion": "...", '
-    '"camera": "...", "background": "...", "continuity": "...", "ending_frame": "...", '
+    '"camera": "...", "camera_move": "static", "background": "...", '
+    '"continuity": "...", "ending_frame": "...", '
     '"audio_intent": "...", "transition": "..."}]}.\n'
+)
+
+_EDITOR_FINAL_INSTRUCTIONS = (
+    "Before writing vendor-facing text, identify the approved action and specific feeling "
+    "the viewer must SEE. Prioritize the acting, consequential reaction and clear staging "
+    "over camera decoration. Still camera is appropriate when motion would spoil a quiet "
+    "or awkward moment. Do not add props, people, gestures, surprises or spectacle that "
+    "the approved scene never established. Respect the same story through every cut.\n"
+    "\nNEW REQUIRED VENDOR-PROMPT CONTRACT: For every LIVE shot, return in its JSON "
+    "object still_prompt, motion_prompt and negative_prompt in addition to scene_index, "
+    "camera_move and the concise planning fields. YOU (Kael), not Python, own every word "
+    "of still_prompt and motion_prompt. Still is ONE camera photograph at the FIRST moment: "
+    "subject, exact staging, light source, framing, film look, physical geometry, consistent "
+    "faces when applicable, and one continuous 9:16 picture. Motion describes only how that "
+    "approved photograph moves over time: ONE camera move and the actors/world with a "
+    "coherent ending; no unrelated terrestrial motion in space. Don't paste generic people "
+    "sentences into scenes with no humans. Keep the exact selected film/series look, and "
+    "follow the bible's real face policy. Every word matters. Each still_prompt and "
+    "motion_prompt must be at most 1000 UTF-16 units, including spaces. Use short complete "
+    "sentences; if too long, YOU shorten without losing the subject, setting or light. "
+    "Don't embed a 9:16 ratio after a camera colon where it could become a broken fragment. "
+    "The model adapter will not edit, shorten, inject, recompose, or translate these prompts. "
+    "Sarah checks this exact text before any purchase. If she refuses it, revise ONLY "
+    "the identified scene or layer and return a new exact final text. "
+    "For negative_prompt, use a brief comma-separated optional list only where the "
+    "selected vendor supports a negative channel; do not rely on it for the visible facts.\n"
+)
+
+
+_GENERATION_QC_INSTRUCTIONS = (
+    "Before writing, check each shot against the same requirements used to judge its output: "
+    "it must illustrate the scene's narration and verified claims, not merely match your own "
+    "plan. Keep the period, setting, object, physical scale and character bible accurate. "
+    "An image is one continuous first moment filling the frame, not a sequence or panels. "
+    "For the serial, put each person's first-moment pose in its own semicolon clause before "
+    "any later action; retain their canonical outfit and which parts are visible. Keep actions "
+    "concise so these details fit the series' prompt budget. Describe the final visible state "
+    "in ending_frame, with no camera instructions there. Camera movement belongs in camera_move; "
+    "a static shot keeps its framing throughout. Respect the bible's face rule throughout "
+    "the video, including its last frame, only if the policy explicitly hides faces. "
+    "With face_policy ALLOW, people may face the camera, make eye contact or appear in "
+    "close-up. Never silently revive an old back-only restriction. "
+    "Show only the actors/objects already present in the approved first frame, with stable "
+    "identity, clothing, anatomy and object geometry. Do not solve a faulty first frame with "
+    "a motion instruction. Pages/screens stay blank; an instrument's deliberately required "
+    "scale is distinct from added captions. Avoid lists are metadata, not positive drawing "
+    "instructions: state the desired visible result in subject/action/motion/ending_frame. "
+    "A video model without a negative channel will not receive avoid as a separate instruction. "
+    "Do not invent a weather effect to create motion in a vacuum or in a fixed indoor scene. "
+    "Check physical visibility before sending a paid prompt: a medal at the chest cannot "
+    "be visible to a camera behind its wearer. For a medal presentation either frame the "
+    "recipient from the front or three-quarter angle, or show a coherent rear view "
+    "without front-of-body medals. Do not place chest medals on backs. In deep-space "
+    "vacuum never describe terrestrial ground sliding beneath the camera or a land "
+    "horizon opening ahead. Camera drift is relative to stars and galaxy filaments. "
+    "In a still prompt describe one frozen illumination state; time-varying ripples, "
+    "pulses and camera movement belong only in the motion prompt.\n"
+    "When canonical character identities are supplied, the still composer inserts their hair "
+    "and wardrobe. Do not repeat that description in action: use concise named clauses for "
+    "each person's visible pose and movement instead. For example: Nadia taps the pen on the "
+    "blank ledger; Sarah's shoulder remains at the right edge. Distinguish first-frame "
+    "presence from later actions and make subject, cast, action and ending agree.\n"
 )
 
 
@@ -521,6 +658,10 @@ def _serial_scene_facts(session: Session, entry: dict[str, Any]) -> dict[str, An
 def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
     """The story, its scenes and its characters, as the prompt agent reads them."""
     script = session.get(ScriptDraft, board.script_draft_id)
+    topic = (
+        session.get(TopicIdea, script.topic_id)
+        if script is not None and script.topic_id else None
+    )
     scenes = list(
         session.scalars(
             select(StoryboardScene)
@@ -538,10 +679,6 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
         if script
         else {}
     )
-    script_scenes = {
-        int(entry.get("scene_number") or index): entry
-        for index, entry in enumerate(list(script.scenes_json or []) if script else [], start=1)
-    }
     characters = {
         row.id: row
         for row in session.scalars(
@@ -553,11 +690,22 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
         )
     }
     serial = _is_serial(board, script)
+    # Each row's own script entry: the writer's scene a factual shot was cut from, the
+    # serial shot's own entry (its script is kept one entry a shot) — never the entry at the
+    # beat's number, which in the serial is a shot of an earlier beat (`script_entries`).
+    entries = row_entries(
+        list(script.scenes_json or []) if script else [],
+        [(scene.scene_index, scene.prompt_json) for scene in scenes],
+        serial=serial,
+    )
     facts: dict[str, Any] = {
         "serial": serial,
         "title": board.title,
         "aspect_ratio": board.aspect_ratio,
         "visual_style": board.visual_style,
+        # The same selected audience Marcus wrote for and Sarah evaluated.
+        # No new inference about this audience is delegated to the video model.
+        "target_audience": str(topic.target_audience or "") if topic else "",
         "story": dict(script.story_json or {}) if script else {},
         "target_seconds": board.target_duration_seconds,
         "scenes": [
@@ -565,18 +713,24 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
                 "scene_index": scene.scene_index,
                 "seconds": scene.duration_seconds,
                 "story_purpose": scene.story_purpose
-                or str(script_scenes.get(scene.scene_index, {}).get("purpose") or ""),
+                or str(entries.get(scene.scene_index, {}).get("purpose") or ""),
                 "narration": scene.voiceover_segment,
                 # The writer's own line about what is seen, from the script — not from
                 # `visual_prompt`, which this step overwrites with what it composed. Reading
                 # it back would feed a second run its own output, and each pass would drift
-                # a little further from what the writer actually asked for.
+                # a little further from what the writer actually asked for. A shot of a
+                # montage reads its own entry (`script_entries.row_entries`).
                 "writer_visual": str(
-                    script_scenes.get(scene.scene_index, {}).get("visual_description")
+                    entries.get(scene.scene_index, {}).get("visual_description")
                     or (scene.prompt_json or {}).get("writer_visual")
                     or scene.visual_prompt
                 ),
                 "shot_type": scene.shot_type,
+                # The montage's tag: which writer's scene this shot belongs to, which of its
+                # shots it is and at what size (None for a scene that is its own one shot).
+                # The pauses frozen beside it are the render's numbers, never shown to a
+                # model (`montage.shot_tag`): the shot plan's payload is what it was.
+                "beat": shot_tag(scene.prompt_json) or None,
                 "claims": [claims.get(cid, "") for cid in (scene.claim_ids_json or [])],
                 "characters": [
                     {
@@ -597,7 +751,7 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
     if serial:
         scene_list: list[dict[str, Any]] = facts["scenes"]
         for scene_facts in scene_list:
-            entry = script_scenes.get(int(scene_facts["scene_index"]), {})
+            entry = entries.get(int(scene_facts["scene_index"]), {})
             scene_facts.update(_serial_scene_facts(session, entry))
     return facts
 
@@ -750,14 +904,13 @@ def _coerce(data: dict[str, Any], model: type[BaseModel]) -> dict[str, Any]:
         if name not in data or (bible and name == "card_palette"):
             continue
         value = data[name]
-        limit = _max_length(field)
         scrub = bible and name in PROMPT_BOUND_BIBLE_FIELDS
         if field.annotation is str:
             text = " ".join(_flatten(value).split())
             if scrub:
                 found_hex.extend(_HEX_COLOUR.findall(text))
                 text = _scrub_codes(text)
-            fitted[name] = _fit(text, limit) if limit else text
+            fitted[name] = text
         elif field.annotation == list[str]:
             items = value if isinstance(value, list) else [value]
             cleaned = [" ".join(_flatten(item).split()) for item in items]
@@ -769,7 +922,7 @@ def _coerce(data: dict[str, Any], model: type[BaseModel]) -> dict[str, Any]:
                     for item in cleaned
                     if not _HEX_COLOUR.search(item) and not lint.ENUM_CODE.search(item)
                 ]
-            fitted[name] = cleaned[:limit] if limit else cleaned
+            fitted[name] = cleaned
         else:
             fitted[name] = value
     if bible:
@@ -885,7 +1038,9 @@ def _shots_from(items: Any) -> dict[int, ShotPrompt]:
         if not isinstance(raw, dict):
             continue
         try:
-            shot = ShotPrompt.model_validate(_coerce(raw, ShotPrompt))
+            from app.agents.identity import complete_schema  # noqa: PLC0415
+
+            shot = complete_schema(ShotPrompt).model_validate(_coerce(raw, ShotPrompt))
         except ValidationError:
             continue
         shots.setdefault(shot.scene_index, shot)
@@ -957,8 +1112,10 @@ def parse_shot_plan(text: str) -> ShotPlanParse:
 def _parse_shot_pack(text: str) -> ShotPack | None:
     """Every shot that can be placed, as a pack; None when not one shot could be read."""
     parsed = parse_shot_plan(text)
-    shots = [parsed.shots[index] for index in parsed.shots][:60]
-    return ShotPack(shots=shots) if shots else None
+    from app.agents.identity import complete_schema  # noqa: PLC0415
+
+    shots = [parsed.shots[index] for index in parsed.shots]
+    return complete_schema(ShotPack)(shots=shots) if shots else None
 
 
 # ------------------------------------------------------------------ whole-item payloads
@@ -981,45 +1138,9 @@ def _dumps(data: Any) -> str:
 
 
 def trim_payload(data: dict[str, Any], limit: int) -> tuple[dict[str, Any], dict[str, int]]:
-    """The payload made to fit ``limit`` characters by dropping whole items, never by slicing.
-
-    First the longest claims, one at a time; then the studio's prompt lessons, last first;
-    then whole scenes from the end. What is sent always parses, and whatever is sent is
-    whole: the payload used to be cut at 12,000 / 16,000 characters, mid-string, and the
-    model was handed JSON that did not close. Returns the fitted copy and what was dropped.
-    """
-    fitted: dict[str, Any] = json.loads(_dumps(data))
-    dropped = {"claims": 0, "lessons": 0, "scenes": 0}
-    while len(_dumps(fitted)) > limit:
-        holders = [
-            scene
-            for scenes in _scene_lists(fitted)
-            for scene in scenes
-            if isinstance(scene, dict) and isinstance(scene.get("claims"), list) and scene["claims"]
-        ]
-        if holders:
-            longest = max(
-                (
-                    (scene, position)
-                    for scene in holders
-                    for position in range(len(scene["claims"]))
-                ),
-                key=lambda pair: len(_dumps(pair[0]["claims"][pair[1]])),
-            )
-            del longest[0]["claims"][longest[1]]
-            dropped["claims"] += 1
-            continue
-        lessons = fitted.get("lessons")
-        if isinstance(lessons, list) and lessons:
-            lessons.pop()
-            dropped["lessons"] += 1
-            continue
-        lists = [scenes for scenes in _scene_lists(fitted) if scenes]
-        if not lists:
-            break
-        lists[0].pop()
-        dropped["scenes"] += 1
-    return fitted, dropped
+    """Compatibility entry point: keep all evidence; batching partitions whole scenes."""
+    del limit
+    return json.loads(_dumps(data)), {"claims": 0, "lessons": 0, "scenes": 0}
 
 
 def fit_with_lessons(data: dict[str, Any], lessons: Sequence[str], limit: int) -> dict[str, Any]:
@@ -1044,6 +1165,93 @@ def fit_with_lessons(data: dict[str, Any], lessons: Sequence[str], limit: int) -
         # from the rules, so no writer follows a refuted diagnosis as one.
         head["refuted_diagnoses"] = refuted
     return {**head, **fitted}
+
+
+def shot_payload_batches(
+    data: dict[str, Any],
+    lessons: Sequence[str],
+    limit: int = MAX_SHOTS_PAYLOAD_CHARS,
+    *,
+    max_scenes: int | None = None,
+) -> list[dict[str, Any]]:
+    """Partition whole scenes; never discard their claims, character bibles or narration.
+
+    An indivisible scene exceeding the advisory budget travels whole. Provider context
+    limits must report an error, not silently give the writer incomplete evidence.
+    """
+    key = "episode" if "episode" in data else "film"
+    if max_scenes is not None and max_scenes < 1:
+        raise ValueError("A shot batch must contain at least one scene")
+    film = data.get(key)
+    if not isinstance(film, dict) or not isinstance(film.get("scenes"), list):
+        return [fit_with_lessons(data, lessons, limit)]
+    kept, refuted = _split_refuted(lessons)
+
+    def payload(scenes: list[Any]) -> dict[str, Any]:
+        return {
+            **({"lessons": kept} if kept else {}),
+            **({"refuted_diagnoses": refuted} if refuted else {}),
+            **data,
+            key: {**film, "scenes": scenes},
+        }
+
+    batches: list[dict[str, Any]] = []
+    current: list[Any] = []
+    for scene in film["scenes"]:
+        if current and (
+            len(_dumps(payload([*current, scene]))) > limit
+            or (max_scenes is not None and len(current) >= max_scenes)
+        ):
+            batches.append(payload(current))
+            current = []
+        current.append(scene)
+    if current or not batches:
+        batches.append(payload(current))
+    return batches
+
+
+@dataclass(frozen=True)
+class ShotGenerationProfile:
+    max_tokens: int
+    native_thinking: bool = False
+    max_scenes: int | None = None
+
+
+def shot_generation_profile(engine: Engine, editor_id: str) -> ShotGenerationProfile:
+    """Learn from this assigned model's actual outcomes, never its brand or private trace."""
+    from app.agents.models import Agent, AgentRun, ModelRecord, ProviderRecord  # noqa: PLC0415
+    from app.config import Settings  # noqa: PLC0415
+
+    settings = Settings()  # type: ignore[call-arg]
+    base = settings.shot_plan_output_tokens
+    recovery = max(base, settings.shot_plan_recovery_output_tokens)
+    with Session(engine) as session:
+        agent = session.get(Agent, editor_id)
+        model = session.get(ModelRecord, agent.model_id) if agent else None
+        provider = session.get(ProviderRecord, model.provider_id) if model else None
+        if model is None or provider is None:
+            return ShotGenerationProfile(base)
+        runs = session.scalars(
+            select(AgentRun)
+            .where(
+                AgentRun.agent_id == editor_id,
+                AgentRun.model_name == model.model_name,
+                AgentRun.provider_name == provider.name,
+                AgentRun.task_type == "shot_prompts",
+                AgentRun.prompt_template_version.endswith("+think"),
+            )
+            .order_by(AgentRun.started_at.desc())
+            .limit(20)
+        )
+        for run in runs:
+            cap = (run.context_json or {}).get("generation_limits", {}).get("effective_max_tokens")
+            if not isinstance(cap, int) or isinstance(cap, bool) or cap <= 0:
+                continue
+            if run.status == "EMPTY_OUTPUT" and (run.completion_tokens or 0) >= cap:
+                return ShotGenerationProfile(recovery, True, 1)
+            if run.status == "SUCCEEDED" and parse_shot_plan(run.output_text or "").shots:
+                return ShotGenerationProfile(max(base, min(cap, recovery)), True, 1)
+    return ShotGenerationProfile(base)
 
 
 def _split_refuted(lessons: Sequence[str]) -> tuple[list[str], list[str]]:
@@ -1075,7 +1283,9 @@ def _parse_bible(text: str) -> VisualBible | None:
     if data is None:
         return None
     try:
-        return VisualBible.model_validate(_coerce(data, VisualBible))
+        from app.agents.identity import complete_schema  # noqa: PLC0415
+
+        return complete_schema(VisualBible).model_validate(_coerce(data, VisualBible))
     except ValidationError:
         return None
 
@@ -1127,14 +1337,28 @@ def build_visual_bible(
             + wrap_in_inert_boundary(payload, "approved-film"),
             BIBLE_TEMPLATE,
             correlation,
-            f"Stabilesc privirea filmului «{facts['title'][:50]}».",
+            f"Stabilesc privirea filmului «{facts['title']}».",
             2200,
+            subject={"storyboard_id": storyboard_id},
         )
         if result is not None:
             run_id = result["id"]
             bible = _parse_bible(result.get("output_text") or "")
 
     record = (bible or VisualBible()).model_dump()
+    # A model-generated visual bible must not turn the mere presence of an AI
+    # person's face into a paid-media failure. Keep deliberate HIDE policies from
+    # existing films intact; this default applies only when building a NEW bible.
+    # Clean the contradictory prose as well: the vision reviewer also reads it.
+    record["face_policy"] = "ALLOW"
+    record["continuity_rules"] = [
+        rule for rule in record.get("continuity_rules", [])
+        if not lint.BIBLE_NO_FACES.search(str(rule))
+    ]
+    record["avoid"] = [
+        rule for rule in record.get("avoid", [])
+        if not (lint.BIBLE_AVOID_FACES.match(str(rule)) or lint.BIBLE_NO_FACES.search(str(rule)))
+    ]
     record["avoid"] = _avoid_list(record.get("avoid"))
     record.setdefault("aspect_ratio", facts["aspect_ratio"])
     record["aspect_ratio"] = facts["aspect_ratio"]
@@ -1170,15 +1394,224 @@ def build_visual_bible(
 
 def _avoid_list(raw: Any) -> list[str]:
     """The film's own exclusions, on top of the ones the studio always refuses."""
-    theirs = [_fit(str(item), 120) for item in raw] if isinstance(raw, list) else []
+    theirs = [" ".join(str(item).split()) for item in raw] if isinstance(raw, list) else []
     merged = list(DEFAULT_NEGATIVES)
     for item in theirs:
         if item and item.lower() not in {m.lower() for m in merged}:
             merged.append(item)
-    return merged[:16]
+    return merged
 
 
 # ------------------------------------------------------------------ the shots
+
+
+# The Editor gets two scoped chances to repair a scene's blocking prompt before
+# ANY picture/video is purchased. The film also has a global budget: a bad
+# provider answer cannot fan out into unbounded token spending.
+PREFLIGHT_REWRITES_PER_SCENE = 2
+PREFLIGHT_REWRITES_PER_FILM = 8
+
+
+def _complete_editor_shot(shot: ShotPrompt) -> bool:
+    """A usable new model response has both final vendor texts and one valid move."""
+    from app.media.final_prompts import FinalPromptError, validate_final  # noqa: PLC0415
+
+    try:
+        validate_final({
+            "still_prompt": shot.still_prompt,
+            "motion_prompt": shot.motion_prompt,
+            "camera_move": shot.camera_move,
+            "negative_prompt": shot.negative_prompt,
+        })
+        return True
+    except FinalPromptError:
+        return False
+
+
+def _preflight_findings(
+    shot: ShotPrompt,
+    facts: dict[str, Any],
+    bible: dict[str, Any],
+    allowed: str,
+    previous_ending: str,
+    previous_moves: list[str],
+    shot_type: str,
+) -> tuple[list[lint.Finding], dict[str, Any]]:
+    """Check the exact compiled still/motion before ever handing them to a vendor."""
+    package, _notes = _validated_package(
+        shot, facts, bible, allowed, previous_ending
+    )
+    package.update(scene_kind=LIVE_KIND, shot_type=shot_type)
+    compiled = compile_prompts(package, bible, previous_moves=previous_moves)
+    issues = lint.lint_scene(
+        lint.LintScene(
+            scene=int(facts["scene_index"]),
+            still_prompt=str(compiled.get("still_prompt") or ""),
+            motion_prompt=str(compiled.get("motion_prompt") or ""),
+            composition_issues=tuple(compiled.get("composition_issues") or []),
+        ),
+        bible=bible,
+    )
+    return [item for item in issues if item.severity == lint.BLOCK], compiled
+
+
+def _preflight_repair_factual_shots(
+    engine: Engine,
+    registry: Any,
+    editor_id: str,
+    storyboard_id: str,
+    correlation: str,
+    bible: dict[str, Any],
+    facts: dict[str, Any],
+    packs: dict[int, ShotPrompt],
+    targets: set[int] | None,
+    profile: ShotGenerationProfile,
+) -> tuple[dict[int, list[str]], list[dict[str, Any]], list[str], set[int]]:
+    """Bounded AI fix-review loop for new factual shots, outside any DB write lock.
+
+    Already bought scene numbers are protected even if called on the full film.
+    A failed repair is NOT saved and later cannot be purchased. The daily ladder
+    can try again on another day, but no step here auto-buys images or clips.
+    """
+    from app.media.models import SceneTake  # noqa: PLC0415 - no media purchases
+
+    with Session(engine) as session:
+        rows = list(
+            session.scalars(
+                select(StoryboardScene)
+                .where(StoryboardScene.storyboard_id == storyboard_id)
+                .order_by(StoryboardScene.scene_index)
+            )
+        )
+        protected = set(
+            session.scalars(
+                select(SceneTake.scene_number).where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.status.in_(("SUBMITTED", "PAID", "APPROVED", "REJECTED", "LOST")),
+                )
+            )
+        )
+        snapshot = [
+            (
+                int(row.scene_index),
+                str(row.shot_type),
+                str((row.prompt_json or {}).get("ending_frame") or ""),
+                str((row.prompt_json or {}).get("camera_move") or ""),
+                str(row.scene_kind or LIVE_KIND),
+            )
+            for row in rows
+        ]
+    allowed = _allowed_text(facts)
+    by_index = {int(item["scene_index"]): item for item in facts["scenes"]}
+    previous_ending = ""
+    previous_moves: list[str] = []
+    failed: dict[int, list[str]] = {}
+    repaired: list[dict[str, Any]] = []
+    run_ids: list[str] = []
+    remaining = PREFLIGHT_REWRITES_PER_FILM
+    for index, shot_type, old_ending, old_move, kind in snapshot:
+        if (
+            (targets is not None and index not in targets)
+            or index not in packs
+            or kind != LIVE_KIND
+        ):
+            previous_ending = old_ending
+            if old_move:
+                previous_moves.append(old_move)
+            continue
+        # The existing shot belongs to its paid media; never silently invalidate it.
+        if index in protected:
+            previous_ending = old_ending
+            if old_move:
+                previous_moves.append(old_move)
+            continue
+        scene_facts = by_index.get(index)
+        if scene_facts is None:
+            previous_ending = old_ending
+            if old_move:
+                previous_moves.append(old_move)
+            continue
+        candidate = packs[index]
+        blockers: list[lint.Finding] = []
+        compiled: dict[str, Any] = {}
+        seen: set[str] = set()
+        for turn in range(PREFLIGHT_REWRITES_PER_SCENE + 1):
+            blockers, compiled = _preflight_findings(
+                candidate, scene_facts, bible, allowed, previous_ending, previous_moves,
+                shot_type,
+            )
+            if not blockers:
+                packs[index] = candidate
+                if turn:
+                    repaired.append({"scene_index": index, "rounds": turn})
+                break
+            if turn >= PREFLIGHT_REWRITES_PER_SCENE or remaining <= 0 or registry is None:
+                failed[index] = [item.message_ro for item in blockers]
+                break
+            # Reusing an earlier candidate/review is not progress.
+            signature = json.dumps(candidate.model_dump(), sort_keys=True, ensure_ascii=False)
+            if signature in seen:
+                failed[index] = [item.message_ro for item in blockers]
+                break
+            seen.add(signature)
+            remaining -= 1
+            payload = {
+                "scene_index": index,
+                "scene_narration_and_facts": scene_facts,
+                "bible": bible,
+                "current_shot": candidate.model_dump(),
+                "vendor_still": compiled.get("still_prompt"),
+                "vendor_motion": compiled.get("motion_prompt"),
+                "blocking_findings": [
+                    {"code": item.code, "evidence": item.evidence, "reason": item.message_ro}
+                    for item in blockers
+                ],
+            }
+            prompt = (
+                _SHOTS_INSTRUCTIONS
+                + _EDITOR_FINAL_INSTRUCTIONS
+                + _GENERATION_QC_INSTRUCTIONS
+                + "\nRepair ONLY this shot's fields that caused the BLOCK findings. "
+                "Keep the story, approved narration, characters and location. "
+                "Medals on a person's chest require a frontal or three-quarter shot; "
+                "a vacuum cosmic web cannot have terrestrial ground or horizon camera moves. "
+                "Write the first frame as a STATIC moment. Camera travel is only video. "
+                "Return one shot in JSON: {\"shots\":[{\"scene_index\": ..., ...}]}. "
+                "Do not propose a new scene or new narration.\n"
+                + wrap_in_inert_boundary(_dumps(payload), "prompt-preflight")
+            )
+            reply = _run(
+                engine, registry, editor_id, "shot_prompts", prompt,
+                SHOTS_TEMPLATE, correlation,
+                f"Corectez numai promptul cadrului {index} înainte de cumpărare.",
+                profile.max_tokens,
+                native_thinking=profile.native_thinking,
+                subject={"storyboard_id": storyboard_id, "scene_indexes": [index],
+                         "preflight_repair": True},
+            )
+            if reply is None:
+                failed[index] = [item.message_ro for item in blockers]
+                break
+            run_ids.append(str(reply["id"]))
+            next_shot = parse_shot_plan(reply.get("output_text") or "").shots.get(index)
+            if (
+                next_shot is None
+                or not _complete_editor_shot(next_shot)
+                or next_shot.model_dump() == candidate.model_dump()
+            ):
+                failed[index] = [item.message_ro for item in blockers]
+                break
+            candidate = next_shot
+        # Subsequent shots take their continuity from the candidate that actually passed.
+        if index not in failed and compiled:
+            previous_ending = str(candidate.ending_frame or "")
+            if compiled.get("camera_move"):
+                previous_moves.append(str(compiled["camera_move"]))
+        else:
+            previous_ending = old_ending
+            if old_move:
+                previous_moves.append(old_move)
+    return failed, repaired, run_ids, protected
 
 
 def write_shot_prompts(
@@ -1198,6 +1631,17 @@ def write_shot_prompts(
     from app.factual.story_review import story_gate  # noqa: PLC0415
     from app.media.shooting_sheet import film_is_closed  # noqa: PLC0415 - it imports us
 
+    # A sheet repair names the affected scenes. Unscoped/film-wide findings retain the
+    # existing whole-film path; an indexed repair never rewrites another scene's plan.
+    issues = (repair_context or {}).get("issues") or []
+    targets: set[int] | None = None
+    if issues and all(
+        isinstance(item, dict)
+        and isinstance(item.get("scene_index"), int)
+        and not isinstance(item.get("scene_index"), bool)
+        for item in issues
+    ):
+        targets = {item["scene_index"] for item in issues}
     correlation = correlation_id or str(uuid4())
     # The lessons learned since the last writer are read by the Director first (free; review of
     # 68fa0b4, 2026-10-12): a correction retires the rule it corrects before the shots are
@@ -1226,6 +1670,16 @@ def write_shot_prompts(
         # «show people only from behind» never reaches the serial's beats, whose people face
         # the viewer, and the serial's lessons never reach a factual film's shots.
         lessons = prompt_lessons(session, scope=_scope_of(bool(facts.get("serial"))))
+    if targets is not None:
+        known = {int(scene["scene_index"]) for scene in facts["scenes"]}
+        if not targets <= known:
+            raise PromptError("Remedierea indică un cadru care nu există în acest film")
+    generation_facts = {
+        **facts,
+        "scenes": [
+            s for s in facts["scenes"] if targets is None or int(s["scene_index"]) in targets
+        ],
+    }
     serial = bool(facts.get("serial"))
     # An episode of the serial does not decide a look: it has the series' one, read from the
     # Owner's proposal and written onto the storyboard every time, never asked of a model.
@@ -1235,13 +1689,12 @@ def write_shot_prompts(
             board = session.get(Storyboard, storyboard_id)
             if board is not None:
                 board.visual_bible_json = series_bible(look, board.aspect_ratio)
-    elif need_bible:
+    elif need_bible and (targets is None or not board.visual_bible_json):
         build_visual_bible(engine, registry, storyboard_id, correlation)
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
         bible = dict((board.visual_bible_json or {}) if board else {})
 
-    expected = [int(scene["scene_index"]) for scene in facts["scenes"]]
     packs: dict[int, ShotPrompt] = {}
     run_id = None
     run_ids: list[str] = []
@@ -1251,6 +1704,7 @@ def write_shot_prompts(
     reasked = False
     parsed = ShotPlanParse()
     if editor_id is not None and registry is not None:
+        profile = shot_generation_profile(engine, editor_id)
         if serial:
             data: dict[str, Any] = {
                 "series_look": {
@@ -1258,11 +1712,11 @@ def write_shot_prompts(
                     "version": look.get("version"),
                     "continuity_rules": look.get("continuity_rules") or [],
                 },
-                "episode": facts,
+                "episode": generation_facts,
             }
             instructions, template = _SERIAL_SHOTS_INSTRUCTIONS, SERIAL_SHOTS_TEMPLATE
         else:
-            data = {"visual_bible": bible, "film": facts}
+            data = {"visual_bible": bible, "film": generation_facts}
             instructions, template = _SHOTS_INSTRUCTIONS, SHOTS_TEMPLATE
         if repair_context:
             data["repair_context"] = repair_context
@@ -1270,30 +1724,60 @@ def write_shot_prompts(
         # data, for the serial's beats as for a factual film's shots (2026-10-12, the Owner:
         # «la viitoarele prompturi să se asigure că nu mai sunt»): the serial's payload sat
         # at its cap, and the lessons were the first thing `trim_payload` dropped.
-        fitted = fit_with_lessons(data, lessons, MAX_SHOTS_PAYLOAD_CHARS)
-        prompt = (
-            instructions
-            + lessons_rule(lessons)
-            + wrap_in_inert_boundary(_dumps(fitted), "approved-film")
-        )
-        result = _run(
-            engine,
-            registry,
-            editor_id,
-            "shot_prompts",
-            prompt,
-            template,
-            correlation,
-            f"Scriu prompturile pentru {len(facts['scenes'])} cadre.",
-            7000,
-        )
-        if result is not None:
+        if serial:
+            data["generation_contract"] = {
+                "max_still_characters": look.get("max_prompt_chars"),
+                "max_motion_words": MOTION_MAX_WORDS,
+                "negative_channel": "image only; motion uses positive visible states",
+            }
+        else:
+            data["generation_contract"] = {
+                "max_prompt_utf16": lint.DEFAULT_PROMPT_MAX_UTF16,
+                "max_motion_words": MOTION_MAX_WORDS,
+                "negative_channel": "depends on selected video model; do not rely on avoid alone",
+            }
+        for fitted in shot_payload_batches(
+            data, lessons, MAX_SHOTS_PAYLOAD_CHARS,
+            # Final still+motion text is larger than the old field-only plan;
+            # request a few fully finished shots rather than losing half a batch.
+            max_scenes=min(profile.max_scenes or 2, 2),
+        ):
+            batch_facts = fitted["episode" if serial else "film"]
+            indices = [int(s["scene_index"]) for s in batch_facts["scenes"]]
+            prompt = (
+                instructions
+                + _EDITOR_FINAL_INSTRUCTIONS
+                + _GENERATION_QC_INSTRUCTIONS
+                + lessons_rule(lessons)
+                + wrap_in_inert_boundary(_dumps(fitted), "approved-film")
+                + "\nReturn shots only for these scene_index values: "
+                + json.dumps(indices)
+                + ". The shared story and bible are context; do not write other scenes."
+            )
+            result = _run(
+                engine,
+                registry,
+                editor_id,
+                "shot_prompts",
+                prompt,
+                template,
+                correlation,
+                f"Scriu prompturile pentru {len(indices)} cadre.",
+                profile.max_tokens,
+                native_thinking=profile.native_thinking,
+                subject={"storyboard_id": storyboard_id, "scene_indexes": list(indices)},
+            )
+            if result is None:
+                continue
             answered = True
             run_id = result["id"]
             run_ids.append(str(run_id))
             parsed = parse_shot_plan(result.get("output_text") or "")
-            packs = dict(parsed.shots)
-            missing = [index for index in expected if index not in packs]
+            packs.update({
+                index: shot for index, shot in parsed.shots.items()
+                if index in indices and _complete_editor_shot(shot)
+            })
+            missing = [index for index in indices if index not in packs]
             # ONE re-ask, carrying the decoder's own words, for a factual film. The serial's
             # shots are composed from its fixed look when the model's are missing (S8).
             if missing and not serial:
@@ -1307,16 +1791,34 @@ def write_shot_prompts(
                     template,
                     correlation,
                     f"Cer din nou planul de cadre: lipsesc cadrele {_listed(missing)}.",
-                    7000,
+                    profile.max_tokens,
+                    native_thinking=(
+                        not parsed.shots
+                        and _first_object(result.get("output_text") or "", ("shots",)) is None
+                    ),
+                    subject={"storyboard_id": storyboard_id, "scene_indexes": missing},
                 )
                 if again is not None:
                     run_id = again["id"]
                     run_ids.append(str(run_id))
                     second = parse_shot_plan(again.get("output_text") or "")
                     for index, answer in second.shots.items():
-                        packs.setdefault(index, answer)
+                        if index in indices and _complete_editor_shot(answer):
+                            packs.setdefault(index, answer)
                     parsed = ShotPlanParse(packs, second.method, second.error)
 
+    preflight_failed: dict[int, list[str]] = {}
+    preflight_repaired: list[dict[str, Any]] = []
+    preflight_protected: set[int] = set()
+    if editor_id is not None and registry is not None and packs:
+        profile = shot_generation_profile(engine, editor_id)
+        preflight_failed, preflight_repaired, preflight_run_ids, preflight_protected = (
+            _preflight_repair_factual_shots(
+                engine, registry, editor_id, storyboard_id, correlation, bible,
+                facts, packs, targets, profile,
+            )
+        )
+        run_ids.extend(preflight_run_ids)
     allowed = _allowed_text(facts)
     written: list[dict[str, Any]] = []
     refused: list[str] = []
@@ -1338,12 +1840,50 @@ def write_shot_prompts(
                 .order_by(StoryboardScene.scene_index)
             )
         )
+        # Takes may have arrived while Kael was answering a preflight question.
+        # Recheck under the write lock: never replace the words of paid media.
+        from app.media.models import SceneTake  # noqa: PLC0415
+
+        protected_now = set(
+            session.scalars(
+                select(SceneTake.scene_number).where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.status.in_(
+                        ("SUBMITTED", "PAID", "APPROVED", "REJECTED", "LOST")
+                    ),
+                )
+            )
+        )
+        preflight_protected.update(protected_now)
         facts_by_index = {int(s["scene_index"]): s for s in facts["scenes"]}
-        lost = answered and not serial and any(s.scene_index not in packs for s in scenes)
+        selected = [s for s in scenes if targets is None or s.scene_index in targets]
+        lost = bool(preflight_failed) or (
+            registry is not None and any(s.scene_index not in packs for s in selected)
+        )
         for scene in scenes:
+            if scene.scene_index in preflight_protected or scene.scene_index in preflight_failed:
+                # Never overwrite a paid identity or save a scene whose review still BLOCKS.
+                previous = dict(scene.prompt_json or {})
+                previous_ending = str(previous.get("ending_frame") or "")
+                if previous.get("camera_move"):
+                    moves.append(str(previous["camera_move"]))
+                continue
+            if targets is not None and scene.scene_index not in targets:
+                previous = dict(scene.prompt_json or {})
+                previous_ending = str(previous.get("ending_frame") or "")
+                if previous.get("camera_move"):
+                    moves.append(str(previous["camera_move"]))
+                continue
             scene_facts = facts_by_index.get(scene.scene_index, {})
             shot = packs.get(scene.scene_index)
             earlier = dict(scene.prompt_json or {})
+            if shot is None and registry is not None:
+                # New shots never fall back to Python-composed prompts on a
+                # malformed or missing model answer. Leave this scene untouched.
+                previous_ending = str(earlier.get("ending_frame") or "")
+                if earlier.get("camera_move"):
+                    moves.append(str(earlier["camera_move"]))
+                continue
             if (lost or not answered) and shot is None and earlier.get("source") == SOURCE_MODEL:
                 # A plan a model wrote before is never overwritten by a template because
                 # this answer could not be read, nor because no model answered at all this
@@ -1357,7 +1897,11 @@ def write_shot_prompts(
                 package = _serial_package(package, shot, scene_facts, look)
                 scene.shot_type = SHOT_TYPES[package["shot_size"]]
                 package["source"] = SOURCE_MODEL if shot is not None else SOURCE_SERIES_LOOK
-                composed = compose_serial_prompt(package, look)
+                composed = (
+                    package["still_prompt"]
+                    if package.get("prompt_format") == "editor_final_v1"
+                    else compose_serial_prompt(package, look)
+                )
                 # The shot's own movement, so the motion step has words of its own and the
                 # film's camera varies: the plan's move, else one that suits the shot's size
                 # and is not the scene before's, as the factual compile chooses. A serial
@@ -1366,13 +1910,25 @@ def write_shot_prompts(
                 move = _serial_camera_move(package, moves)
                 moves.append(move)
                 package["camera_move"] = move
-                package["motion_prompt"], dropped = serial_motion(package, look)
+                if package.get("prompt_format") == "editor_final_v1":
+                    # Preserve Kael's exact final words, including scene style;
+                    # don't reconstruct a clip sentence from the action or look.
+                    package["motion_intent"] = None
+                    package["motion_family"] = "editor_final"
+                    package["composition_issues"] = []
+                    dropped = False
+                else:
+                    package["motion_prompt"], dropped = serial_motion(package, look)
                 if dropped:
                     # Where the clip must arrive could not be said beside the action, even
                     # cut to its first moment (review of 68fa0b4): recorded, so the scene's
                     # rewrite asks the editor to shorten the action before a clip is bought.
                     ending_dropped.append(scene.scene_index)
                 package["still_prompt"] = composed
+                if package.get("prompt_format") != "editor_final_v1":
+                    package["composition_issues"] = composition_issues(
+                        package, composed, package["motion_prompt"]
+                    )
             else:
                 # Two prompts per filmed scene (compile_prompts); a scene composed locally
                 # carries none, and its visual_prompt stays the writer's line.
@@ -1385,7 +1941,9 @@ def write_shot_prompts(
                 composed = compiled["still_prompt"] or str(
                     package.get("writer_visual") or scene.visual_prompt or ""
                 )
-            scene.prompt_json = package
+            # The film's frozen pauses stay on the row whatever the shot plan says
+            # (`montage.keep_frozen`): a picture's words never change the film's timing.
+            scene.prompt_json = keep_frozen(package, earlier)
             scene.story_purpose = package["story_purpose"]
             scene.visual_prompt = composed
             previous_ending = str(package.get("ending_frame") or "")
@@ -1399,8 +1957,9 @@ def write_shot_prompts(
             )
         missing = [
             s.scene_index
-            for s in scenes
-            if s.scene_index not in packs and s.scene_index not in kept_from_before
+            for s in selected
+            if (s.scene_index not in packs or s.scene_index in preflight_failed)
+            and s.scene_index not in kept_from_before
         ]
         board = session.get(Storyboard, storyboard_id)
         if lost and missing:
@@ -1419,13 +1978,23 @@ def write_shot_prompts(
                     "kept_from_before": kept_from_before,
                     "decoder_error": parsed.error,
                     "parse_method": parsed.method,
+                    "preflight_failed": preflight_failed,
+                    "preflight_repaired": preflight_repaired,
                     "reasked": reasked,
                     "run_ids": run_ids,
                 },
                 correlation,
             )
         else:
-            if board is not None and board.status == NEEDS_SHOT_PLAN:
+            all_planned = all(
+                (s.prompt_json or {}).get("source") in (SOURCE_MODEL, SOURCE_SERIES_LOOK)
+                for s in scenes
+            )
+            if (
+                board is not None
+                and board.status == NEEDS_SHOT_PLAN
+                and (targets is None or all_planned)
+            ):
                 board.status = "APPROVED"  # the plan it was waiting for is written
             append_event(
                 session,
@@ -1440,6 +2009,7 @@ def write_shot_prompts(
                     "parse_method": parsed.method,
                     "reasked": reasked,
                     "ending_dropped": ending_dropped,
+                    "preflight_repaired": preflight_repaired,
                 },
                 correlation,
             )
@@ -1452,8 +2022,9 @@ def write_shot_prompts(
             storyboard_id,
             missing,
             f"Planul de cadre al editorului nu a putut fi citit pentru cadrele "
-            f"{_listed(missing)}, nici după a doua cerere; filmul așteaptă un plan "
-            f"({NEEDS_SHOT_PLAN}).",
+            f"{_listed(missing)}, după verificarea și corecția automată limitată; "
+            f"filmul așteaptă un plan valid ({NEEDS_SHOT_PLAN}). "
+            f"Blocaje: {str(preflight_failed)[:600]}",
         )
     logger.info(
         "shot_prompts_written",
@@ -1604,7 +2175,17 @@ def _validated_package(
         # Where this package came from. A render in PRODUCTION requires "model": template
         # prompts are a TEST convenience (SHOT_PLAN_PARSE, 2026-09-27).
         "source": SOURCE_MODEL if shot is not None else SOURCE_TEMPLATE,
+        # The montage's tag, kept on every package written for the scene (`montage.beat_tag`).
+        "beat": dict(scene["beat"]) if isinstance(scene.get("beat"), dict) else None,
     }
+    if shot is not None and _complete_editor_shot(shot):
+        package.update({
+            "prompt_format": "editor_final_v1",
+            "still_prompt": shot.still_prompt,
+            "motion_prompt": shot.motion_prompt,
+            "negative_prompt": shot.negative_prompt or None,
+            "motion_intent": None,
+        })
     # Only when the editor gave a usable one: a package without it is the package it was,
     # and the sheet's hashes of every film planned before stay what they were.
     framing = _second_framing(shot.second_framing if shot else None)
@@ -1647,7 +2228,7 @@ def _second_framing(raw: Any) -> dict[str, Any] | None:
         if isinstance(value, bool) or not isinstance(value, int | float):
             return None
         centre.append(round(min(1.0, max(0.0, float(value))), 3))
-    subject = strip_on_screen_text(" ".join(str(raw.get("subject") or "").split()))[:200]
+    subject = strip_on_screen_text(" ".join(str(raw.get("subject") or "").split()))
     return {"subject": subject, "centre_x": centre[0], "centre_y": centre[1]}
 
 
@@ -1724,11 +2305,25 @@ def _serial_package(
     speakers = [by_id[cid] for cid in scene.get("speaker_ids") or [] if cid in by_id]
     if not speakers:
         speakers = cast[:2]
-    size = serial_shot_size(scene.get("part"), int(scene.get("scene_index") or 1), len(speakers))
+    tag: dict[str, Any] = beat_of({"beat": scene.get("beat")})
+    size = str(tag.get("size") or "") or serial_shot_size(
+        scene.get("part"), int(scene.get("scene_index") or 1), len(speakers)
+    )
+    if size not in SHOT_TYPES:
+        size = serial_shot_size(
+            scene.get("part"), int(scene.get("scene_index") or 1), len(speakers)
+        )
+    # Whose face the montage put the shot on (`montage.serial_shots`): the speaker, or the
+    # listener of a reaction shot while the words go on from beside the frame.
+    on = _short_name(tag.get("on")) if tag.get("on") else ""
+    named = [c for c in cast if on and _short_name(c.get("name")) == on]
+    listening = bool(named) and size == "reaction"
     if size == "establishing":
         in_frame = speakers or cast
     elif size == "two_shot":
         in_frame = speakers[:2]
+    elif named:
+        in_frame = named[:1]
     else:
         in_frame = speakers[:1]
     # The people of the beat who do not speak stand at their own desks; a speaker outside a
@@ -1758,6 +2353,10 @@ def _serial_package(
         previous = who
     writer_line = strip_on_screen_text(str(scene.get("writer_visual") or ""))
     spoken = "; ".join(said) + "." if said else ""
+    if listening:
+        # The listener's shot: what is seen is the listening, the speaker is heard.
+        speaker = _short_name(speakers[0].get("name")) if speakers else "the other"
+        spoken = f"{focus} {SERIAL_LISTEN_TAIL} {speaker} is heard from beside the frame."
     fallback_action = " ".join(part for part in (writer_line, spoken) if part)
 
     # While the series has a look, a model may describe the shot but never restyle it: what
@@ -1778,9 +2377,12 @@ def _serial_package(
     package["location"] = str(scene.get("location") or "")
     package["shot_size"] = size
     package["in_frame"] = in_frame
+    package["listening"] = focus if listening else ""
     if look.get("in_use"):
         package["lighting"] = "the series look"
-    package["avoid"] = list(look.get("avoid") or []) or package.get("avoid") or []
+    package["avoid"] = list(
+        dict.fromkeys([*(look.get("avoid") or []), *(package.get("avoid") or [])])
+    )
     package["series_look_version"] = look.get("version") if look.get("in_use") else None
     package["from_model"] = shot is not None
     purpose = PART_PURPOSES.get(str(scene.get("part") or "").lower())
@@ -1801,12 +2403,14 @@ SERIAL_FRAME_SENTENCE = (
 #: and the vision gate still read lettering and number grids on a ledger drawn for «pauses
 #: before the number» (2026-10-12, 08:03, scene 4 of f06808c9, twice). Said without the
 #: words the prompt check reads as a request for text («lettering», «digits»).
-SERIAL_BLANK_SENTENCE = "Pages and screens are blank."
-_WRITING_SURFACES = re.compile(
-    r"\b(?:ledger|page|pages|paper|papers|note|notes|notebook|notepad|book|books|screen"
-    r"|screens|monitor|monitors|laptop|phone|tablet|whiteboard|board|sign|poster|label"
-    r"|document|documents|form|forms|invoice|invoices|report|reports|letter|letters)\b",
-    re.IGNORECASE,
+#: 2026-10-15 11:22Z (episode 2, scenes 5 and 7): the sentence used to say «every screen is
+#: dark or a plain soft glow», and the Director locked her refusals on those very words — a
+#: screen named is a screen drawn, lit, in a room the plan gave none; the room's own sentence
+#: (`series_look.room_sentence`) says where a monitor exists and that it is dark. No screen is
+#: named here; the paper is named only as what it is when present.
+SERIAL_BLANK_SENTENCE = (
+    "The desk surfaces are plain and clear of plates, labels and signs, and any sheet of "
+    "paper is blank."
 )
 #: A function word left hanging at the end of a cut phrase ("wearing", "with", "in a").
 _DANGLING_TAIL = re.compile(
@@ -1818,13 +2422,20 @@ _DANGLING_TAIL = re.compile(
 
 def _clean_cut(text: str) -> str:
     """A cut phrase without a function word hanging at its end."""
+    if re.search(
+        r"\b(?:behind|beside|with|towards?|for|to|near|opposite|past)\s+(?:her|him|them|it)$",
+        text.rstrip(" ,;:-"),
+        re.IGNORECASE,
+    ):
+        return text.rstrip(" ,;:-")
     return _DANGLING_TAIL.sub("", text.rstrip(" ,;:-")).rstrip(" ,;:-")
 
 
 def _still_moment(action: str) -> str:
     """The first moment of a serial beat's action, for its still: each person's clause up to
-    its first later moment («then», «finally», «eventually», «next,») and up to its first
-    comma, a clause that opens with a later moment left out. An image model draws a chain of
+    its first later moment («then», «finally», «eventually», «next,»). The character's
+    identity/position introduction stays beside the first action, never replacing it.
+    A clause that opens with a later moment is left out. An image model draws a chain of
     moments as stacked panels (2026-10-11, f06808c9), and a chain joined by commas alone
     («opens both hands as if starting a pitch, the gesture stalls halfway and dies, he
     restarts his sentence») is still a chain (2026-10-12, 08:01, scene 3 twice more); the
@@ -1841,10 +2452,190 @@ def _still_moment(action: str) -> str:
         ]
         if marks:
             part = _then_head(part, min(marks))
-        part = _clean_cut(_first_moment(part))
+        # The camera's path and a tempo are the clip's, never the picture's (2026-10-13).
+        part = _clean_cut(lint.without_tempo(lint.static_clause(_first_moment(part))))
         if part:
             kept.append(part)
     return "; ".join(kept)
+
+
+#: A hand, a palm, a finger…: the words of a pose's hand-by-hand detail.
+_HAND_NOUN = r"(?:hands?|palms?|fingers?|fingertips?|fists?|thumbs?|wrists?|knuckles?)"
+_HAND_WORDS = re.compile(rf"\b{_HAND_NOUN}\b", re.IGNORECASE)
+#: A hand as the words name it: «her right hand», «both hands», «one hand», «fingers».
+_HAND_NP = (
+    r"(?:(?:her|his|their|both|one|the|a|each|either)\s+)*"
+    r"(?:(?:left|right|other|free|open|folded|clasped|empty)\s+){0,2}" + _HAND_NOUN + r"\b"
+)
+#: A piece that opens on a hand, the pose's detail («her right hand resting on the folder»,
+#: «Sarah's hands flat on the desk»); its owner, when the words name one.
+_HAND_LEAD = re.compile(
+    rf"^(?:(?P<name>[A-Z][\w.]*)['’]s\s+)?(?P<hand>{_HAND_NP})(?P<tail>.*)$", re.IGNORECASE
+)
+#: «… with one hand hovering over the mouse», up to « and …» or the piece's end: only the
+#: hand's own words go, «… and his eyes on the dark monitor» stays.
+_WITH_HANDS = re.compile(
+    rf"\s+with\s+(?P<hand>{_HAND_NP})(?P<tail>.*?)(?:\s+and\s+(?P<rest>.*))?$", re.IGNORECASE
+)
+#: «… the shoulders sagging as the hands fall»: a hand's own moment closing a piece.
+_AS_HANDS = re.compile(rf"\s+(?:as|while|when|until)\s+{_HAND_NP}.*$", re.IGNORECASE)
+#: «the closed storyboard folder under her right hand», «the pen in her hand», «counts on his
+#: fingers»: a hand that only places what the piece is about.
+_AT_HAND = re.compile(
+    r"\s+(?P<prep>under|beneath|beside|near|by|next\s+to|in|on|from|between|into|at)\s+"
+    rf"(?P<hand>{_HAND_NP})",
+    re.IGNORECASE,
+)
+#: What a hand rests on, holds or hovers over: the object a still keeps in the picture
+#: («on the closed storyboard folder», «holding the small brass pen above the desk»).
+_HAND_OBJECT = re.compile(
+    r"\b(?:holding|holds|gripping|grips|clutching|clutches|cradling|cradles|carrying|carries"
+    r"|grasping|grasps|pressing|presses|touching|touches|tapping|taps|on|onto|over|above"
+    r"|against|across|upon|along|near|beside)\s+(?P<object>(?:the|a|an|its|his|her|their)\s+.+)$",
+    re.IGNORECASE,
+)
+#: Where an object said with its own placement ends and the placement begins.
+_PLACEMENT = re.compile(
+    r"\s+(?:on|onto|over|above|under|beneath|beside|near|by|in|at|against|across|along|behind"
+    r"|before|inside|next\s+to|in\s+front\s+of)\s+",
+    re.IGNORECASE,
+)
+#: An object a still does not place: a part of the body or of something else, a person's
+#: («Sarah's shoulder»), or the furniture the room already says («the desk surface»).
+_NOT_AN_OBJECT = re.compile(
+    r"\b(?:head|chest|lap|face|chin|cheeks?|neck|shoulders?|hips?|knees?|thighs?|sides?|back"
+    r"|arms?|elbows?|waist|mouth|temples?|forehead|stomach|belly|heart|height|edges?|corners?"
+    r"|tops?|bottoms?|ends?|rims?|other|desks?|tables?|surfaces?|desktop|counter|worktop|floor"
+    r"|walls?|chairs?|armrests?|doorframe|door|windows?|sill|railing)\b"
+    r"|['’]s\b",
+    re.IGNORECASE,
+)
+_OBJECT_OWNER = {"her": "her", "his": "him", "their": "them"}
+#: A piece that only places what came before it («below the bottom edge of the frame»).
+_PLACE_LEAD = re.compile(
+    r"(?:below|above|under|beneath|over|on|in|at|beside|near|out|off|inside|outside|behind"
+    r"|across|against|along|toward|towards|into|onto|from|by)\b",
+    re.IGNORECASE,
+)
+
+
+def _owner_place(hand: str, name: str, sentence: str, prep: str = "") -> str:
+    """Where a still says an object a hand held or rested on: before the hand's owner («in
+    front of her»; «beside her» when the words placed it beside the hand), the owner named
+    by the hand's own words, else by the sentence's first possessive; «within reach» when
+    nothing names one."""
+    found = re.match(r"(her|his|their)\b", hand.strip(), re.IGNORECASE)
+    found = found or re.search(r"\b(her|his|their)\b", sentence, re.IGNORECASE)
+    owner = name or (_OBJECT_OWNER[found.group(1).lower()] if found else "")
+    if not owner:
+        return "within reach"
+    side = prep.strip().lower() in ("beside", "near", "by", "next to")
+    return f"{'beside' if side else 'in front of'} {owner}"
+
+
+def _placed_object(tail: str, said_elsewhere: str) -> str:
+    """The object a hand's words rest on or hold (`_HAND_OBJECT`), said with its own
+    placement when the words give one («the small brass pen above the desk»); empty when the
+    words name none, when it is a part of a body or of a thing, a person's, the room's own
+    furniture (`_NOT_AN_OBJECT`), or already said elsewhere in the text."""
+    found = _HAND_OBJECT.search(tail.strip())
+    if not found:
+        return ""
+    said = found.group("object").strip(" ,;.")
+    thing = _PLACEMENT.split(said, maxsplit=1)[0]
+    if _HAND_WORDS.search(said) or _NOT_AN_OBJECT.search(thing):
+        return ""
+    words = re.findall(r"[\w'’-]+", thing)
+    if words and re.search(rf"\b{re.escape(words[-1])}\b", said_elsewhere, re.IGNORECASE):
+        return ""
+    return said
+
+
+def _hand_piece(piece: str, head: bool, sentence: str) -> str:
+    """One comma piece of a clause without its hand-by-hand detail; empty when nothing of it
+    stays. A piece that opens on a hand becomes the object the hand rested on or held, placed
+    before its owner (`_placed_object`); «with one hand …» goes up to its «and …»; «as the
+    hands fall» goes; «under her right hand» placing an object becomes «in front of her», and
+    on a verb («counts on his fingers») goes. A later piece that still names a hand goes; a
+    clause's own head (the person and the pose) stays."""
+    elsewhere = sentence.replace(piece, " ")
+    lead = _HAND_LEAD.match(piece.strip())
+    if lead:
+        thing = _placed_object(lead.group("tail"), elsewhere)
+        if not thing:
+            return ""
+        if _PLACEMENT.search(thing):
+            return thing
+        return f"{thing} {_owner_place(lead.group('hand'), lead.group('name') or '', sentence)}"
+    with_hands = _WITH_HANDS.search(piece)
+    if with_hands:
+        thing = _placed_object(with_hands.group("tail"), elsewhere)
+        rest = with_hands.group("rest")
+        piece = piece[: with_hands.start()] + (f" with {rest}" if rest else "")
+        if thing:
+            place = (
+                "" if _PLACEMENT.search(thing) else _owner_place(with_hands["hand"], "", sentence)
+            )
+            piece = f"{piece}, {thing} {place}".rstrip()
+    piece = _AS_HANDS.sub("", piece)
+    at_hand = _AT_HAND.search(piece)
+    if at_hand:
+        tail = piece[at_hand.end() :]
+        if re.match(r"(?:the|a|an|its)\b", piece.strip(), re.IGNORECASE) and not tail.strip():
+            # The piece is the object itself: the hand only placed it.
+            place = _owner_place(at_hand["hand"], "", sentence, at_hand["prep"])
+            piece = f"{piece[: at_hand.start()]} {place}"
+        else:
+            piece = piece[: at_hand.start()] + tail
+    piece = " ".join(piece.split()).strip(" ,")
+    if not head and _HAND_WORDS.search(piece):
+        return ""
+    return piece
+
+
+def _without_hand_detail(text: str) -> str:
+    """``text`` without the hand-by-hand detail of its poses, and nothing else: a piece that
+    opens on a hand («…, her right hand resting on the closed storyboard folder») says the
+    object it rested on, placed before its owner («the closed storyboard folder in front of
+    her»), and goes when that object is the room's furniture or already said; «with one hand
+    hovering over the mouse and his eyes on the dark monitor» keeps «with his eyes on the dark
+    monitor» and the mouse; «the shoulders sagging as the hands fall» keeps the shoulders
+    (`_hand_piece`). For an establishing or wide still, whose people are small figures in the
+    room (2026-10-16 19:16Z, 87c05891 scene 1: «the action clause that names Sarah's pose and
+    both hands as the frame's content build the picture around her», a medium close-up where
+    the plan fixes the establishing wide). The clip is made from the still: the objects its
+    first frame names (the folder under her right hand) stay in the picture (review of b7d2ef9,
+    2026-10-16)."""
+    said = " ".join(str(text or "").split())
+    sentences: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", said):
+        end = sentence[-1] if sentence[-1:] in (".", "!", "?") else ""
+        body = sentence[: len(sentence) - len(end)]
+        clauses: list[str] = []
+        for clause in re.split(r"\s*;\s*", body):
+            pieces: list[str] = []
+            placed_a_hand = False
+            for index, piece in enumerate(re.split(r",\s+", clause)):
+                if placed_a_hand and _PLACE_LEAD.match(piece):
+                    continue  # «…, below the bottom edge of the frame» placed the hand left out
+                kept = _hand_piece(piece, index == 0, body)
+                placed_a_hand = not kept and bool(_HAND_WORDS.search(piece))
+                if kept:
+                    pieces.append(kept)
+            joined = ", ".join(pieces).strip(" ,")
+            if joined:
+                clauses.append(joined)
+        if clauses:
+            sentences.append("; ".join(clauses) + end)
+    return " ".join(sentences)
+
+
+def serial_still_moment(package: Mapping[str, Any]) -> str:
+    """The action as a serial still says it: its first moment (`_still_moment`), without the
+    hand-by-hand detail on an establishing or wide shot, whose people are small figures in the
+    room (`_without_hand_detail`); the clip keeps the whole action, hands included."""
+    moment = _still_moment(str(package.get("action") or ""))
+    return _without_hand_detail(moment) if _serial_wide(package) else moment
 
 
 #: After a comma, a new moment: a pronoun or «then» opening it, or a verb of motion in its
@@ -1852,6 +2643,9 @@ def _still_moment(action: str) -> str:
 #: that only describes the same moment («arms crossed», «eyes on the street», «hands on
 #: hips», «a brass pen in hand»), which stays.
 _MOMENT_OPENER = re.compile(r"^(?:he|she|they|it|we|then|now|next|and then)\b", re.IGNORECASE)
+_SPATIAL_INTRO = re.compile(
+    r"^(?:behind|beside|next to|in front of|opposite)\s+(?:her|him|them|it)$", re.IGNORECASE
+)
 _MOMENT_VERB = re.compile(
     r"\b(?:pauses?|stalls?|dies|restarts?|holds?|lets?|waits?|stops?|starts?|begins?|ends?"
     r"|goes|comes?|says?|answers?|replies|shrugs?|sighs?|freezes?|grins?|frowns?|blinks?"
@@ -1883,7 +2677,8 @@ def _first_moment(clause: str) -> str:
     tails of the same moment («leaning back, arms crossed») stay."""
     head, sep, rest = clause.partition(",")
     while sep:
-        if _next_moment(rest.strip()):
+        has_action = bool(_MOMENT_VERB.search(head) or lint.SUBJECT_MOTION.search(head))
+        if _next_moment(rest.strip()) and has_action and not _SPATIAL_INTRO.fullmatch(head.strip()):
             break
         more, sep, rest = rest.partition(",")
         head = f"{head},{more}"
@@ -1902,14 +2697,64 @@ def _serial_framing(package: dict[str, Any], look: dict[str, Any], focus: str) -
     return _clean_cut(re.split(r"[,;:]", camera, maxsplit=1)[0]) if camera else ""
 
 
+def serial_partial_characters(package: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Canonical clothing for people whose body parts enter a single's frame."""
+    framed = {
+        str(c.get("id") or c.get("name"))
+        for c in package.get("in_frame") or []
+        if isinstance(c, dict)
+    }
+    action = _still_moment(str(package.get("action") or ""))
+    partial = []
+    for character in package.get("characters") or []:
+        if (
+            not isinstance(character, dict)
+            or str(character.get("id") or character.get("name")) in framed
+        ):
+            continue
+        name = _short_name(character.get("name"))
+        if not name:
+            continue
+        for clause in re.split(r"[;.!?]", action):
+            if re.search(
+                rf"\b{re.escape(name)}['’]s\s+[^;.!?]*\b"
+                r"(?:shoulder|upper arm|forearm|hand|elbow)\b",
+                clause,
+                re.IGNORECASE,
+            ):
+                if re.search(
+                    r"\b(?:shoulder|upper arm|forearm|hand|elbow)\s+(?:is |remains? )?"
+                    r"(?:absent|invisible|not visible)\b|\bno shoulder\b",
+                    clause,
+                    re.IGNORECASE,
+                ):
+                    continue
+                partial.append({**character, "visible_description": clause.strip()})
+                break
+    return partial
+
+
+def partial_clothing_sentence(character: Mapping[str, Any]) -> str:
+    name = _short_name(character.get("name"))
+    outfit = " ".join(str(character.get("outfit") or "").split()).rstrip(". ")
+    return (
+        (
+            f"The visible clothing of {name} matches the canonical outfit: {outfit}. "
+            f"Only the body parts specified for {name} enter the frame; the face stays outside it."
+        )
+        if outfit
+        else ""
+    )
+
+
 def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     """The text the model receives for a serial shot, the series' look first, word for word.
 
     Then the room, the fixed framing for the shot's size, how one picture fills the tall
     frame, the people in frame (each as their bible describes them) and the first moment of
-    the action; then, while there is room, the expression, the background and the continuity.
-    The people are given less of their description, and then the action less of its words,
-    until the prompt fits the look's cap: the look, the room and the frame never shrink.
+    the action. Required content is never cut to fit: the model-aware linter holds an
+    oversized prompt for rewrite before payment. Expression, background and continuity
+    stay too: a correction in those fields must not disappear under a length cap.
 
     2026-10-11 (f06808c9): the stills of scenes 3, 4 and 7 came back as the same picture
     three times, stacked, on both candidates. Their prompts carried the plan's camera as a
@@ -1917,7 +2762,6 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     action as a chain («taps …, pauses …, then lays the pen flat»): an image model draws a
     chain as panels. The path's move and the whole chain are the motion prompt's.
     """
-    cap = int(look.get("max_prompt_chars") or 900)
     people = [c for c in package.get("in_frame") or [] if isinstance(c, dict)]
     focus = _short_name(people[0].get("name")) if people else "the speaker"
     framing = _serial_framing(package, look, focus)
@@ -1925,40 +2769,48 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     # rubrics the first episode's stills carried (2026-10-11, f06808c9), the prompt check
     # refused them (TEMPLATE_LABEL) on every rewrite, and the Director and the Video Editor
     # went round in circles while the storyboard waited.
-    action = _still_moment(str(package.get("action") or ""))
-    surfaces = " ".join(
-        str(package.get(key) or "") for key in ("action", "location", "background", "subject")
-    )
+    action = serial_still_moment(package)
+    # An establishing or wide still says its people as small figures in the room: the room and
+    # the framing lead, each person's first pose follows, and no sentence of the plan builds the
+    # picture around a hand (`_without_hand_detail`; 87c05891 scene 1, 2026-10-16 19:16Z).
+    wide = _serial_wide(package)
     head = [
         str(look.get("block") or "").strip(),
         f"Location: {package['location']}." if package.get("location") else "",
+        # The room's own furniture, from the look's table (`series_look.room_sentence`),
+        # never the block's: on 2026-10-15 the block put glowing monitors in Sarah's
+        # penthouse and no rewrite could take them out (episode 2, 2d276038).
+        room_sentence(look, package.get("location")),
         _sentence(framing) if framing else "",
         SERIAL_FRAME_SENTENCE,
-        # Only where there is paper or glass to write on: the sentence costs the people
-        # their description under the cap, and a room without a page needs no blank one.
-        SERIAL_BLANK_SENTENCE if _WRITING_SURFACES.search(surfaces) else "",
+        # Always (the Owner, 2026-10-15: «indicațiile primului prompt să fie bune, chiar
+        # perfecte»): the room of the office serial always has desks, screens and paper, and
+        # episode 2's scenes 2, 5 and 6 paid for monitors with content and ruled paper where
+        # the plan named none. The cap no longer cuts the people (2026-10-14), so the sentence
+        # costs nothing.
+        SERIAL_BLANK_SENTENCE,
     ]
     if action and not action.endswith("."):
         action += "."
 
-    def build(per_person: int, action_text: str) -> str:
-        who = "; ".join(_identity(c, per_person) for c in people)
-        parts = [
-            *head,
-            f"In frame, facing the viewer: {who}." if who else "",
-            _sentence(action_text) if action_text else "",
-        ]
-        return " ".join(part for part in parts if part)
-
-    per = 220 if len(people) <= 1 else 130 if len(people) == 2 else 90
-    text = build(per, action)
-    while len(text) > cap and per > 45:
-        per -= 10
-        text = build(per, action)
-    if len(text) > cap and action:
-        room = len(action) - (len(text) - cap)
-        text = build(per, _clean_cut(_fit(action, room - 1)) + "." if room > 20 else "")
-    text = _clean_cut(_fit(text, cap))
+    # The old 980-character fit cut Sarah's pose after Marcus's action. Keep every
+    # canonical identity and first moment, even on overflow, so lint can reject the
+    # complete candidate instead of passing an incomplete instruction to the GPU.
+    who = "; ".join(
+        _identity(
+            person,
+            sum(len(str(person.get(key) or "")) for key in ("name", "face_hair", "outfit")) + 32,
+        )
+        for person in people
+    )
+    parts = [
+        *head,
+        f"In frame, facing the viewer: {who}." if who else "",
+        serial_listen_sentence(package),
+        _sentence(action),
+    ]
+    parts.extend(partial_clothing_sentence(person) for person in serial_partial_characters(package))
+    text = " ".join(part for part in parts if part)
     # The exclusions are the look's own words already ("No written words ..."); a list of
     # them under «Avoid:» is read literally by an image model and is never said here.
     for prefix, value in (
@@ -1967,13 +2819,13 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
         ("As in the shot before: ", package.get("continuity")),
     ):
         said = " ".join(str(value or "").split()).rstrip(". ")
+        if wide:
+            said = _without_hand_detail(said).rstrip(". ")
         if not said:
             continue
         if prefix and said[:1].isupper() and not said.startswith(("AMN", "I ")):
             said = said[:1].lower() + said[1:]
-        candidate = f"{text} {_sentence(prefix + said)}"
-        if len(candidate) <= cap:
-            text = candidate
+        text = f"{text} {_sentence(prefix + said)}"
     return text
 
 
@@ -1983,6 +2835,7 @@ _SERIAL_MOVE_SIZES: dict[str, str] = {
     "two_shot": "medium",
     "single": "medium",
     "close": "close",
+    "reaction": "close",
 }
 
 
@@ -1991,22 +2844,271 @@ def _serial_camera_move(package: dict[str, Any], previous: list[str]) -> str:
     move of the scene before, when the shot's size chooses another, so a writer who names
     one move for every beat does not make a film of one movement (SAME_CAMERA_EVERY_SCENE)."""
     size = _SERIAL_MOVE_SIZES.get(str(package.get("shot_size") or ""), "medium")
+    explicit = str(package.get("camera_move") or "").strip().lower()
+    if explicit in lint.CAMERA_MOVES:
+        return explicit
+    if [key for key, _ in lint.camera_moves(_flatten(package.get("camera")))] == ["static"]:
+        return "static"
     move = choose_camera_move(package, size, previous)
     if previous and move == previous[-1]:
         move = choose_camera_move({**package, "camera": "", "camera_move": ""}, size, previous)
     return move
 
 
-#: What keeps the serial's people themselves while they move (2026-10-11, 45dc313).
-SERIAL_FACES_SENTENCE = "Their faces stay expressive and the same people throughout."
+#: What keeps the serial's people themselves while they move (2026-10-11, 45dc313; the
+#: features named since 2026-10-15 16:41Z, a4ecf40a scene 6: «the model let the face slip
+#: from one frame to the next» — her cause: the face was never fixed as its own clause).
+#: Never «expressive» since 2026-10-16 19:18Z (87c05891 scene 6: the clip opened the mouth and
+#: smiled, and her review blamed «Their faces stay expressive» — a word no rewrite could take
+#: out, while the plan held «lips pressed together, mouth closed»). The plan's own expression
+#: is named after it (`serial_expression_sentence`). No longer than the old words: the clip's cap
+#: (1000 UTF-16 units) is full on a held plan's long ending (87c05891 scene 7).
+SERIAL_FACES_SENTENCE = "Each face keeps its features, the same people throughout."
+#: How the plan's expression (``motion_emotion``, else ``emotion``) is named in the clip, held
+#: from the first frame to the last; the plural when the shot names several people. The lead
+#: is said only with the Editor's words after it, so it is his ``emotion`` field's sentence
+#: (`scene_rewrite._motion_sentences`), never a lock.
+SERIAL_EXPRESSION_LEAD = "Their expression holds from the first frame to the last: "
+SERIAL_EXPRESSIONS_LEAD = "Their expressions hold from the first frame to the last: "
+#: The lead of an expression the plan already says held, or one that changes over the shot
+#: («…, then tapping once»): named as the plan says it, nothing added about holding it.
+SERIAL_FEELING_LEAD = "Their faces show: "
+SERIAL_EXPRESSION_LEADS = (SERIAL_EXPRESSION_LEAD, SERIAL_EXPRESSIONS_LEAD, SERIAL_FEELING_LEAD)
+#: An expression the plan already says is held, from the first frame to the last.
+_ALREADY_HELD = re.compile(
+    r"\bfirst\s+frame\s+to\s+the\s+last\b|\bthroughout\b|\bunchanged\b|\bstart\s+to\s+finish\b",
+    re.IGNORECASE,
+)
+#: Who is in a serial clip, and nobody else: said with the shot's names (`_cast_names`),
+#: the tail fixed so a lock on it is the composer's (`scene_rewrite._composer_sentences`).
+#: 2026-10-15 16:46Z, a4ecf40a scene 7: a single on Sarah, and «a second man appears behind
+#: her from the middle frame onward» — her cause: the words never said one person, nobody
+#: entering, from the first frame to the last.
+SERIAL_CAST_TAIL = "nobody else enters or appears behind."
+SERIAL_CAST_SENTENCE = (
+    "Only {names} in the frame from first to last, the same {faces} and features throughout; "
+    + SERIAL_CAST_TAIL
+)
+
+
+def _cast_names(package: dict[str, Any]) -> list[str]:
+    """The shot's people as the clip names them, in the plan's order, each once."""
+    names: list[str] = []
+    for key in ("in_frame", "characters"):
+        for person in package.get(key) or []:
+            short = _short_name(person.get("name")) if isinstance(person, dict) else ""
+            if short and short not in names:
+                names.append(short)
+    return names
+
+
+def serial_cast_sentence(package: dict[str, Any]) -> str:
+    """`SERIAL_CAST_SENTENCE` for this shot's people; empty when the plan names none."""
+    names = _cast_names(package)
+    if not names:
+        return ""
+    said = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return SERIAL_CAST_SENTENCE.format(names=said, faces="face" if len(names) == 1 else "faces")
+
+
+def serial_feeling(package: Mapping[str, Any]) -> str:
+    """The plan's feeling for the clip, on one line without its full stop: the Director's
+    motion rewrite's ``motion_emotion``, else the shot's ``emotion``; empty when neither."""
+    return " ".join(
+        str(package.get("motion_emotion") or package.get("emotion") or "").split()
+    ).rstrip(". ")
+
+
+def serial_expression_sentence(package: dict[str, Any]) -> str:
+    """The plan's expression named in the clip, held from the first frame to the last
+    (`SERIAL_EXPRESSION_LEAD`), said right after the faces sentence; empty when the plan names
+    none. A plan that already says it holds, or whose feeling changes over the shot, is named
+    as it says it (`SERIAL_FEELING_LEAD`); its chain words are taken out (`_continuous`), the
+    chain kept.
+
+    2026-10-16 19:18Z, 87c05891 scene 6: «The motion prompt still says only 'Their faces stay
+    expressive and the same people throughout' and never names the plan's expression — brows
+    slightly drawn, lips pressed together…» — the plan's feeling was said last, and the cap
+    always left it out. A reaction shot keeps its listener's face as its listen sentence says
+    it (lips closed, a breath and a small nod as the words go on): no expression is held."""
+    feeling = serial_feeling(package)
+    if not feeling or serial_listen_sentence(package):
+        return ""
+    changes = bool(lint.STILL_THEN.search(feeling) or lint.LATER_MOMENT.search(feeling))
+    # Said in the plan's own casing after the colon: a name the plan does not list in frame
+    # («Nadia calm, Sarah attentive» of a beat that names nobody) keeps its capital.
+    said = _continuous(feeling).rstrip(". ,;")
+    if not said:
+        return ""
+    names = _cast_names(package)
+    if changes or _ALREADY_HELD.search(feeling):
+        lead = SERIAL_FEELING_LEAD
+    else:
+        lead = SERIAL_EXPRESSIONS_LEAD if len(names) > 1 else SERIAL_EXPRESSION_LEAD
+    return _sentence(lead + said)
+
+
 #: The life of a serial shot beyond its lines: the people's bodies move as they speak, and
 #: the room — the office picture's lamps and plants, in every room of the studio's house —
 #: moves with them («Mișcare v2», 2026-10-11: the first board's clips held their people
-#: still while they spoke).
-SERIAL_LIFE_SENTENCE = (
-    "As they speak their hands gesture, heads turn and shoulders shift, and behind them the "
-    "lamp light flickers softly and the plants stir."
+#: still while they spoke). Since 2026-10-16 each half follows the plan
+#: (`serial_life_sentence`): 87c05891 scenes 1 and 6, 19:16-19:19Z, the Director refused the
+#: Video Editor's rewrites again and again because «As they speak their hands gesture…» told
+#: the model the scene is alive and lifted both hands off a desk the plan held them on, and
+#: «the lamp light flickers softly and the plants stir» moved a room the plan held steady —
+#: words no field of his could change.
+SERIAL_PEOPLE_LIFE = "As they speak their hands gesture, heads turn and shoulders shift"
+SERIAL_ROOM_LIFE = "behind them the lamp light flickers softly and the plants stir"
+SERIAL_LIFE_SENTENCE = f"{SERIAL_PEOPLE_LIFE}, and {SERIAL_ROOM_LIFE}."
+#: The people's half alone: the plan holds the room's light or the room still.
+SERIAL_PEOPLE_LIFE_SENTENCE = f"{SERIAL_PEOPLE_LIFE}."
+#: The room's half alone: the plan holds its people's pose, or they are small in a wide frame.
+SERIAL_ROOM_LIFE_SENTENCE = "The lamp light behind them flickers softly and the plants stir."
+#: Every form the life of a serial clip is said in (`serial_life_sentence`).
+SERIAL_LIFE_SENTENCES = (
+    SERIAL_LIFE_SENTENCE,
+    SERIAL_PEOPLE_LIFE_SENTENCE,
+    SERIAL_ROOM_LIFE_SENTENCE,
 )
+#: A plan that holds its people's pose in its action or its ending: the hands themselves
+#: resting, flat, folded or held; «she holds,»; a pose or a thing in hand held still; static;
+#: nothing changed. Then the people's gestures are not said: the plan's own later moments,
+#: said whole in the action, are the life of the clip. The hand is the pose's own subject
+#: («her right hand resting on the folder», «palms flat», «rests both hands»), never an object
+#: resting in a hand, and «held» counts only held still (review of b7d2ef9, 2026-10-16:
+#: f06808c9 scene 4's «brass pen … resting in her hand» and scene 8's «the laugh barely held
+#: in» lost their speakers' gestures).
+_HELD_POSE = re.compile(
+    r"\b(?:hands?|palms?|fingers?|arms?|elbows?)\s+(?:[\w'’-]+\s+){0,3}?(?:rest(?:s|ing)?|lie"
+    r"|lies|lying|flat|folded|clasped|held|in\s+(?:her|his|their)\s+lap)\b"
+    r"|\b(?:rest(?:s|ing)?|lays?|laid)\s+(?:(?:her|his|their|both|one|the)\s+)*"
+    r"(?:(?:left|right|other)\s+)?(?:hands?|palms?)\b"
+    r"|\bat\s+(?:her|his|their)\s+sides?\b"
+    r"|\bholds?\b(?=\s*(?:[,.;:—–]|$|(?:still|steady|there|in\s+place|(?:her|his|their|the)"
+    r"\s+(?:pose|position|stance|gaze))\b))"
+    r"|\bheld\s+(?:still|steady|motionless|in\s+place)\b"
+    r"|\bholds?\s+(?:(?:her|his|their|the|a|an)\s+)?(?:[\w'’-]+\s+){0,2}?(?:still|steady"
+    r"|motionless)\b"
+    r"|\bstatic\b|\bmotionless\b|\bunmoving\b|\bfrozen\b"
+    r"|\b(?:sits?|stands?|stays?|keeps?|remains?)\s+(?:\w+\s+)?still\b"
+    r"|\bnothing\s+(?:has\s+|is\s+)?chang(?:ed|es|ing)\b"
+    r"|\b(?:pose|position|expression)\s+(?:\w+\s+){0,2}?unchanged\b",
+    re.IGNORECASE,
+)
+#: A plan that asks for a steady light: «the lamp's steady warm glow», «the glow steady»,
+#: «no flicker», «the light holds».
+_STEADY_LIGHT = re.compile(
+    r"\bsteady\s+(?:[\w'’-]+\s+){0,3}?(?:light|glow|lamp\w*|flame)s?\b"
+    r"|\b(?:light|glow|lamp\w*|lighting)\s+(?:stays?\s+|holds?\s+|remains?\s+|is\s+|kept\s+)?"
+    r"(?:steady|constant|unchanged|unchanging)\b"
+    r"|\b(?:no|without|never)\s+(?:\w+\s+)?flicker\w*"
+    r"|\b(?:light|glow|lighting)\s+holds?\b",
+    re.IGNORECASE,
+)
+#: A plan that asks for a still room: «hold exactly as they are», «nothing has changed»,
+#: «every object in its place», «the room stays still», «the room behind him calm and still»
+#: (2d276038 scene 3), «the glow unchanged».
+_STILL_ROOM = re.compile(
+    r"\bhold(?:s|ing)?\s+exactly\s+as\b"
+    r"|\bnothing\s+(?:has\s+|is\s+)?(?:changed|changes|changing|moves|moving)\b"
+    r"|\bevery\s+object\s+(?:stays\s+|holds\s+|remains\s+)?in\s+its\s+place\b"
+    r"|\b(?:room|scene|background|world)\s+(?:\w+\s+){0,2}?(?:stays?|remains?|holds?)\s+"
+    r"(?:still|unchanged|motionless|the\s+same)\b"
+    r"|\b(?:room|scene|background|world)\b(?:\s+[\w'’-]+){0,4}?\s+still(?=\s*(?:[,.;:—–]|$))"
+    r"|\b(?:light|glow|lamp\w*|room|scene|background|sky)\b[^.;]{0,40}?\bunchanged\b",
+    re.IGNORECASE,
+)
+#: An avoid list that names the room's moving life: a flicker, a stir, a shifting light.
+_ROOM_LIFE_AVOIDED = re.compile(
+    r"\bflicker\w*|\bstir(?:s|ring|red)?\b"
+    r"|\b(?:light|lighting|glow|shadows?)\s+(?:\w+\s+)?(?:shift\w*|chang\w*|mov\w*|drift\w*)"
+    r"|\b(?:plants?|leaves|foliage)\s+(?:\w+\s+)?(?:mov\w*|sway\w*|rustl\w*)",
+    re.IGNORECASE,
+)
+
+
+def _serial_wide(package: Mapping[str, Any]) -> bool:
+    """Whether the shot is establishing or wide: its people small in the frame."""
+    size = str(package.get("shot_size") or "").strip().lower()
+    return size == "establishing" or "wide" in size
+
+
+def serial_narrator_shot(package: Mapping[str, Any]) -> bool:
+    """Whether the montage put the shot on nobody (`montage.serial_shots`: the narrator's
+    voice in off over the room — nobody in frame speaks)."""
+    tag = beat_of(dict(package))
+    return bool(tag.get("size")) and not tag.get("on")
+
+
+def serial_holds_pose(package: Mapping[str, Any]) -> bool:
+    """Whether the plan holds its people's pose (`_HELD_POSE`, in its action or its ending)."""
+    said = " ".join(_flatten(package.get(key)) for key in ("action", "ending_frame"))
+    return bool(_HELD_POSE.search(said))
+
+
+def serial_people_free(package: dict[str, Any]) -> bool:
+    """Whether the plan leaves the people of the shot free to move as they speak: not a pose
+    it holds (`serial_holds_pose`), not an establishing or wide shot (people small in frame),
+    not a reaction shot (it has its own listen sentence), not the narrator's shot."""
+    return not (
+        _serial_wide(package)
+        or serial_listen_sentence(package)
+        or serial_narrator_shot(package)
+        or serial_holds_pose(package)
+    )
+
+
+def serial_room_free(package: Mapping[str, Any]) -> bool:
+    """Whether nothing in the plan or its avoid list asks for a steady light or a still room:
+    its lighting, background, continuity, ending, environment and motion (`_STEADY_LIGHT`,
+    `_STILL_ROOM`, the factual compile's `_FIXED_WORLD` and `_MOTIONLESS_WORLD`), the light
+    its action names, and its avoid list (`_ROOM_LIFE_AVOIDED`)."""
+    room = " ".join(
+        _flatten(package.get(key))
+        for key in ("lighting", "background", "continuity", "ending_frame", "environment", "motion")
+    )
+    if any(
+        pattern.search(room)
+        for pattern in (_STEADY_LIGHT, _STILL_ROOM, _FIXED_WORLD, _MOTIONLESS_WORLD)
+    ):
+        return False
+    if _STEADY_LIGHT.search(_flatten(package.get("action"))):
+        return False
+    avoided = "; ".join(str(item) for item in package.get("avoid") or [])
+    return not _ROOM_LIFE_AVOIDED.search(avoided)
+
+
+def serial_life_sentence(package: dict[str, Any]) -> str:
+    """The life of a serial clip as the plan allows it: the people's gestures when the plan
+    leaves them free (`serial_people_free`), the room's flicker and stir when nothing asks for
+    a steady light or a still room (`serial_room_free`), both in one sentence when both; empty
+    when neither, or on a reaction shot (its listen sentence is its life)."""
+    if serial_listen_sentence(package):
+        return ""
+    people, room = serial_people_free(package), serial_room_free(package)
+    if people and room:
+        return SERIAL_LIFE_SENTENCE
+    if people:
+        return SERIAL_PEOPLE_LIFE_SENTENCE
+    return SERIAL_ROOM_LIFE_SENTENCE if room else ""
+
+
+#: A reaction shot's life (montage, the Owner 2026-10-16: dialogue heard in off, the listener
+#: seen): said with the listener's name before it, the tail fixed so a lock on it is the
+#: composer's (`scene_rewrite._composer_sentences`). Positive words only: lips closed, never
+#: «not speaking».
+SERIAL_LISTEN_TAIL = (
+    "listens with lips closed, eyes on the speaker beside the frame, a breath and a small "
+    "nod as the words go on."
+)
+
+
+def serial_listen_sentence(package: dict[str, Any]) -> str:
+    """The listener's sentence of a reaction shot; empty for any other shot."""
+    name = str(package.get("listening") or "").strip()
+    return f"{name} {SERIAL_LISTEN_TAIL}" if name else ""
+
+
 #: Where a serial clip ends, from the plan's ``ending_frame``. 2026-10-12, f06808c9 scene 3:
 #: the film's QC found «ending frame shows Marcus and Sarah in profile facing each other
 #: instead of facing the viewer», and no rewrite could reach the clip's ending — the composer
@@ -2015,13 +3117,29 @@ SERIAL_LIFE_SENTENCE = (
 #: wrote one («with her eyes on the pen»).
 SERIAL_ENDING_SENTENCE = "The shot ends on {ending}."
 _ENDING_PREPOSITION = re.compile(r"^(?:on|with|at|in|as)\b", re.IGNORECASE)
+#: An ending written as a whole sentence — its first clause carries a finite verb («The
+#: silvery bar rests inside its glass display case, …») — is said «The shot ends as …», not
+#: «The shot ends on the silvery bar rests …» (2026-10-15 22:19Z, 7c26a7ce scene 1: the
+#: Director refused the fragment twice and the guard called it a tool defect).
+#: Words as often nouns («both faces turned to the viewer», «the pulse mid-travel», «her
+#: looks», «the moves») are not here: a wrong «as» reads worse than a wrong «on» (01:00Z,
+#: 7c26a7ce scene 4: «The shot ends as the pulse mid-travel» — «pulses?» read as a verb).
+_FINITE_VERB = re.compile(
+    r"\b(?:rests?|stays?|remains?|holds?|sits?|lies?|hangs?|keeps?|is|are|has|have|does"
+    r"|settles?|comes?|goes?|waits?|hovers?)\b",
+    re.IGNORECASE,
+)
 #: An ending the writer already began with the composer's own words («The shot ends on …»,
 #: «The clip ends with …», «Ending on …»): those words are dropped before the sentence is said,
 #: or the clip is asked «The shot ends on the shot ends on …» (2026-10-12, f06808c9 scene 4:
 #: the rewrite's ending_frame began «The shot ends on the same medium close-up»).
 _ENDING_LEAD = re.compile(
     r"^(?:(?:the\s+(?:shot|clip|scene|frame)|it)\s+(?:ends|closes|finishes|settles)\b"
-    r"(?:\s+(?:on|with|at|in)\b)?|ending\s+(?:on|with|at|in)\b)[\s:;,.–—-]*",
+    r"(?:\s+(?:on|with|at|in)\b)?|ending\s+(?:on|with|at|in)\b"
+    # «The final frame holds the bar in its case» (2026-10-15, 7c26a7ce scene 1: said as
+    # «The shot ends on the final frame holds the bar…», refused by the Director twice).
+    r"|(?:the\s+)?(?:final|last|closing)\s+frame\s+(?:holds|shows|keeps|is)\b"
+    r"(?:\s+on)?)[\s:;,.–—-]*",
     re.IGNORECASE,
 )
 _POSSESSIVE = re.compile(r"['’]s$")
@@ -2109,10 +3227,7 @@ def _action_for_ending(raw: str, action: str, kept: tuple[str, ...]) -> str | No
 
     def fits(said: str) -> bool:
         whole = " ".join([*fixed, said])
-        return (
-            len(whole.split()) <= MOTION_MAX_WORDS
-            and lint.utf16_units(whole) <= lint.DEFAULT_PROMPT_MAX_UTF16
-        )
+        return lint.utf16_units(whole) <= lint.DEFAULT_PROMPT_MAX_UTF16
 
     if not action or fits(action):
         return action
@@ -2128,12 +3243,8 @@ def serial_motion(package: dict[str, Any], look: dict[str, Any]) -> tuple[str, b
     (review of 68fa0b4, 2026-10-12)."""
     del look  # the look is in the picture; the movement is the beat's
     action = _sentence(" ".join(str(package.get("action") or "").split()))
-    feeling = " ".join(
-        str(package.get("motion_emotion") or package.get("emotion") or "").split()
-    ).rstrip(". ")
-    ending = without_scene_reference(
-        strip_on_screen_text(_continuous(package.get("ending_frame")))
-    ).strip(" .;,")
+    feeling = serial_feeling(package)
+    ending = _ending_content(package.get("ending_frame"))
     # Never «The shot ends on the shot ends on …» (`_ENDING_LEAD`): the writer's own lead-in is
     # dropped, repeatedly if it was written twice.
     while _ENDING_LEAD.match(ending):
@@ -2152,15 +3263,21 @@ def serial_motion(package: dict[str, Any], look: dict[str, Any]) -> tuple[str, b
         first = _POSSESSIVE.sub("", ending.split()[0].strip(",;:.'’"))
         if first not in names and not first.isupper():
             ending = ending[:1].lower() + ending[1:]
+        # The same join as the factual composer's (`_ending_join`): the sheet's check reads
+        # the ending through `_ending_sentence`, and a serial ending written as a sentence
+        # («Sarah's right hand rests on the folder…») said «ends on» blocked eight scenes of
+        # 87c05891 at once (23:47Z: «ending_frame nu ajunge integral în promptul video»).
         ending_sentence = _sentence(
-            SERIAL_ENDING_SENTENCE.replace("on {ending}", "{ending}").format(ending=ending)
-            if _ENDING_PREPOSITION.match(ending)
-            else SERIAL_ENDING_SENTENCE.format(ending=ending)
+            SERIAL_ENDING_SENTENCE.replace("on {ending}", "{join}{ending}").format(
+                join=_ending_join(ending), ending=ending
+            )
         )
     move = str(package.get("camera_move") or "static")
     two_beats = move != "static" and _seconds_of(package) >= TWO_BEAT_SECONDS
     move_sentence = MOVE_SENTENCES.get(move, MOVE_SENTENCES["static"])
-    dropped = False
+    if move == "static" or move not in MOVE_SENTENCES:
+        move_sentence = _held_static(move_sentence)
+    dropped = bool(ending and not ending_sentence)
     if ending_sentence:
         raw = str(package.get("action") or "")
         fitted = _action_for_ending(raw, action, (move_sentence, ending_sentence))
@@ -2177,21 +3294,52 @@ def serial_motion(package: dict[str, Any], look: dict[str, Any]) -> tuple[str, b
             ending_sentence = ""
         else:
             action = fitted
-    items = [
-        (0, 0, move_sentence),
-        (1, 1, action),
-        (2, 2, ending_sentence),
-        (3, 3, SERIAL_FACES_SENTENCE),
-        (4, 4, SERIAL_LIFE_SENTENCE),
-        (6, 5, _sentence(feeling) if feeling else ""),
-        (5, 6, END_BEAT if two_beats else ""),
-        (0, 9, lint.MOTION_CLOSING),
-    ]
-    prompt = _fit_sentences(items, lint.DEFAULT_PROMPT_MAX_UTF16, MOTION_MAX_WORDS)
-    if len(prompt.split()) < MOTION_MIN_WORDS:
-        prompt = _fit_sentences(
-            [*items, (6, 6, MOTION_PAD)], lint.DEFAULT_PROMPT_MAX_UTF16, MOTION_MAX_WORDS
-        )
+    # The faces and the life follow the plan (2026-10-16, 87c05891 scenes 1 and 6): the
+    # plan's expression is named after the faces sentence, held from the first frame to the
+    # last; the people's gestures only when the plan leaves them free, the room's flicker only
+    # when nothing asks for a steady light or a still room (`serial_life_sentence`).
+    expression = serial_expression_sentence(package)
+    life = serial_listen_sentence(package) or serial_life_sentence(package)
+    feeling_sentence = _sentence(feeling) if feeling else ""
+    # A plan that holds its people or its room is padded with what holds, never with «keeps
+    # moving» (`MOTIONLESS_PAD`).
+    held = serial_holds_pose(package) or not serial_room_free(package)
+    pad = MOTIONLESS_PAD if held else MOTION_PAD
+    # Which the cap keeps first. People the plan leaves free move as they speak before their
+    # expression is named («Mișcare v2», 2026-10-11: the clips held their people still while
+    # they spoke; the review of b7d2ef9, 2026-10-16: f06808c9 scenes 3, 6 and 7 lost their whole
+    # life sentence to the expression). A plan that holds its people names the expression it
+    # holds first (87c05891 scene 6: the mouth opened and smiled where the plan held it closed).
+    life_rank, expression_rank = (4, 5) if serial_people_free(package) else (5, 4)
+
+    def items_for(expression_said: str, feeling_said: str) -> list[tuple[int, int, str]]:
+        return [
+            (0, 0, move_sentence),
+            (1, 1, action),
+            (2, 2, ending_sentence),
+            (2, 3, serial_cast_sentence(package)),
+            (3, 4, SERIAL_FACES_SENTENCE),
+            (expression_rank, 5, expression_said),
+            (life_rank, 6, life),
+            (7, 7, feeling_said),
+            (6, 8, END_BEAT if two_beats else ""),
+            (0, 10, lint.MOTION_CLOSING),
+        ]
+
+    required = " ".join([move_sentence, action, ending_sentence, lint.MOTION_CLOSING])
+    word_budget = max(MOTION_MAX_WORDS, len(required.split()))
+
+    def fitted_prompt(items: list[tuple[int, int, str]]) -> str:
+        said = _fit_sentences(items, lint.DEFAULT_PROMPT_MAX_UTF16, word_budget)
+        if len(said.split()) < MOTION_MIN_WORDS:
+            said = _fit_sentences([*items, (7, 7, pad)], lint.DEFAULT_PROMPT_MAX_UTF16, word_budget)
+        return said
+
+    # The feeling is said once: as the expression held when it fits, else plainly, last, while
+    # there is room.
+    prompt = fitted_prompt(items_for(expression, "" if expression else feeling_sentence))
+    if expression and expression not in prompt:
+        prompt = fitted_prompt(items_for("", feeling_sentence))
     if ending_sentence and ending_sentence not in prompt:
         dropped = True  # the vendor's cap took it after all
     return prompt, dropped
@@ -2277,7 +3425,7 @@ def compose_prompt(package: dict[str, Any], bible: dict[str, Any]) -> str:
         said = once(value)
         if said:
             parts.append(f"{label}: {said}")
-    parts.append(f"Avoid: {', '.join(str(a) for a in (package.get('avoid') or [])[:6])}")
+    parts.append(f"Avoid: {', '.join(str(a) for a in (package.get('avoid') or []))}")
     text = " ".join(f"{part}." for part in parts if part)
     return cut_at_sentence(text, MAX_PROMPT_CHARS)
 
@@ -2351,27 +3499,27 @@ MOTION_MIN_WORDS, MOTION_MAX_WORDS = lint.MOTION_WORDS
 #: prompt_lint.camera_moves reads it), carries its tempo (prompt_lint.SPEED_WORDS) and its
 #: path, and spells its own key, so a stored package's move is readable in its prompt. The
 #: older keys keep their "slow": a plan or a rewrite that names them by name asked for that.
+#: The move sentences name no framing of their own since 2026-10-15 17:19Z (a4ecf40a scenes 6
+#: and 8: «dolly in from a wide view to a close framing» on a shot the plan fixes as a close-up —
+#: the Director refused the words twice and no rewrite could change a composer sentence) and no
+#: pace (scene 7: «tracking left at walking pace» on a seated subject). The framing is the
+#: shot's, the move only tightens, widens or slides.
 MOVE_SENTENCES: dict[str, str] = {
     "static": (
         "Static camera on a fixed tripod, steady, the life of the scene moving inside the "
         "fixed frame."
     ),
     "slow push-in": (
-        "Slow push-in from the wide view toward the subject, steady all the way, ending close "
-        "on it."
+        "Slow push-in toward the subject, steady all the way, the framing tightening on it."
     ),
     "slow pull-back": (
-        "Slow pull-back from close on the subject to the wide view, steady all the way, the "
-        "space opening around it."
+        "Slow pull-back from the subject, steady all the way, the space opening around it."
     ),
     "dolly in": (
-        "Steady dolly in from a wide view to a close framing of the subject, the foreground "
-        "sliding past the lens."
+        "Steady dolly in toward the subject, the framing tightening, the foreground sliding "
+        "past the lens."
     ),
-    "dolly out": (
-        "Steady dolly out from a close framing of the subject to a wide view, revealing the "
-        "whole space around it."
-    ),
+    "dolly out": ("Steady dolly out from the subject, the space around it widening into view."),
     "slow pan left": (
         "Slow pan left, smooth and with a clear start and end, sweeping from the right side "
         "of the scene across to the subject."
@@ -2381,12 +3529,10 @@ MOVE_SENTENCES: dict[str, str] = {
         "of the scene across to the subject."
     ),
     "tracking left": (
-        "Steady tracking left alongside the subject at walking pace, the background sliding "
-        "past behind it."
+        "Steady tracking left alongside the subject, the background sliding past behind it."
     ),
     "tracking right": (
-        "Steady tracking right alongside the subject at walking pace, the background sliding "
-        "past behind it."
+        "Steady tracking right alongside the subject, the background sliding past behind it."
     ),
     "tilt up": (
         "Smooth tilt up from the base of the scene to its top, steady, ending on the subject."
@@ -2484,9 +3630,33 @@ MEASURED_SENTENCE = (
 COMPOSITION_SENTENCE = (
     "Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered."
 )
+STILL_FRAMING_RULE = (
+    "\nThe compiler's still framing contract takes precedence over earlier briefs, learned "
+    "lessons and blanket avoid-list bans on camera words: shot size, lens, angle and framing "
+    "distance are valid image instructions, not visible lettering or camera movement. "
+    "Judge whether the framing matches the requested scene, not whether its words mention "
+    "a shot or lens. Replacing an incorrect shot size with the required size can treat a "
+    "framing finding; do not demand removal of all framing words. Keep checking the actual "
+    "subject, composition, distance, continuity and other defects. Camera movement belongs "
+    "to the clip, not the still. The compiler adds the configured style and frame once; "
+    "write scene content in subject and action, not a pasted copy of the completed prompt. "
+    "Judge visible qualities from the complete still prompt: a colour, glow or state already "
+    "named there is not missing because another field does not repeat it. The still is one "
+    "moment by construction; assess the visible moment, not a mandatory frozen-moment label.\n"
+)
 STILL_EXCLUSIONS = "No text, no logo."
 PEOPLE_SENTENCE = (
     "Any people appear only as small distant figures seen from behind, faces turned away."
+)
+#: The same rule for any frame that is not wide — a medium shot, a close-up, a detail of hands,
+#: a back, a shoulder — where «small distant figures» contradicts the shot's own scale (19:47Z,
+#: the same scene rewritten as a medium shot: refused four more rounds for the wide clause).
+#: 2026-10-15 18:45Z,
+#: 7c26a7ce scene 2 (the scientist's hands lifting the bar, a detail shot): the Director
+#: refused the wide-frame clause six rounds running, and the Editor's rewrite could not
+#: remove a sentence the composer always says — a tool defect, not his.
+CLOSE_PEOPLE_SENTENCE = (
+    "The person is seen only from behind, the face turned away from the camera and never shown."
 )
 #: The bible's face rule said for a scene that shows nobody: it never asks for figures, and
 #: the linter reads it as the rule kept (`prompt_lint.NO_FACE_STATED`). Said positively, with
@@ -2495,15 +3665,46 @@ PEOPLE_SENTENCE = (
 #: diagnosed it — an image model reads past the negation and draws the people it names —
 #: asked for it to be deleted, and the next compile put it back (ADR-POSITIVE-PROMPTS-ONLY).
 NO_PEOPLE_SENTENCE = "The frame holds only the place and the things named."
-FACES_CONSTRAINT = "Faces stay turned away from the camera."
+FACES_CONSTRAINT = (
+    "The people remain seen from behind throughout, faces turned away from the camera."
+)
 #: Said when a motion prompt is under its word floor. Until 2026-10-11: "The movement stays
 #: smooth and unhurried." (prompt_lint.LEGACY_STILLNESS).
 MOTION_PAD = "Everything in the frame keeps moving smoothly through the whole clip."
+MOTIONLESS_PAD = (
+    "The lighting, object geometry and background remain consistent throughout the shot."
+)
+MOTIONLESS_END_BEAT = "In the final seconds the camera eases to a steady hold."
 #: The world's motion when the plan names none. Setting-neutral: an airless scene gets no
 #: haze or wind from it. Until 2026-10-11: "Background details remain stable throughout the
 #: shot." — the stillness the Owner then saw in every clip.
 DEFAULT_WORLD_MOTION = (
     "Shadows drift and the light shifts across the scene, its smallest details stirring."
+)
+#: A plan that fixes its world in so many words — the light does not move, the room does
+#: not change — gets no drift default (00:47Z, 7c26a7ce scene 4: «The traveling pulse is the
+#: only moving light… no flicker», «the room itself does not change», and the composer said
+#: «Shadows drift and the light shifts…»; the Director refused it for the bible).
+_FIXED_WORLD = re.compile(
+    r"\b(?:does\s+not\s+change|do\s+not\s+change|stays?\s+(?:dark|still|dim|fixed|locked"
+    r"|the\s+same)|remains?\s+(?:fixed|still|dark|dim|locked)|no\s+flicker"
+    r"|the\s+only\s+(?:moving\s+light|light\s+that\s+moves)|locked\s+in\s+identical"
+    r"|fixed\s+(?:pool|light|place)s?\b|light(?:ing)?\s+(?:is|stays|remains)\s+fixed)",
+    re.IGNORECASE,
+)
+#: Said for a plan that fixes its world when the camera moves: the model is told what holds.
+FIXED_WORLD_SENTENCE = "The room, its light and its shadows hold exactly as they are."
+_MOTIONLESS_WORLD = re.compile(
+    r"\bnothing\s+(?:(?:in|around)\s+(?:the\s+)?(?:world|scene|background)\s+)?moves\b",
+    re.IGNORECASE,
+)
+#: The subject's stillness in a shot at rest («the bar rests still inside its glass case»):
+#: no verb of motion, yet it names the thing the frame holds, which a clip of a still scene
+#: must say or the model moves the room instead (2026-10-15, 7c26a7ce scene 1).
+_AT_REST_CLAUSE = re.compile(
+    r"\b(?:rests?|stays?|remains?|sits?|lies?|hangs?|holds?)\s+"
+    r"(?:still|fixed|motionless|unmoved|steady|in\s+place|exactly)\b",
+    re.IGNORECASE,
 )
 #: A chain word inside a plan's motion or action, read for the video model: the chain is
 #: wanted (it is the clip's sequence), the word is not (THEN_CHAIN blocks on seedance), so
@@ -2612,6 +3813,14 @@ def _then_head(part: str, start: int) -> str:
     return re.sub(r"(?:\s+\b(?:and|or|but)\b)+$", "", head, flags=re.IGNORECASE).strip()
 
 
+_SUBJECT_CAMERA_ORIENTATION = re.compile(
+    r"\b(?:with\s+)?(?:his|her|their|its|the)\s+"
+    r"(?:back|backs|shoulder|shoulders|side|sides|face|faces|front|profile)\s+"
+    r"(?:turned\s+)?(?:to|towards?|away\s+from)\s+(?:the\s+)?camera\b",
+    re.IGNORECASE,
+)
+
+
 def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
     """The clauses of a plan field that may enter a prompt, in the plan's words.
 
@@ -2639,6 +3848,14 @@ def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
 
     def usable(part: str) -> str:
         part = without_scene_reference(part)
+        if not motion:
+            # A still is one frozen moment (the Owner, 2026-10-13: «în promptul de imagine nu
+            # are ce să caute indicații de mișcare»): the camera's movement leaves the clause
+            # (a clause that only moves the camera is the motion's alone), and so do a tempo
+            # and a span of the clip.
+            part = lint.without_tempo(lint.static_clause(part))
+            if not part:
+                return ""
         if (
             not re.search(r"[A-Za-z]", part)
             or lint.NONE_WORD.match(part)
@@ -2652,8 +3869,14 @@ def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
             or _QUOTE_MARKS.search(part)
         ):
             return ""
+        camera_instruction = _SUBJECT_CAMERA_ORIENTATION.sub("", part)
         if motion and (
-            _CAMERA_WORDS.search(part) or lint.camera_moves(part) or lint.THEN_CHAIN.search(part)
+            any(
+                match.group(0).casefold() not in ("locked", "static", "movement")
+                for match in _CAMERA_WORDS.finditer(camera_instruction)
+            )
+            or lint.camera_moves(part)
+            or lint.THEN_CHAIN.search(part)
         ):
             return ""
         return part
@@ -2662,7 +3885,30 @@ def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
     opened = False  # a clause of the field has been read
     first_only = False  # the field said "First ...": a still shows that moment only
     panelled = False  # a clause was labelled as one picture of a layout ("Before:")
-    for clause in re.split(r"[;,.!?]\s*|\s*\(|\)\s*|\s+-{1,2}\s+|\s*—\s*", said):
+    # Motion lists are one proposition: splitting "no figure, reflection, or ghost image
+    # appears" at commas loses its negation and asks the model for a ghost. Positive object
+    # lists likewise need their shared predicate ("flask, stand and valve stay locked").
+    clauses: list[str] = []
+    for proposition in re.split(r"[;.!?]\s*|\s*\(|\)\s*|\s+-{1,2}\s+|\s*—\s*", said):
+        if motion:
+            # A later-moment clause or scene pointer must not erase its independent
+            # neighbours. Keep ordinary object lists and the scope of negations whole.
+            independent = lint.THEN_CHAIN.search(proposition) or lint.SCENE_REFERENCE.search(
+                proposition
+            )
+            scoped_negative = lint.NEGATION.search(proposition) or lint.INLINE_EXCLUSION.search(
+                proposition
+            )
+            clauses.extend(
+                proposition.split(",") if independent and not scoped_negative else [proposition]
+            )
+        else:
+            for clause in proposition.split(","):
+                if lint.NEGATION.search(clause) or lint.INLINE_EXCLUSION.search(clause):
+                    # Its negation scopes the rest of this list, up to the next proposition.
+                    break
+                clauses.append(clause)
+    for clause in clauses:
         raw = " ".join(clause.split()).strip(" -:/")
         if motion:
             part = usable(_LABEL_PREFIX.sub("", raw))
@@ -2723,6 +3969,35 @@ def _phrase(clauses: list[str], max_words: int) -> str:
         fitted.append(clause)
         count += words
     return ", ".join(fitted)
+
+
+def _without_clauses_said_by(action: str, subject: str) -> str:
+    """Remove only clauses already present as contiguous words, ignoring case/punctuation.
+
+    Approximate lesson similarity is unsafe here: a new verb or a reversed relation is new
+    scene information even when most of its words already occur in the subject.
+    """
+    existing = " " + " ".join(re.findall(r"\w+", subject.casefold())) + " "
+    kept: list[str] = []
+    for clause in re.split(r"\s*[;,]\s*", " ".join(str(action or "").split()).rstrip(". ")):
+        words = " ".join(re.findall(r"\w+", clause.casefold()))
+        if clause and (not words or f" {words} " not in existing):
+            kept.append(clause)
+    said = ", ".join(kept)
+    return _sentence(said) if said else ""
+
+
+def _shorter_subject(subject: str) -> list[str]:
+    """The subject said with fewer of its later clauses, longest first, down to its first
+    clause: «A, B; C: D» → «A, B; C», «A, B», «A». Each is a whole sentence."""
+    said = " ".join(str(subject or "").split()).rstrip(". ")
+    parts = [part for part in re.split(r"\s*[;:]\s*|\s*,\s*", said) if part]
+    found: list[str] = []
+    for count in range(len(parts) - 1, 0, -1):
+        shorter = _sentence(", ".join(parts[:count]))
+        if shorter and shorter not in found:
+            found.append(shorter)
+    return found
 
 
 def _sentence(text: str) -> str:
@@ -2789,6 +4064,14 @@ _ALSO_PEOPLE = re.compile(
 
 
 def _shows_people(text: str) -> bool:
+    # A unit of distance is not an actor. Do not inject people into a still because
+    # a plan says «a finger's-width gap» or «a hand's breadth».
+    text = re.sub(
+        r"\b(?:fingers?|hands?)(?:['’]s)?[-\s]+(?:width|breadth|span|length)\b",
+        "small",
+        text,
+        flags=re.IGNORECASE,
+    )
     for pattern in (lint.PERSON, _ALSO_PEOPLE):
         for match in pattern.finditer(text):
             if match.group(0).lower() == "hand" and text[match.end() :].startswith("-drawn"):
@@ -2806,7 +4089,9 @@ def shot_frame(camera: Any, shot_type: Any = "") -> tuple[str, str]:
     fallback = str(shot_type or "").lower().replace("_", " ")
     size = ""
     label = ""
-    for source in (text, fallback):
+    # The leading shot label wins over a later subject adjective ("Medium shot, the
+    # galaxy wide" must not become a wide shot). Full text remains the legacy fallback.
+    for source in (re.split(r"[,;:—–]", text, maxsplit=1)[0], text, fallback):
         if re.search(r"extreme\s+wide", source):
             size, label = "wide", "Extreme wide shot"
         elif re.search(r"\baerial\b|\bdrone\b|bird'?s[- ]eye", source):
@@ -2835,7 +4120,72 @@ def shot_frame(camera: Any, shot_type: Any = "") -> tuple[str, str]:
     if angle:
         word = angle.group(1).replace(" ", "-")
         parts.append(word if word in ("overhead", "top-down") else f"{word} angle")
+    placement = _frame_placement(camera)
+    if placement:
+        return size, _sentence(f"{', '.join(parts)}: {placement}")
     return size, _sentence(", ".join(parts))
+
+
+# Some editors write "Wide shot, 24mm lens: 9:16 frame: subject" or just
+# "Wide shot, 9:16 frame". Splitting on the first ":" used to make "16 frame"
+# look like an object placement and send "24mm lens: 16 frame:" to the image
+# model. The image ratio is already supplied by COMPOSITION_SENTENCE; only
+# real subject placement belongs after the camera label.
+_RATIO_CAMERA_PREFIX = re.compile(
+    r"^\s*(?:(?:9\s*:\s*16|16\s*:\s*9|16)\s+frame)"
+    r"\s*(?:[:,;\-]\s*|$)",
+    re.IGNORECASE,
+)
+
+
+def _frame_placement(camera: Any) -> str:
+    """The plan's own words for the frame after its label — what is centred, how large, how
+    far («Wide establishing shot, straight-on, 24mm wide: the glass display case centred in
+    the vertical frame, the bar large and centred inside it, the dark room around; static —
+    the framing holds») — without the camera's movement, its span and any exclusion. Empty
+    when the plan's camera text has no colon to read after (03:00Z, 7c26a7ce scene 1: the
+    composer said «Wide establishing shot, 24mm lens.» and the Director's review refused
+    every rewrite for «a bare label with no framing distance»)."""
+    raw = _flatten(camera)
+    if ":" not in raw:
+        return ""
+    after = raw.split(":", 1)[1]
+    after = _RATIO_CAMERA_PREFIX.sub("", after)
+    # A ratio-only fragment is NOT a placement instruction. Discard it rather
+    # than asking the picture model to draw the meaningless "16 frame".
+    if not after.strip(" ,;:-"):
+        return ""
+    kept: list[str] = []
+    for sentence in re.split(r"\s*[;.]\s*", after):
+        parts: list[str] = []
+        # A sub-clause that moves the camera, locks it, spans the clip or excludes something
+        # («does not tighten», «no movement») leaves; the placement words around it stay.
+        for part in re.split(r"\s*(?:,|—|–|\s-\s)\s*", sentence):
+            part = lint.without_tempo(part).strip(" .,—–-")
+            if (
+                not part
+                or lint.camera_moves(part)
+                or lint.NEGATION.search(part)
+                or _LOCKED_CAMERA.search(part)
+                or re.search(r"\bcamera\b", part, re.IGNORECASE)
+            ):
+                continue
+            parts.append(part)
+        clause = ", ".join(parts).strip(" .,")
+        if len(clause.split()) < 3 or lint.dangling(clause):
+            continue
+        kept.append(clause)
+    return ", ".join(kept)
+
+
+#: A plan's camera text that locks the frame: the clip's move is «static», not the size's.
+_LOCKED_CAMERA = re.compile(
+    r"\b(?:locked|motionless|static|fixed|frozen)\s+(?:camera|frame|framing|shot)\b"
+    r"|\bcamera\s+(?:is\s+|stays\s+|held\s+)?(?:locked|static|motionless|fixed|still)\b"
+    r"|\b(?:single\s+)?still\s+frame\b|\bno\s+(?:camera\s+)?movement\b"
+    r"|\bframing\s+holds\b|\bframe\s+(?:is\s+)?locked\b",
+    re.IGNORECASE,
+)
 
 
 def choose_camera_move(
@@ -2856,11 +4206,15 @@ def choose_camera_move(
     stated = str(package.get("camera_move") or "").strip().lower()
     if stated in lint.CAMERA_MOVES:
         return stated
-    named = [
-        move for move, _ in lint.camera_moves(_flatten(package.get("camera"))) if move != "static"
-    ]
+    camera_text = _flatten(package.get("camera"))
+    named = [move for move, _ in lint.camera_moves(camera_text) if move != "static"]
     if len(named) == 1:
         return named[0]
+    if not named and _LOCKED_CAMERA.search(camera_text):
+        # The plan locks the frame in so many words («A single still frame, the camera
+        # locked and motionless»): a varied move contradicts the plan, and the Director
+        # refuses the clip on the plan's words (23:34Z, 7c26a7ce scene 2: a tilt down).
+        return "static"
     choices = SIZE_MOVES.get(size) or SIZE_MOVES["medium"]
     last = previous[-1] if previous else None
     allowed = [move for move in choices if move not in avoid] or list(choices)
@@ -2940,14 +4294,25 @@ def _motion_intent(
     and was not said already. Neither describes the picture. Chains are kept as sequences
     without their "then" (`_continuous`).
     """
-    from_motion = _clauses_of(_continuous(package.get("motion")), motion=True)
-    from_action = _clauses_of(_continuous(package.get("action")), motion=True)
+    # The composer's own sentences, pasted back into a plan's field by a rewrite («Shadows
+    # drift and the light shifts…» stood in scene 2's motion field, 23:34Z, 7c26a7ce, and
+    # the Director refused it twice as the plan's word), are not the plan's words.
+    motion_text = _without_composer_sentences(_continuous(package.get("motion")))
+    action_text = _without_composer_sentences(_continuous(package.get("action")))
+    from_motion = _clauses_of(motion_text, motion=True)
+    from_action = _clauses_of(action_text, motion=True)
     candidates = [
         *from_motion,
         *from_action,
-        *_clauses_of(package.get("environment"), motion=True),
+        *_clauses_of(_without_composer_sentences(package.get("environment")), motion=True),
     ]
-    world = next(
+    # «nothing moves» may stand in the action when the motion field said it beside an
+    # exclusion that dropped its clause («no hand enters, nothing moves»): either field makes
+    # the shot one at rest, and its world is then that stillness, not the default drift.
+    explicit_stillness = next(
+        (c for c in [*from_motion, *from_action] if _MOTIONLESS_WORLD.search(c)), ""
+    )
+    world = explicit_stillness or next(
         (
             clause
             for clause in candidates
@@ -2962,7 +4327,15 @@ def _motion_intent(
     action_clauses: list[str] = []
     for clause in from_action:
         key = clause.casefold()
-        if key in said or not lint.SUBJECT_MOTION.search(clause):
+        at_rest = bool(explicit_stillness and _AT_REST_CLAUSE.search(clause))
+        moves = lint.SUBJECT_MOTION.search(clause) or at_rest
+        if key in said or not moves:
+            continue
+        # The subject's stillness is said once: an at-rest clause of the action whose words
+        # the motion's clauses mostly carry already («The bar rests still inside its glass
+        # case» after «The silvery rectangular bar rests inside its glass case») is theirs
+        # (22:19Z, 7c26a7ce scene 1: refused as «the bar's rest said twice»).
+        if at_rest and lesson_overlap(clause, " ".join(subject_clauses)) >= 0.5:
             continue
         said.add(key)
         action_clauses.append(clause)
@@ -2970,7 +4343,18 @@ def _motion_intent(
     amplitude = str(package.get("motion_amplitude") or AMPLE).strip().lower()
     return {
         "camera_move": move,
-        "world": _sentence(_phrase([world], 14)) if world else DEFAULT_WORLD_MOTION,
+        # A static camera gets no drift by default: its life is the subject's own action,
+        # and a plan that names no world motion for a locked frame means none; nor does a
+        # plan whose own words fix the light and the room (`_FIXED_WORLD`).
+        "world": _sentence(world)
+        if world
+        else (
+            ""
+            if move == "static"
+            else (FIXED_WORLD_SENTENCE if _fixed_world(package) else DEFAULT_WORLD_MOTION)
+        ),
+        "world_fixed": _fixed_world(package),
+        "camera_path": _plan_move_clause(package, move),
         "subject": _sentence(subject),
         "subject_clauses": [_sentence(clause) for clause in subject_clauses],
         "action_clauses": [_sentence(clause) for clause in action_clauses],
@@ -2979,7 +4363,136 @@ def _motion_intent(
         "constraints": _scene_constraints(package),
         "faces_banned": faces_banned,
         "people": people,
+        "ending_frame": str(package.get("ending_frame") or ""),
     }
+
+
+def _without_composer_sentences(text: Any, *, extra: Sequence[str] = ()) -> str:
+    """The plan's words without the composer's fixed sentences (the drift default, the pads,
+    the beats, the face rule, the closing line): a rewrite that pasted a sent prompt back
+    into a field gave the composer its own words as the plan's. ``extra`` supplies the
+    current configured look and frame, with punctuation changes allowed."""
+    said = " ".join(str(text or "").split())
+    if not said:
+        return ""
+    for sentence in _COMPOSER_SENTENCES:
+        said = said.replace(sentence, " ")
+    for sentence in extra:
+        words = re.findall(r"\w+", sentence)
+        if words:
+            # Rewrites also paste the configured look with commas replacing its periods.
+            pattern = r"\b" + r"[\W_]+".join(re.escape(word) for word in words) + r"\b[.,;]?"
+            said = re.sub(pattern, " ", said, flags=re.IGNORECASE)
+    return " ".join(said.split())
+
+
+_COMPOSER_SENTENCES: tuple[str, ...] = (
+    COMPOSITION_SENTENCE,
+    STILL_EXCLUSIONS,
+    PEOPLE_SENTENCE,
+    CLOSE_PEOPLE_SENTENCE,
+    DEFAULT_WORLD_MOTION,
+    MOTION_PAD,
+    MOTIONLESS_PAD,
+    END_BEAT,
+    MOTIONLESS_END_BEAT,
+    MEASURED_SENTENCE,
+    FACES_CONSTRAINT,
+    NO_PEOPLE_SENTENCE,
+    lint.MOTION_CLOSING,
+    lint.VEO_MOTION_CLOSING,
+    *lint.LEGACY_STILLNESS,
+)
+
+
+#: What is not the clip's: a lens, a shot size, the clip's span, the plan's frame words.
+_CAMERA_CLAUSE_NOISE = re.compile(
+    r"\b\d+(?:\.\d+)?\s*mm\b|\bstraight[- ]on\b|\beye[- ]level\b"
+    r"|,?\s*over\s+the\s+(?:shot|clip)(?:'s)?\s+(?:\d+(?:\.\d+)?\s+)?seconds?"
+    r"|,?\s*(?:over|across|for)\s+\d+(?:\.\d+)?\s+seconds?",
+    re.IGNORECASE,
+)
+
+
+#: Closes the plan's camera sentence: the one move, held, in positive words (02:21-02:25Z,
+#: 7c26a7ce scene 4: six refusals for «never states the camera is locked to this one move»).
+LOCKED_MOVE_CLAUSE = ", the camera held to this one move from the first frame to the last"
+#: Closes a static camera's sentence: the framing kept, in positive words (03:26Z, 87c05891
+#: scene 5 and 7c26a7ce scenes 1-2: the clips of «static» shots pushed in, and every review
+#: asked for «the framing distance and the ban on tightening»).
+STATIC_HELD_CLAUSE = ", the framing held exactly as it starts from the first frame to the last"
+
+
+def _held_static(sentence: str) -> str:
+    """A static camera's sentence with STATIC_HELD_CLAUSE before its full stop."""
+    return sentence.rstrip(". ") + STATIC_HELD_CLAUSE + "."
+
+
+def _camera_with_path(move: str, path: str) -> str:
+    """The move named once, with the plan's own path and tempo in the same sentence:
+    «Tracking right: a slow, straight follow along the pulse's path as it travels across the
+    room.» The move's own tempo word opens it when the plan's clause carries none."""
+    short = MOVE_SHORT.get(move, MOVE_SHORT[DEFAULT_MOVE])
+    found = lint.camera_moves(short)
+    name = found[0][1] if found else move
+    text = " ".join(path.split()).rstrip(". ")
+    text = text[:1].lower() + text[1:]
+    tempo = ""
+    if not lint.SPEED_WORDS.search(text):
+        first = short.split()[0]
+        tempo = f"{first} " if lint.SPEED_WORDS.search(first) else ""
+    said = f"{tempo}{name}: {text}{LOCKED_MOVE_CLAUSE}"
+    return _sentence(said[:1].upper() + said[1:])
+
+
+def _plan_move_clause(package: Mapping[str, Any], move: str) -> str:
+    """The plan's own words for its move — the path and the tempo the writer gave it —
+    said right after the move's fixed sentence («tracking right — a slow, straight follow
+    along the pulse's path as it travels across the room» → «A slow, straight follow along
+    the pulse's path as it travels across the room.»). Empty when the plan's camera text
+    names the move bare, names another, or has nothing beyond the lens and the size
+    (01:00Z, 7c26a7ce scene 4: the Director refused the fixed sentence twice for «no path
+    and no tempo» while the plan's camera field carried both)."""
+    if not move or move == "static":
+        return ""
+    text = _flatten(package.get("camera"))
+    for clause in re.split(r"\s*(?:;|\.\s)\s*", text):
+        found = lint.camera_moves(clause)
+        if not found or found[0][0] != move:
+            continue
+        said = re.sub(re.escape(found[0][1]) + r"\s*(?:[—–:,-]+\s*)?", " ", clause, count=1)
+        said = _CAMERA_CLAUSE_NOISE.sub(" ", said)
+        said = lint.SHOT_SIZE.sub(" ", said)
+        said = re.sub(r"\s+([.,;:])", r"\1", " ".join(said.split())).strip(" .,;:—–-")
+        if len(said.split()) < 3 or lint.camera_moves(said) or lint.NEGATION.search(said):
+            return ""
+        return _sentence(said[:1].upper() + said[1:])
+    return ""
+
+
+def motion_intent_of(package: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The scene's motion intent as the renderer reads it, or None for a scene from before
+    the intents. An intent stored before a rule was added is completed from the plan it was
+    made from (``world_fixed``, ``camera_path``), so the words the sheet sends and the words
+    the audit reads follow the rule without a rewrite."""
+    intent = package.get("motion_intent") if isinstance(package, Mapping) else None
+    if not isinstance(intent, dict) or intent.get("camera_move") not in lint.CAMERA_MOVES:
+        return None
+    completed = dict(intent)
+    if "world_fixed" not in completed:
+        completed["world_fixed"] = _fixed_world(package)
+    if "camera_path" not in completed:
+        completed["camera_path"] = _plan_move_clause(package, str(completed["camera_move"]))
+    return completed
+
+
+def _fixed_world(package: Mapping[str, Any]) -> bool:
+    """Whether the plan fixes its world in words: its lighting, motion, background or
+    continuity say the light does not move or the room does not change."""
+    said = " ".join(
+        _flatten(package.get(key)) for key in ("lighting", "motion", "background", "continuity")
+    )
+    return bool(_FIXED_WORLD.search(said))
 
 
 def _intent_clauses(intent: dict[str, Any], key: str) -> list[str]:
@@ -3005,10 +4518,12 @@ def render_motion(
     """
     move = str(intent.get("camera_move") or "")
     camera = MOVE_SENTENCES.get(move, MOVE_SENTENCES[DEFAULT_MOVE])
+    if move == "static":
+        camera = _held_static(camera)
     positive_only = family in ("veo", "gen4")
     closing = lint.VEO_MOTION_CLOSING if positive_only else lint.MOTION_CLOSING
     faces = bool(intent.get("faces_banned"))
-    constraint = FACES_CONSTRAINT if faces and intent.get("people") and family != "veo" else ""
+    constraint = (FACES_CONSTRAINT if intent.get("people") else NO_PEOPLE_SENTENCE) if faces else ""
     negative = None
     if family == "veo":
         negative = ", ".join(
@@ -3024,25 +4539,239 @@ def render_motion(
     subjects = clauses if isinstance(clauses, list) else [str(intent.get("subject") or "")]
     actions = _intent_clauses(intent, "action_clauses")
     world = str(intent.get("world") or "")
-    if not world or world in lint.LEGACY_STILLNESS:
+    # An intent whose plan fixed its world (`_fixed_world`) keeps no world sentence; one from
+    # before the intents, or with the old stillness, gets the drift default as before.
+    if (not world or world in lint.LEGACY_STILLNESS) and not intent.get("world_fixed"):
         world = DEFAULT_WORLD_MOTION
+    at_rest = bool(_MOTIONLESS_WORLD.search(" ".join([world, *map(str, subjects), *actions])))
+    if at_rest and move == "static":
+        camera = _held_static(MOVE_SHORT["static"])
+    if world == DEFAULT_WORLD_MOTION and (at_rest or move == "static"):
+        # A stored intent whose stillness stood in its action: the drifting-shadows default
+        # contradicted it («Static camera… Shadows drift and the light shifts… Nothing
+        # moves.» — 2026-10-15, 7c26a7ce scene 1, refused by the Director twice).
+        world = ""
+    elif world == DEFAULT_WORLD_MOTION and intent.get("world_fixed"):
+        # …or whose plan fixes its world (`motion_intent_of` completes it from the plan): the
+        # clip is told what holds (02:02Z, scene 4: «nothing in the words states that the
+        # room, its light and its equipment hold exactly as they are»).
+        world = FIXED_WORLD_SENTENCE
     amplitude = str(intent.get("amplitude") or AMPLE)
     seconds = _seconds_of(intent)
     two_beats = amplitude != MEASURED and move != "static" and seconds >= TWO_BEAT_SECONDS
+    ending = _ending_sentence(intent.get("ending_frame"))
+    path = str(intent.get("camera_path") or "")
+    if path and move != "static":
+        # ONE camera sentence, the plan's path and tempo inside it (02:03Z, scene 4: the fixed
+        # sentence followed by the plan's clause was refused as «two camera instructions, the
+        # vague one first»).
+        camera = _camera_with_path(move, path)
+        path = ""
+    required = [
+        camera,
+        path,
+        *[str(c) for c in subjects],
+        *actions,
+        world if world != DEFAULT_WORLD_MOTION else "",
+        ending,
+        constraint,
+        closing,
+    ]
+    if lint.utf16_units(" ".join(required)) > cap:
+        camera = MOVE_SHORT.get(move, camera)
+        required[0] = camera
+    # The 95-word target is editorial guidance, not a vendor limit. It must not erase
+    # the action or endpoint when both fit the model's actual UTF-16 contract.
+    word_budget = max(MOTION_MAX_WORDS, len(" ".join(required).split()))
     items = [
         (0, 0, camera),
-        (4, 1, world),
+        (0, 1, path),
+        (2 if world != DEFAULT_WORLD_MOTION else 4, 2, world),
         *[(2, 10 + index, str(clause)) for index, clause in enumerate(subjects)],
         *[(3, 100 + index, clause) for index, clause in enumerate(actions)],
-        (5, 800, END_BEAT if two_beats else ""),
+        (5, 800, (MOTIONLESS_END_BEAT if at_rest else END_BEAT) if two_beats else ""),
         (1, 850, MEASURED_SENTENCE if amplitude == MEASURED else ""),
+        (1, 870, ending),
         (0, 900, constraint),
         (0, 1000, closing),
     ]
-    prompt = _fit_sentences(items, cap, MOTION_MAX_WORDS)
+    prompt = _fit_sentences(items, cap, word_budget)
     if len(prompt.split()) < MOTION_MIN_WORDS:
-        prompt = _fit_sentences([*items, (6, 8, MOTION_PAD)], cap, MOTION_MAX_WORDS)
+        prompt = _fit_sentences(
+            [*items, (6, 8, MOTIONLESS_PAD if at_rest else MOTION_PAD)], cap, word_budget
+        )
     return prompt, negative
+
+
+def _ending_content(value: Any) -> str:
+    """Remove an unusable continuity pointer without deleting the other visible clauses."""
+    ending = strip_on_screen_text(_continuous(value)).strip(" .;,")
+    if lint.SCENE_REFERENCE.search(ending):
+        parts = re.split(r"\s*(?:[,;]|[—–]|\s+-\s+)\s*", ending)
+        ending = ", ".join(part for raw in parts if (part := without_scene_reference(raw)))
+    return ending
+
+
+def _ending_sentence(value: Any) -> str:
+    ending = _ending_content(value)
+    while _ENDING_LEAD.match(ending):
+        ending = _ENDING_LEAD.sub("", ending, count=1).strip(" .;,")
+    if not ending or lint.camera_moves(ending):
+        return ""
+    if ending.split()[0].casefold() in ("the", "a", "an"):
+        ending = ending[:1].lower() + ending[1:]
+    return _sentence(f"The shot ends {_ending_join(ending)}{ending}")
+
+
+def _ending_join(ending: str) -> str:
+    """How the ending follows «The shot ends»: nothing when it carries its own preposition
+    («with her eyes on the pen»), «as » when its first clause is a sentence with a finite verb
+    («Sarah's right hand rests on the folder, …»), else «on »."""
+    if _ENDING_PREPOSITION.match(ending):
+        return ""
+    first_clause = re.split(r"\s*(?:[,;:]|—|–|\s-\s)\s*", ending, maxsplit=1)[0]
+    return "as " if _FINITE_VERB.search(first_clause) else "on "
+
+
+def incomplete_plan_fields(
+    package: Mapping[str, Any], *, layers: tuple[str, ...] = ("still", "motion")
+) -> list[str]:
+    """Find broken saved clauses without deleting them or guessing their missing words."""
+    if package.get("prompt_format") == "editor_final_v1":
+        return []
+    fields: set[str] = set()
+    if "still" in layers:
+        fields.update(
+            (
+                "subject",
+                "action",
+                "environment",
+                "camera",
+                "lighting",
+                "composition",
+                "emotion",
+                "background",
+                "continuity",
+            )
+        )
+    if "motion" in layers:
+        fields.update(("action", "environment", "motion", "ending_frame", "motion_emotion"))
+    cast = [
+        character
+        for key in ("characters", "in_frame")
+        for character in package.get(key) or []
+        if isinstance(character, dict)
+    ]
+    issues: list[str] = []
+    for field in sorted(fields):
+        text = " ".join(str(package.get(field) or "").split())
+        if not text:
+            continue
+        for clause in re.split(r"[;.!?](?:\s+|$)", text):
+            clause = clause.strip(" ,;:.")
+            if lint.dangling(clause):
+                issues.append(
+                    f"{field}: fragment incomplet «{clause}»; editorul trebuie să rescrie "
+                    "fraza integral înainte de aprobarea promptului"
+                )
+        # A formerly clipped locked garment ("and sky-blue") matches the beginning of
+        # its canonical clause ("and sky-blue tie"), not a complete garment. Keep the
+        # source intact; only the editor and Director may choose the corrected wording.
+        tail = re.findall(r"\w+(?:[-']\w+)*", text.casefold())
+        for character in cast:
+            for garment in _clauses(character.get("outfit"), ",;"):
+                canonical = re.findall(r"\w+(?:[-']\w+)*", garment.casefold())
+                for size in range(len(canonical) - 1, 1, -1):
+                    if tail[-size:] == canonical[:size]:
+                        issue = (
+                            f"{field}: ținuta lui {_short_name(character.get('name'))} este "
+                            f"incompletă; fragmentul canonic trebuie să fie «{garment}»"
+                        )
+                        if issue not in issues:
+                            issues.append(issue)
+                        break
+    if "still" in layers and package.get("still_prompt"):
+        sent = " ".join(re.findall(r"\w+(?:-\w+)*", str(package["still_prompt"]).casefold()))
+        for person in serial_partial_characters(package):
+            for garment in _clauses(person.get("outfit"), ",;"):
+                expected = " ".join(re.findall(r"\w+(?:-\w+)*", garment.casefold()))
+                if expected and expected not in sent:
+                    issues.append(
+                        f"still_prompt: ținuta vizibilă a lui {_short_name(person.get('name'))} "
+                        f"lipsește; păstrați partea corpului cerută și descrieți «{garment}»"
+                    )
+    return issues
+
+
+def composition_issues(
+    package: Mapping[str, Any],
+    still: str,
+    motion: str,
+    *,
+    layers: tuple[str, ...] = ("still", "motion"),
+) -> list[str]:
+    """Required meaning lost during composition must block, never masquerade as a repair."""
+    issues = incomplete_plan_fields({**package, "still_prompt": still}, layers=layers)
+    ending = str(package.get("ending_frame") or "").strip()
+    if ending and "motion" in layers:
+        expected = _ending_sentence(ending)
+        if not expected or expected.casefold() not in motion.casefold():
+            issues.append(
+                "ending_frame nu ajunge integral în promptul video; scrieți un final vizibil "
+                "concis, fără instrucțiuni de cameră"
+            )
+    if package.get("in_frame"):
+        for character in package.get("in_frame") or []:
+            if not isinstance(character, dict):
+                continue
+            outfit = _clauses(character.get("outfit"), ",;")
+            if "still" in layers and outfit and outfit[0].casefold() not in still.casefold():
+                issues.append(
+                    f"ținuta canonică a lui {_short_name(character.get('name'))} "
+                    "a fost eliminată; scurtați acțiunea"
+                )
+        # The still says the first moment as it draws it (`serial_still_moment`: no hand-by-hand
+        # detail on an establishing or wide shot); the clip says it whole.
+        for clause in serial_still_moment(package).split(";"):
+            clause = clause.strip(" .")
+            if "still" in layers and clause and clause.casefold() not in still.casefold():
+                issues.append(
+                    f"poza pierde o condiție a primului cadru: {clause}; "
+                    "scurtați planul păstrând fiecare personaj"
+                )
+        first = _still_moment(str(package.get("action") or ""))
+        for clause in first.split(";"):
+            clause = clause.strip(" .")
+            normalized_motion = " ".join(lint.without_tempo(motion).split()).casefold()
+            if "motion" in layers and clause and clause.casefold() not in normalized_motion:
+                issues.append(
+                    f"mișcarea pierde prezența sau acțiunea inițială: {clause}; "
+                    "păstrați fiecare personaj din primul cadru"
+                )
+    elif "motion" in layers:
+        intent = package.get("motion_intent")
+        if isinstance(intent, dict):
+            if (
+                intent.get("faces_banned")
+                and intent.get("people")
+                and intent.get("camera_move") == "slow orbit"
+            ):
+                issues.append(
+                    "slow orbit poate întoarce camera spre o față interzisă; "
+                    "alegeți o mișcare care păstrează vederea din spate"
+                )
+            world = str(intent.get("world") or "")
+            for clause in [
+                *_intent_clauses(intent, "subject_clauses"),
+                *_intent_clauses(intent, "action_clauses"),
+                *([world] if world and world != DEFAULT_WORLD_MOTION else []),
+            ]:
+                if clause.casefold() not in motion.casefold():
+                    issues.append(
+                        f"mișcarea pierde o condiție: {clause}; "
+                        "scurtați planul fără a pierde această acțiune"
+                    )
+    return issues
 
 
 def _scene_constraints(package: dict[str, Any]) -> list[str]:
@@ -3085,6 +4814,14 @@ def compile_prompts(
     """
     kind = str(package.get("scene_kind") or LIVE_KIND).upper()
     bible = bible if isinstance(bible, dict) else {}
+    if kind == LIVE_KIND and package.get("prompt_format") == "editor_final_v1":
+        from app.media.final_prompts import editor_compiled  # noqa: PLC0415
+        return editor_compiled(
+            package,
+            model_id=_contract_model(contract, "model_id", DEFAULT_MOTION_MODEL),
+            cap=lint.prompt_cap(contract, "still"),
+            motion_cap=lint.prompt_cap(contract, "motion"),
+        )
     motion_model = _contract_model(contract, "model_id", DEFAULT_MOTION_MODEL)
     family = _motion_family(motion_model)
     if kind != LIVE_KIND:
@@ -3114,15 +4851,27 @@ def compile_prompts(
         omit |= LIGHT_SLOTS
     block = look_block(bible, factual_look, omit=omit)
     size, frame = shot_frame(package.get("camera"), package.get("shot_type"))
+    owned_still = (frame, *re.split(r"(?<=[.!?])\s+", block))
 
     def said(field: str) -> str:
-        text = _sentence(", ".join(_clauses_of(package.get(field))))
+        # The composer's own sentences pasted into a field by a rewrite («The frame holds only
+        # the place and the things named» inside scene 1's subject, 03:12Z) are not the plan's.
+        text = _sentence(
+            ", ".join(
+                _clauses_of(_without_composer_sentences(package.get(field), extra=owned_still))
+            )
+        )
         return hide_faces(text) if faces_banned else text
 
     subject = said("subject")
     action = said("action")
     if action and subject and action.casefold() == subject.casefold():
         action = ""
+    elif action and subject:
+        # A clause of the action the subject already says is not said twice (2026-10-15
+        # 20:34Z, 7c26a7ce scene 2: «the bar lowered at her side» in both sentences, and the
+        # Director: «say each movement once; two movements invite the model to render both»).
+        action = _without_clauses_said_by(action, subject)
     environment = said("environment")
     if environment and environment.casefold() in (subject.casefold(), action.casefold()):
         environment = ""
@@ -3135,33 +4884,115 @@ def compile_prompts(
             light = f"light {light}"
     cast = _cast_sentence(package.get("characters"), faces_banned)
     people = _shows_people(" ".join((subject, action, environment, cast)))
+    # An object that carries its own markings (a thermometer's scale, `markings`): the still
+    # keeps them and says so instead of «No text» (the Owner, 2026-10-13).
+    marked = planned_markings(
+        package.get("subject"),
+        package.get("action"),
+        package.get("environment"),
+        package.get("writer_visual"),
+        excluded=package.get("avoid") or [],
+    )
     items = [
         (0, 0, block),
         (0, 1, frame),
         (0, 2, subject),
         (0, 3, cast),
-        (3, 4, action),
+        # The one moment of the picture ranks with the room, above the light (2026-10-15
+        # 19:56Z: the Director refused the words for the missing action while the light's
+        # sentence stood in its place).
+        (1, 4, action),
         (1, 5, environment),
         # How people are kept faceless where the scene shows them; a scene of objects is said
         # to be empty of people instead. The first, said in a scene of objects, asked the model
         # for figures (2026-10-11, cyclotron scene 4: two objects on a desk came back with
         # people, and the clip turned their faces to the camera; the Director's brief named it).
-        (0, 6, (PEOPLE_SENTENCE if people else NO_PEOPLE_SENTENCE) if faces_banned else ""),
+        (
+            0,
+            6,
+            (
+                (PEOPLE_SENTENCE if size in ("wide", "aerial") else CLOSE_PEOPLE_SENTENCE)
+                if people
+                else NO_PEOPLE_SENTENCE
+            )
+            if faces_banned
+            else "",
+        ),
         (5, 7, COMPOSITION_SENTENCE),
         (2, 8, _sentence(light)),
         # The plan's own exclusions are never said here as "no ...": an image model reads the
         # words literally (config/factual_look.json's note; the lint refuses them on veo).
         # They stay in the package's `avoid` and reach a model's negative channel where it
         # has one (`render_motion`).
-        (0, 9, STILL_EXCLUSIONS if still_family != "gen4" else ""),
+        (0, 9, still_exclusions(marked) if still_family != "gen4" else markings_kept(marked)),
     ]
     still = _fit_sentences(items, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS)
+    # The room is never given up for a long subject (2026-10-15 19:56Z, 7c26a7ce scene 2: a
+    # 51-word subject left the laboratory, the light and the composition out of the 120-word
+    # budget, and the Director refused the words four rounds running for the missing room —
+    # the Editor's fields were right). When the environment did not fit, the subject is said
+    # shorter — its later clauses taken off one at a time — until the room and the action are in.
+    needed = [text for text in (environment, action) if text]
+    if any(text not in still for text in needed):
+        for shorter in _shorter_subject(subject):
+            retry = [(rank, order, shorter if order == 2 else text) for rank, order, text in items]
+            candidate = _fit_sentences(retry, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS)
+            if all(text in candidate for text in needed):
+                still, subject = candidate, shorter
+                break
+    # For explicitly single-source scenes (a candle in an otherwise dark room)
+    # omission of the only light source is physically wrong, not a minor style
+    # choice. Keep the short source-of-light fact while shortening verbose
+    # subject and room descriptions, without inventing new scene content.
+    light_first = _sentence(light.split(",", 1)[0]) if light else ""
+    if (
+        light_first
+        and re.search(r"\b(?:only|sole|single)\s+light\s+source\b", light_first, re.I)
+        and light_first not in still
+    ):
+        # Preserve original descriptions wherever possible; shorten the room
+        # before dropping it. The Director's downstream audit remains the final
+        # gate if even the essential facts cannot fit into the vendor cap.
+        room_options = [environment, *_shorter_subject(environment)] if environment else [""]
+        for shorter in (subject, *_shorter_subject(subject)):
+            for room in room_options:
+                retry = [
+                    (
+                        0 if order == 8 else rank,
+                        order,
+                        (
+                            light_first if order == 8
+                            else shorter if order == 2
+                            else room if order == 5
+                            else text
+                        ),
+                    )
+                    for rank, order, text in items
+                ]
+                candidate = _fit_sentences(
+                    retry, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS
+                )
+                if all(
+                    phrase in candidate
+                    for phrase in (light_first, action, room)
+                    if phrase
+                ):
+                    still = candidate
+                    break
+            if light_first in still:
+                break
     # People kept faceless are shown from behind: an orbit around them turns their faces to
     # the camera, so it is never the compiler's choice for such a scene (a plan may ask).
     move = choose_camera_move(
         package, size, previous_moves, avoid=("slow orbit",) if faces_banned and people else ()
     )
     intent = _motion_intent(package, move, faces_banned, people)
+    intent["constraints"] = _scene_constraints(
+        {
+            **package,
+            "avoid": [*(bible.get("avoid") or []), *(package.get("avoid") or [])],
+        }
+    )
     motion, negative = render_motion(intent, family, lint.prompt_cap(contract, "motion"))
     return {
         "scene_kind": kind,
@@ -3173,6 +5004,9 @@ def compile_prompts(
         "shot_size": size,
         "motion_family": family or "generic",
         "motion_intent": intent,
+        "composition_issues": composition_issues(
+            {**package, "motion_intent": intent}, still, motion
+        ),
     }
 
 
@@ -3228,8 +5062,13 @@ def motion_prompt_for(
     the dialect of whichever model the scene is bought on. A package from before the
     compiler has none: its stored motion prompt is used as it is (empty when it has none).
     """
-    intent = package.get("motion_intent") if isinstance(package, dict) else None
-    if isinstance(intent, dict) and intent.get("camera_move") in lint.CAMERA_MOVES:
+    if isinstance(package, dict) and package.get("prompt_format") == "editor_final_v1":
+        from app.media.final_prompts import editor_motion_for  # noqa: PLC0415
+        return editor_motion_for(
+            package, model_cap=lint.prompt_cap(contract or {"model_id": model_id}, "motion")
+        )
+    intent = motion_intent_of(package) if isinstance(package, dict) else None
+    if intent is not None:
         return render_motion(intent, _motion_family(model_id), lint.prompt_cap(contract, "motion"))
     stored = " ".join(str((package or {}).get("motion_prompt") or "").split())
     negative = (package or {}).get("negative_prompt")
@@ -3246,9 +5085,18 @@ def _run(
     correlation: str,
     summary: str,
     max_tokens: int,
+    *,
+    native_thinking: bool = False,
+    subject: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """One agent call whose failure is a degradation, not an exception."""
+    """One agent call whose failure is a degradation, not an exception. ``subject`` names the
+    film it works on (`run_agent_task`)."""
     from app.agents.services import run_agent_task  # noqa: PLC0415
+    from app.agents.structured import (  # noqa: PLC0415
+        JSON_ONLY,
+        NATIVE_THINKING,
+        THINKING_SUFFIX,
+    )
 
     try:
         result = run_agent_task(
@@ -3257,12 +5105,14 @@ def _run(
             agent_id,
             task,
             prompt,
-            template,
+            template + THINKING_SUFFIX if native_thinking else template,
             correlation,
             summary=summary,
             max_tokens=max_tokens,
             temperature=0.3,
             emit_message=False,
+            extra=NATIVE_THINKING if native_thinking else JSON_ONLY,
+            subject=subject,
         )
     except (ValueError, RuntimeError) as exc:
         logger.info("prompt_agent_unavailable", extra={"reason": str(exc)[:160]})
@@ -3995,7 +5845,7 @@ class _LessonRelation(BaseModel):
     @field_validator("why", mode="before")
     @classmethod
     def _clip(cls, value: Any) -> Any:
-        return " ".join(value.split())[:300] if isinstance(value, str) else value
+        return " ".join(value.split()) if isinstance(value, str) else value
 
 
 class LessonReading(BaseModel):

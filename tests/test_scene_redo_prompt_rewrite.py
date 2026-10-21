@@ -1,6 +1,29 @@
-"""Offline regression tests for test scene redo prompt rewrite.
+"""A redone still is bought on the prompt the studio writes today, never on stale stored words.
 
-Providers are faked; all data is synthetic."""
+Film babcf272 (2026-10-09): scene 5's still came back as three stacked panels (an atom in the
+tunnel, a flat black band, the empty tunnel) and its clip animated that triptych. Its stored
+still prompt described a sequence of moments ("..., then the empty accelerator tunnel from
+scene 1."). The package is compiled once, when the shots are written; «Refă imaginea» bought
+the STORED words again, so a compiler fixed since could never reach a film already planned.
+
+A still redo now compiles that one scene again from its stored plan with today's compiler
+(deterministic, 0 credits, no language model):
+
+- the Owner's redo plan carries the new still prompt and says so in Romanian, and its hash is
+  bound to the new words: his yes buys what he was shown;
+- the purchase rewrites that scene's package (prompt_json, visual_prompt) in the transaction
+  that spends his yes, with one ``media.prompts_rewritten`` event (a «media.prompt*» event,
+  so a letter saying the prompt was rewritten is proven); no other scene is touched, so every
+  other bought take keeps matching its prompt (BOUGHT in the motion plan);
+- the motion redo that follows reads the rewritten package;
+- a scene whose words are already today's is left exactly as it was: no event, no write;
+- his approval card says the prompt was rewritten, not only the sheet's drawer;
+- pictures already paid for on the retired words are collected, never approved by the press;
+- an episode of the serial keeps its own words; a package the compiler cannot read is refused.
+
+Every provider is faked (spy adapters); no socket is opened (conftest refuses them). The stale
+prompt is written by the test, so nothing here depends on how the compiler words a scene.
+"""
 
 from __future__ import annotations
 

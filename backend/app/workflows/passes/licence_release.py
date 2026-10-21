@@ -1,6 +1,13 @@
-"""Licence release: existing local-first media checks.
+"""Films uploaded private only for their licence, made public once it is confirmed (2026-10-10).
 
-Private production traces omitted; implementation unchanged."""
+See `app.publishing.licence_release`. Film babcf272 went up private to «Main Channel A -
+Factual Shorts» because its narrations' licence was not confirmed; the Owner upgrades his
+ElevenLabs plan and `vendor_plan_licence` (order 120) records the licence within the hour. This
+pass runs after it, so the watchdog pass that records the licence also makes the film public,
+under the channel's policy as it is then, the Owner's stop, safe mode and mode read first. A
+change YouTube did not answer is asked again on a later pass, with back-off. With no held upload
+it only reads the publications and their records, and opens no account.
+"""
 
 from __future__ import annotations
 

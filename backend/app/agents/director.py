@@ -24,7 +24,15 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.identity import blocker_of, clipped, parse_structured
-from app.agents.memory import agent_for_role, remember
+from app.agents.inbox import inbox_page, sweep_stale_asks
+from app.agents.memory import (
+    DAILY_REVIEW_MARKER,
+    PRIORITIES_HEAD,
+    PRIORITIES_JOIN,
+    PRIORITY_MARKER,
+    agent_for_role,
+    remember,
+)
 from app.agents.messages import message_view, open_messages, post_message, resolve_message
 from app.agents.models import Agent, AgentMessage, Role
 from app.agents.services import run_agent_task
@@ -53,7 +61,7 @@ def _model_status(result: dict[str, Any]) -> str:
     return f"rularea {stage_status(result.get('status'))}: {detail}"
 
 
-REVIEW_TEMPLATE_VERSION = "director-review-v1"
+REVIEW_TEMPLATE_VERSION = "director-review-v2"
 #: How many inbox messages one review reads. A review is a decision per message; a model
 #: given sixty wrote about them instead of deciding.
 REVIEW_BATCH = 12
@@ -138,7 +146,7 @@ def _developer_defect(
     row = post_message(
         session,
         intent="STATUS",
-        subject=f"Defect de unealtă (pentru dezvoltator): {message.subject}"[:200],
+        subject=f"Defect de unealtă (pentru dezvoltator): {message.subject}",
         body={"kind": DEVELOPER_DEFECT_KIND, "about_message_id": message.id, "note": note},
         body_text=note,
         from_agent_id=director.id,
@@ -212,7 +220,7 @@ def choose_topic(
         if director is None:
             raise DirectorError("Niciun Director activ")
         director_id = director.id
-    payload = json.dumps({"candidates": candidates}, ensure_ascii=False, default=str)[:12000]
+    payload = json.dumps({"candidates": candidates}, ensure_ascii=False, default=str)
     prompt = _CHOOSE_INSTRUCTIONS + wrap_in_inert_boundary(payload, "production-candidates")
     result = run_agent_task(
         engine,
@@ -284,16 +292,16 @@ def file_stage_reports(
                 outcome.get("agent_id") or owners.get(stage) or (director.id if director else None)
             )
             status = str(outcome.get("status", ""))
-            reason = str(outcome.get("reason", ""))[:200]
+            reason = str(outcome.get("reason", ""))
             message = post_message(
                 session,
                 intent="STATUS",
                 subject=(
                     f"{stage_name(stage)[:1].upper()}{stage_name(stage)[1:]}: "
                     f"{stage_status(status)} — {reason}"
-                )[:200],
+                ),
                 body={"stage": stage, **outcome},
-                body_text=str(outcome.get("reason", ""))[:2000] or None,
+                body_text=str(outcome.get("reason", "")) or None,
                 from_agent_id=reporter,
                 to_agent_id=None,
                 correlation_id=correlation,
@@ -393,7 +401,7 @@ def _apply_decisions(
             request = post_message(
                 session,
                 intent="REQUEST_INFO",
-                subject=f"{INVESTIGATE_PREFIX}{message.subject}"[:200],
+                subject=f"{INVESTIGATE_PREFIX}{message.subject}",
                 body={
                     "about_message_id": message.id,
                     "note": decision.note,
@@ -428,7 +436,7 @@ def _apply_decisions(
             post_message(
                 session,
                 intent="ESCALATE",
-                subject=f"Am nevoie de decizia ta: {message.subject}"[:200],
+                subject=f"Am nevoie de decizia ta: {message.subject}",
                 body={"about_message_id": message.id},
                 body_text=decision.note or "Aceasta este o decizie care îți aparține.",
                 from_agent_id=director.id,
@@ -495,8 +503,16 @@ def director_review(
     correlation_id: str | None = None,
     outcomes: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Run the Director's review of the inbox. Returns what was decided and what was left."""
+    """Run the Director's review of the inbox. Returns what was decided and what was left.
+
+    She reads a page of it: the newest letters, whole, at most `REVIEW_BATCH` and within
+    `agents.inbox.INBOX_PAGE_CHARS` (a letter longer than the page is read alone, whole); the
+    rest waits for the next review. Her identity adds no other letter (the Owner's decision of
+    2026-10-16: the inbox is read by the mail tasks, a page at a time)."""
     correlation = correlation_id or str(uuid4())
+    # A failed sweep is logged and her review goes on; nothing is swept while the Owner's
+    # autonomy stop is set (`agents.inbox.sweep_stale_asks`).
+    sweep_stale_asks(engine, correlation_id=correlation)
     with Session(engine) as session:
         director = agent_for_role(session, "Director")
         if director is None:
@@ -511,15 +527,20 @@ def director_review(
         ]
     if not inbox:
         return {"agent_id": director_id, "reviewed": 0, "applied": [], "summary": "Inbox empty."}
+    letters = [
+        {
+            k: v
+            for k, v in m.items()
+            if k in ("id", "intent", "from_name", "subject", "body_text", "body_json", "created_at")
+        }
+        for m in inbox
+    ]
+    page, _waiting = inbox_page(
+        letters, lambda item: len(json.dumps(item, ensure_ascii=False, default=str))
+    )
+    inbox = page
     facts = {
-        "inbox": [
-            {
-                k: v
-                for k, v in m.items()
-                if k in ("id", "intent", "from_name", "subject", "body_json", "created_at")
-            }
-            for m in inbox
-        ],
+        "inbox": page,
         "workforce": {
             k: v
             for k, v in measure_workforce(engine).items()
@@ -527,7 +548,7 @@ def director_review(
         },
         "stage_outcomes": outcomes or {},
     }
-    payload = json.dumps(facts, ensure_ascii=False, default=str)[:16000]
+    payload = json.dumps(facts, ensure_ascii=False, default=str)
     prompt = _INSTRUCTIONS + wrap_in_inert_boundary(payload, "director-inbox")
     from app.agents.structured import structured_run  # noqa: PLC0415
 
@@ -549,6 +570,7 @@ def director_review(
         ),
         max_tokens=24000,
         temperature=0.1,
+        subject={"message_ids": [str(item["id"]) for item in page]},
     )
     text = (formatted or result).get("output_text") or ""
     if result["status"] != "SUCCEEDED" or not text.strip():
@@ -579,7 +601,7 @@ def director_review(
             post_message(
                 session,
                 intent="ESCALATE",
-                subject=f"Revizuirea Directorului, blocată: {blocker.reason[:150]}",
+                subject=f"Revizuirea Directorului, blocată: {blocker.reason}",
                 body={"reason": blocker.reason, "needs": blocker.needs, "owner_attention": True},
                 from_agent_id=director_id,
                 run_id=result["id"],
@@ -600,9 +622,13 @@ def director_review(
         remember(
             session,
             memory_class="AGENT_OPINION",
-            content="Daily review: "
+            content=f"{DAILY_REVIEW_MARKER} "
             + review.summary
-            + (" Priorities: " + "; ".join(review.priorities) if review.priorities else ""),
+            + (
+                PRIORITIES_HEAD + PRIORITIES_JOIN.join(review.priorities)
+                if review.priorities
+                else ""
+            ),
             source_type="run",
             source_id=result["id"],
             agent_id=director_id,
@@ -611,7 +637,7 @@ def director_review(
             remember(
                 session,
                 memory_class="TEMP_CONTEXT",
-                content=f"Priority: {priority}",
+                content=f"{PRIORITY_MARKER} {priority}",
                 source_type="run",
                 source_id=result["id"],
                 agent_id=director_id,

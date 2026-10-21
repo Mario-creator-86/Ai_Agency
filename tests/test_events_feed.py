@@ -383,9 +383,9 @@ def test_the_directors_editorial_note_is_hers_and_says_the_score_and_the_outcome
 
 # ---------------------------------------------------------------------------------------------
 # 2026-10-12, the Director's repair loop on RunPod. The live register (10:27) read «run paused —
-# endpoint_id: fixture0002 · items: 2 · seconds: 1.33», «gpu session opened — endpoint_id …
+# endpoint_id: u07hiqhesi015d · items: 2 · seconds: 1.33», «gpu session opened — endpoint_id …
 # purpose: image · step: scene_redo», «spend reserved — purpose: sheet:scene_redo · usd: 0.84»,
-# «qc paid redo — scene_index: 4 · of_asset: 0000018a-…». The payloads below are those events'.
+# «qc paid redo — scene_index: 4 · of_asset: c00866fc-…». The payloads below are those events'.
 
 
 def test_the_runpod_round_and_the_gpu_are_said_without_endpoint_ids(engine):
@@ -397,7 +397,7 @@ def test_the_runpod_round_and_the_gpu_are_said_without_endpoint_ids(engine):
         "runpod.gpu_session_opened",
         ("gpu_session", gpu_session),
         {
-            "endpoint_id": "fixture0002",
+            "endpoint_id": "u07hiqhesi015d",
             "purpose": "image",
             "step": "scene_redo",
             "storyboard_id": ids["board"],
@@ -410,7 +410,7 @@ def test_the_runpod_round_and_the_gpu_are_said_without_endpoint_ids(engine):
         "runpod.run_paused",
         ("gpu_session", gpu_session),
         {
-            "endpoint_id": "fixture0002",
+            "endpoint_id": "u07hiqhesi015d",
             "items": 2,
             "cleared": True,
             "seconds": 1.332,
@@ -420,7 +420,7 @@ def test_the_runpod_round_and_the_gpu_are_said_without_endpoint_ids(engine):
         },
     )
     off_reading = {
-        "endpoint_id": "fixture0002",
+        "endpoint_id": "u07hiqhesi015d",
         "off": True,
         "workers_max": 0,
         "running": 0,
@@ -439,7 +439,7 @@ def test_the_runpod_round_and_the_gpu_are_said_without_endpoint_ids(engine):
     record(
         engine,
         "runpod.gpu_forced_off",
-        ("gpu_session", "fixture0002"),
+        ("gpu_session", "u07hiqhesi015d"),
         {**off_reading, "reason": "SHUTDOWN", "fast": False, "errors": []},
     )
     got = page(engine)
@@ -462,7 +462,7 @@ def test_the_runpod_round_and_the_gpu_are_said_without_endpoint_ids(engine):
     # The GPU going off is the studio's housekeeping, nobody's portrait.
     assert "actor" not in off and "actor" not in forced
     for row in (opened, paused, off, forced):
-        assert "fixture0002" not in row["words_ro"]
+        assert "u07hiqhesi015d" not in row["words_ro"]
 
 
 def test_money_reserved_estimated_and_closed_names_the_film_and_the_redo(engine):
@@ -563,7 +563,11 @@ def test_the_directors_brief_names_the_layer_and_whether_the_rewrite_landed(engi
             "reason": "Rescrierea a dat același prompt; nimic nou de cumpărat.",
         },
     )
-    for scene, reason, layer in ((5, "director_brief", "still"), (3, "serial_recompose", "still")):
+    for scene, reason, layer in (
+        (5, "director_brief", "still"),
+        (3, "serial_recompose", "still"),
+        (7, "serial_recompose", "motion"),
+    ):
         record(
             engine,
             "media.prompts_rewritten",
@@ -613,6 +617,11 @@ def test_the_directors_brief_names_the_layer_and_whether_the_rewrite_landed(engi
     assert rewrites[3]["words_ro"] == (
         f"Scena 3 a serialului «{TITLE}» a fost compusă din nou cu cuvintele de azi; imaginea "
         "se reface."
+    )
+    # Said again on the motion layer: only the clip's words changed, the picture stays.
+    assert rewrites[7]["words_ro"] == (
+        f"Scena 7 a serialului «{TITLE}» a fost compusă din nou cu cuvintele de azi; imaginea "
+        "rămâne, se reface doar mișcarea."
     )
     assert rewrites[6]["words_ro"] == (
         f"Scena 6 a serialului «{TITLE}»: cadrul se reface pe aceleași cuvinte, cu altă sămânță."
@@ -724,7 +733,7 @@ def test_the_repair_loop_speaks_of_scenes_and_films_never_of_assets(engine):
             "remade_from": asset,
             "redo": "motion",
             "scene_index": 4,
-            "provenance_hash": "ab" * 32,
+            "provenance_hash": "5b173221a9022e2a57632b8ad30857c108fc24cfd5080e0d197ff12c4991d943",
             "file_size_bytes": 33827099,
             "duration_seconds": 38.249999,
         },
@@ -900,8 +909,8 @@ def test_an_agent_at_work_says_so_in_a_bubble_and_an_unknown_kind_shows_no_ids(e
     record(
         engine,
         "runpod.gpu_guard_off",
-        ("gpu_session", "fixture0002"),
-        {"endpoint_id": "fixture0002", "workers_max": 0, "running": 0},
+        ("gpu_session", "u07hiqhesi015d"),
+        {"endpoint_id": "u07hiqhesi015d", "workers_max": 0, "running": 0},
     )
     record(
         engine,
@@ -920,7 +929,7 @@ def test_an_agent_at_work_says_so_in_a_bubble_and_an_unknown_kind_shows_no_ids(e
     assert working["actor"]["agent_id"] == kael["id"]
     guard = got["runpod.gpu_guard_off"]
     assert guard["words_ro"] == "RunPod: gpu guard off."
-    assert "fixture0002" not in guard["words_ro"] and "actor" not in guard
+    assert "u07hiqhesi015d" not in guard["words_ro"] and "actor" not in guard
     collected = got["media.scene_take_collected"]
     assert collected["words_ro"] == f"«{TITLE}», scena 2: scene take collected."
     assert "65106659" not in collected["words_ro"] and collected["actor"]["role"] == "VideoEditor"

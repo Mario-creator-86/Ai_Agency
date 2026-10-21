@@ -6186,3 +6186,289 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
   .dialog-header > .gpu-switch-dialog { order: 3; flex: 1 0 100%; max-width: none; justify-content: space-between; }
   .gpu-switch-said { text-align: left; }
 }
+
+/* Sidebar reading surfaces: stable contrast over the animated office. */
+.ledger-panel,
+.governance-panel,
+.studio-readout {
+  --drawer-glass: var(--surface);
+  background: var(--surface);
+}
+:is(.ledger-panel, .governance-panel) .section-heading {
+  padding-bottom: var(--s3);
+  border-bottom: 1px solid var(--line-strong);
+}
+:is(.ledger-panel, .governance-panel) .section-heading h2 {
+  color: var(--ink);
+  line-height: var(--lh-snug);
+}
+:is(.ledger-panel, .governance-panel) .section-heading .eyebrow {
+  color: var(--ink-2);
+  margin-bottom: var(--s1);
+}
+:is(.ledger-panel, .governance-panel) .section-heading > .tag {
+  border-color: var(--line-strong);
+  font-weight: var(--w-bold);
+}
+.ledger-panel .ledger-item { padding-block: var(--s3); }
+.ledger-panel .ledger-text {
+  color: var(--ink-2);
+  line-height: var(--lh-body);
+  margin-top: var(--s1);
+}
+.ledger-panel .ledger-item time { color: var(--ink-2); }
+.governance-panel { gap: var(--s3); }
+.governance-panel .ledger-now { line-height: var(--lh-body); }
+.governance-panel :is(.approvals-heading, .inbox-heading) { margin-top: var(--s3); }
+.governance-panel :is(.approval-subject, .inbox-subject, .governance-rule-box) {
+  line-height: var(--lh-body);
+}
+.governance-panel .inbox-letter { gap: var(--s2); padding: var(--s3); }
+
+/* Long approvals stay readable within the existing sidebar width. */
+.governance-panel .approval-card {
+  min-width: 0;
+  container: approval-card / inline-size;
+}
+.governance-panel .approval-head { align-items: flex-start; }
+.governance-panel .approval-action { min-width: 0; line-height: var(--lh-snug); }
+.governance-panel .approval-tier { flex-shrink: 0; }
+.governance-panel .approval-card :is(.approval-subject, .approval-film, .approval-evidence, .approval-by) {
+  overflow-wrap: anywhere;
+  line-height: var(--lh-body);
+}
+.governance-panel .approval-by > span { min-width: 0; }
+.governance-panel .approval-card .source-actions {
+  gap: var(--s2);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+}
+.governance-panel .approval-card .source-actions > button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+@container approval-card (max-width: 18rem) {
+  .approval-facts { grid-template-columns: minmax(0, 1fr); gap: var(--s3); }
+  .approval-facts > div {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+    gap: var(--s2);
+    align-items: baseline;
+  }
+}
+
+/* Ten small sidebar refinements; office layout and behavior stay unchanged. */
+/* 1. Neutral counts read clearly without changing semantic status colors. */
+:is(#ledger-count, #approvals-count, #owner-inbox-count) { color: var(--ink-2); }
+/* 2. Times stay aligned and on a single line. */
+.ledger-panel .ledger-item time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 3. The selected filter is recognizable beyond its background color. */
+.ledger-panel .ledger-chip.is-active {
+  font-weight: var(--w-bold);
+  border-color: var(--forest-ink);
+  text-decoration: underline;
+  text-underline-offset: var(--s1);
+}
+/* 4. Separate requests have a consistent reading interval. */
+.governance-panel .approvals-list { gap: var(--s4); }
+/* 5. Longer autonomy labels remain inside their buttons. */
+.governance-panel .mode-btn {
+  max-width: 100%;
+  height: auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: var(--lh-snug);
+  padding-block: var(--s2);
+}
+/* 6. Keyboard outlines stay inside scrolling panels. */
+:is(.ledger-panel, .governance-panel, .studio-readout) :is(button, summary):focus-visible {
+  outline-offset: -2px;
+}
+/* 7. The paid-rule disclosure has a larger, clearly separated header. */
+.governance-rule-box > summary { padding-block: var(--s2); line-height: var(--lh-body); }
+.governance-rule-box[open] > summary {
+  border-bottom: 1px solid var(--line-strong);
+  margin-bottom: var(--s3);
+}
+/* 8. Empty and loading messages use readable body styling. */
+:is(.ledger-panel, .governance-panel) .topics-loading {
+  color: var(--ink-2);
+  font-style: normal;
+  line-height: var(--lh-body);
+  overflow-wrap: anywhere;
+}
+/* 9. Letter metadata stays readable, including long identifiers. */
+.governance-panel .inbox-meta {
+  color: var(--ink-2);
+  line-height: var(--lh-body);
+  overflow-wrap: anywhere;
+}
+.governance-panel .inbox-subject { overflow-wrap: anywhere; }
+/* 10. Summary labels and long values retain a clear reading hierarchy. */
+.studio-readout .readout-row dt { color: var(--ink-2); }
+.studio-readout :is(.readout-value, .readout-note) {
+  overflow-wrap: anywhere;
+  line-height: var(--lh-body);
+}
+
+/* Screenshot follow-up: ten bounded sidebar readability corrections. */
+/* 1. Do not paint a dark overlay over the letters section. */
+.governance-panel::after { display: none; }
+.governance-panel { scroll-padding-bottom: var(--s4); }
+/* 2. Journal text stays opaque at the scrolling edge. */
+.ledger-panel .ledger-list { mask-image: none; }
+/* 3. Main journal details use the existing body size. */
+.ledger-panel .ledger-text { font-size: var(--fs-body); }
+/* 4. Larger timestamps keep a dedicated rail wide enough for seconds. */
+.ledger-panel { --time-rail: calc(var(--fs-body) * 5); }
+.ledger-panel .ledger-item time { font-size: var(--fs-body); }
+/* 5. Routine details remain secondary without dropping to micro text. */
+.ledger-panel .ledger-routine .ledger-text {
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+}
+/* 6. Repeated-event time ranges are no longer dimmed twice. */
+.ledger-panel .ledger-span {
+  opacity: 1;
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-body);
+  overflow-wrap: anywhere;
+}
+/* 7. Day separators are easier to scan between event groups. */
+.ledger-panel .ledger-day {
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  padding-block: var(--s3) var(--s2);
+}
+/* 8. Letter subjects match the size of other primary reading text. */
+.governance-panel .inbox-subject { font-size: var(--fs-body); }
+/* 9. A visible scrollbar replaces the fading cues in the side panels. */
+:is(.ledger-panel .ledger-list, .governance-panel, .studio-readout) {
+  scrollbar-color: var(--ink-3) transparent;
+}
+:is(.ledger-panel .ledger-list, .governance-panel, .studio-readout)::-webkit-scrollbar-thumb {
+  background-color: var(--ink-3);
+}
+/* 10. Approval fact labels stay legible beside their values. */
+.governance-panel .approval-facts dt {
+  font-size: var(--fs-meta);
+  letter-spacing: normal;
+  line-height: var(--lh-snug);
+}
+
+/* Ten small refinements for letters and approval confirmation controls. */
+/* 1. Letter subjects carry the primary heading weight. */
+.governance-panel .inbox-subject { font-weight: var(--w-semi); }
+/* 2. Sender/date metadata uses the existing caption size. */
+.governance-panel .inbox-meta { font-size: var(--fs-meta); }
+/* 3. Keep the sender distinct from the date on long letters. */
+.governance-panel .inbox-meta strong { color: var(--ink); }
+.governance-panel .inbox-meta time { display: block; font-variant-numeric: tabular-nums; }
+/* 4. Separate adjacent letters with the panel's standard interval. */
+.governance-panel .owner-inbox-list { gap: var(--s3); }
+/* 5. Give each letter a visible edge against the reading surface. */
+.governance-panel .inbox-letter { border-color: var(--line-strong); }
+/* 6. Separate letter actions from the subject and metadata. */
+.governance-panel .inbox-letter .source-actions {
+  margin-top: var(--s1);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
+  gap: var(--s2);
+}
+/* 7. Long action labels wrap within the letter, retaining their hit area. */
+.governance-panel .inbox-letter .source-actions > button {
+  max-width: 100%;
+  height: auto;
+  min-height: var(--hit);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: var(--lh-snug);
+  padding-block: var(--s2);
+}
+/* 8. Long confirmation questions keep a comfortable reading rhythm. */
+.governance-panel .approval-confirm-q {
+  line-height: var(--lh-body);
+  overflow-wrap: anywhere;
+}
+/* 9. The optional note label is readable beside the other field labels. */
+.governance-panel .approval-note { font-size: var(--fs-meta); color: var(--ink-2); }
+/* 10. The existing note field has a visible boundary and room to type. */
+.governance-panel .approval-note textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: calc(var(--hit) * 2);
+  padding: var(--s2);
+  border: 1px solid var(--line-field);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunk);
+  color: var(--ink);
+  font: inherit;
+  line-height: var(--lh-body);
+  resize: vertical;
+}
+
+/* Thirty scoped reading/large-text refinements; no office geometry changes. */
+:is(.ledger-panel, .governance-panel, .studio-readout) {
+  /* 1–4. Preserve the four reading levels when browser default text is enlarged. */
+  --fs-body: max(13px, .8125rem);
+  --fs-meta: max(11.5px, .71875rem);
+  --fs-micro: max(10px, .625rem);
+  --fs-h2: max(20px, 1.25rem);
+}
+/* 5. Long panel titles wrap inside their own column. */
+:is(.ledger-panel, .governance-panel, .studio-readout) h2 { overflow-wrap: anywhere; }
+/* 6. Long status labels stay inside the panel. */
+:is(.ledger-panel, .governance-panel) .section-heading > .tag {
+  max-width: 100%; white-space: normal; overflow-wrap: anywhere;
+}
+/* 7. Autonomy controls share the standard spacing. */
+.governance-panel .mode-buttons { gap: var(--s2); }
+/* 8. Longer autonomy words do not spend width on tracking. */
+.governance-panel .mode-btn { letter-spacing: normal; }
+/* 9. Journal filters grow vertically with their text. */
+.ledger-panel .ledger-chip { height: auto; min-height: max(var(--chip-h), 1.8em); padding-block: var(--s1); }
+/* 10. Inline help keeps long references inside the panel. */
+.governance-panel .helper-note { overflow-wrap: anywhere; line-height: var(--lh-body); }
+/* 11. The expandable rule header responds visibly to a pointer. */
+.governance-panel .governance-rule-box > summary:hover { background: var(--surface-quiet); }
+/* 12. The waiting-letter notice can carry a longer message. */
+.ledger-panel .owner-mark { flex: none; height: auto; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+/* 13. The notice arrow retains its space beside wrapped text. */
+.ledger-panel .owner-mark-go { flex-shrink: 0; }
+/* 14. Repetition counts use the caption size and readable ink. */
+.ledger-panel .ledger-repeat { font-size: var(--fs-meta); color: var(--ink-2); }
+/* 15. The journal's open-conversation hint is no longer micro text. */
+.ledger-panel .ledger-open { font-size: var(--fs-meta); line-height: var(--lh-body); }
+/* 16. Multiline journal subjects have body leading. */
+.ledger-panel .ledger-subject { line-height: var(--lh-body); }
+/* 17. Long event names cannot force the journal wider. */
+.ledger-panel .ledger-head { overflow-wrap: anywhere; }
+/* 18. Journal rows keep clearance from the scrollbar and scroll edges. */
+.ledger-panel .ledger-list { padding-right: var(--s2); scroll-padding-block: var(--s3); }
+/* 19. Focused cards leave a small gap at the scroll boundary. */
+.governance-panel :is(.inbox-letter, .approval-card) { scroll-margin-block: var(--s3); }
+/* 20. Letter titles prefer readable line breaks. */
+.governance-panel .inbox-subject { text-wrap: pretty; }
+/* 21. The letter date has breathing room beneath the sender. */
+.governance-panel .inbox-meta time { margin-top: var(--s1); }
+/* 22. Approval evidence uses the main reading size. */
+.governance-panel .approval-evidence { font-size: var(--fs-body); line-height: var(--lh-body); }
+/* 23. Approval subjects and film names match other primary text. */
+.governance-panel :is(.approval-subject, .approval-film) { font-size: var(--fs-body); }
+/* 24. A confirmation remains within its card with long content. */
+.governance-panel .approval-confirm { min-width: 0; overflow-wrap: anywhere; }
+/* 25. The note field has a visible active boundary. */
+.governance-panel .approval-note textarea:focus-visible { border-color: var(--teal); outline-offset: -2px; }
+/* 26. Wrapped action rows retain consistent button alignment. */
+.governance-panel .source-actions { align-items: stretch; }
+/* 27. Action labels can shrink/wrap without pushing their card wider. */
+.governance-panel .source-actions > button { min-width: 0; text-align: center; }
+/* 28. Summary explanations use the main reading size. */
+.studio-readout .readout-note { font-size: var(--fs-body); }
+/* 29. Summary value columns can shrink around long content. */
+.studio-readout .readout-row dd { min-width: 0; }
+/* 30. The About control accommodates enlarged text. */
+.studio-readout .studio-about-key { max-width: 100%; height: auto; white-space: normal; overflow-wrap: anywhere; text-align: left; }

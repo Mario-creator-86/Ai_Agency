@@ -85,7 +85,7 @@ export const CHECK_WORD = {
   structure: 'structură (cârlig → poantă, camere din studio)',
   cast: 'distribuție (2-4 care vorbesc)',
   length: 'durată (beat-uri și secunde de dialog)',
-  words_per_beat: 'cuvinte pe beat (8-22 rostite)',
+  words_per_beat: 'cuvinte pe beat (8-22 rostite, recomandare)',
   concentration: 'evenimente răspândite (niciunul în mai mult de jumătate din beat-uri)',
   accessibility: 'primul beat se ține singur',
   language: 'engleză (titlu și replici)',
@@ -285,7 +285,8 @@ export function checkMeasure(key, check) {
 /**
  * The computed checks as rows, known ones first in `CHECK_ORDER`, any the page does not know
  * after them under their own name. `legacy` is a rule an old episode was never told, measured
- * and not held against it.
+ * and not held against it. `advisory` is a recommendation (words per beat, 2026-10-13):
+ * measured and shown, decided by the Director, refusing nothing.
  *
  * @param {{checks?: Record<string, any>} | null | undefined} review
  */
@@ -299,10 +300,25 @@ export function checkRows(review) {
       word: /** @type {Record<string,string>} */ (CHECK_WORD)[key] || key.replace(/_/g, ' '),
       passed: check.passed === true,
       legacy: check.legacy === true,
+      advisory: check.advisory === true,
       reason: typeof check.reason === 'string' ? check.reason : '',
       measure: checkMeasure(key, check),
     };
   });
+}
+
+/**
+ * «N din M trecute» over the rules alone; a recommendation the episode is outside of is
+ * counted apart («· 1 recomandare de decis»), since it refuses nothing (2026-10-13).
+ *
+ * @param {ReturnType<typeof checkRows>} rows
+ */
+export function checksCount(rows) {
+  const rules = rows.filter((row) => !row.advisory);
+  const advised = rows.filter((row) => row.advisory && !row.passed && !row.legacy).length;
+  const head = rules.length ? `${rules.filter((row) => row.passed).length} din ${rules.length} trecute` : '';
+  const tail = advised ? `${countWord(advised, 'recomandare', 'recomandări')} de decis` : '';
+  return [head, tail].filter(Boolean).join(' · ');
 }
 
 /**
@@ -377,6 +393,29 @@ export function approvalMessage(decided) {
 }
 
 /**
+ * What the Owner's «Scrie episodul» did, from the tell answer (router.py post_tell,
+ * serial_stage.py tell_day_now, 2026-10-13). Until then the button only drafted, and the
+ * Director read the draft at the next run; now the press writes, reads, approves under the
+ * policy and readies, and the backend says where the episode ended in its own words
+ * (`words`: approved and readied, passed and waiting for him, rejected by the Director or by
+ * the computed checks, written but unread). The page decides only the tone: a rejection and
+ * an unread draft take the error tone so they are not missed, and a replay of the same press
+ * (the same command id, answered once already) says so.
+ *
+ * @param {{words?: string, reason?: string, episode_status?: string | null, verdict?: string | null, replayed?: boolean} | null | undefined} result
+ * @returns {{text: string, error: boolean}}
+ */
+export function tellOutcomeMessage(result) {
+  const words = String((result && (result.words || result.reason)) || '').trim();
+  if (!words) return { text: 'Studioul nu a spus ce s-a întâmplat cu episodul; reîncarcă lista.', error: true };
+  const status = String((result && result.episode_status) || '');
+  const verdict = String((result && result.verdict) || '');
+  const error = !status || status === 'REJECTED' || (status === 'DRAFT' && verdict !== 'PASS');
+  const text = result && result.replayed ? `${words} (aceeași apăsare, răspunsul de atunci)` : words;
+  return { text, error };
+}
+
+/**
  * The serial's facts on a run card, under the stage's own reason (which already names the
  * episode and its date). Only what the artefacts carry, and nothing for a count of zero.
  *
@@ -426,6 +465,7 @@ const CHECK_ICON = {
   pass: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12.5l4.2 4.2 8.8-9.4"/></svg>',
   fail: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>',
   legacy: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg>',
+  advice: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v9M12 18.5v.5"/></svg>',
 };
 
 /** @param {string} display */
@@ -539,15 +579,16 @@ function directorHtml(review, status) {
             </li>`;
         })
         .join('')}</ul>`
-    : `<p class="writers-empty">Fără rubrică: verificările calculate au oprit episodul înainte ca Directorul să-l citească.</p>`;
+    : review.model_used === true
+      ? `<p class="writers-empty">Fără rubrică: Directorul a dat verdictul fără note pe părți.</p>`
+      : `<p class="writers-empty">Fără rubrică: verificările calculate au oprit episodul înainte ca Directorul să-l citească.</p>`;
   const checks = checkRows(review);
-  const passed = checks.filter((row) => row.passed).length;
   const checkList = checks.length
-    ? `<div class="checks-head"><span>Verificări calculate</span><span class="checks-count">${passed} din ${checks.length} trecute</span></div>
+    ? `<div class="checks-head"><span>Verificări calculate</span><span class="checks-count">${escapeHtml(checksCount(checks))}</span></div>
        <ul class="check-list">${checks
          .map((row) => {
-           const state = row.legacy ? 'legacy' : row.passed ? 'pass' : 'fail';
-           const said = state === 'pass' ? 'trecută' : state === 'fail' ? 'picată' : 'neaplicată episodului vechi';
+           const state = row.legacy ? 'legacy' : row.passed ? 'pass' : row.advisory ? 'advice' : 'fail';
+           const said = state === 'pass' ? 'trecută' : state === 'fail' ? 'picată' : state === 'advice' ? 'în afara recomandării, decide Directorul' : 'neaplicată episodului vechi';
            return `<li class="check-row is-${state}">
                <span class="check-mark">${CHECK_ICON[state]}<span class="serial-sr">${said}</span></span>
                <span class="check-word">${escapeHtml(row.word)}</span>
@@ -631,7 +672,14 @@ export function episodeHtml(episode, context = {}) {
   const number = typeof continuity.episode_number === 'number' ? continuity.episode_number : null;
   const date = continuity.business_date ? String(continuity.business_date) : '';
   const statusWord = /** @type {Record<string,string>} */ (STATUS_WORD)[status] || status;
-  const by = episode.reviewed_by === 'owner' ? 'de tine' : episode.reviewed_by === 'director' ? 'de Director' : '';
+  const by =
+    episode.reviewed_by === 'owner'
+      ? 'de tine'
+      : episode.reviewed_by === 'director'
+        ? 'de Director'
+        : episode.reviewed_by === 'checks'
+          ? 'de verificările calculate'
+          : '';
   const kicker = [
     number !== null ? (status === 'APPROVED' ? `Episodul ${number}` : `ciorna episodului ${number}`) : 'Episod fără număr în serial',
     date ? `ziua ${dayWords(date)}` : '',
@@ -736,21 +784,24 @@ export function dayWords(date) {
 
 /**
  * The Director's reading in three figures for the cover: the verdict as she gave it, the mean
- * of her six scores (one decimal, Romanian comma) and how many computed checks passed. Only
- * what the review carries: no review is no verdict.
+ * of her six scores (one decimal, Romanian comma) and how many computed rules passed (a
+ * recommendation is not counted: it refuses nothing). Only what the review carries: no review
+ * is no verdict, and a FAIL the computed rules gave without her reading (`model_used` false)
+ * is `computed`: the cover signs it by the checks, not by her (2026-10-13).
  * @param {Record<string, any> | null | undefined} review
- * @returns {{verdict: string, mean: string, checks: string, read: boolean}}
+ * @returns {{verdict: string, mean: string, checks: string, read: boolean, computed: boolean}}
  */
 export function coverVerdict(review) {
-  if (!review) return { verdict: '—', mean: '', checks: '', read: false };
+  if (!review) return { verdict: '—', mean: '', checks: '', read: false, computed: false };
   const verdict = String(review.verdict || '').toUpperCase() || '—';
   const scores = rubricRows(review).map((row) => row.score).filter((v) => v !== null);
   const mean = scores.length
     ? `nota medie ${(scores.reduce((a, b) => a + Number(b), 0) / scores.length).toFixed(1).replace('.', ',')} din 5`
     : '';
-  const rows = checkRows(review).filter((row) => !row.legacy);
+  const rows = checkRows(review).filter((row) => !row.legacy && !row.advisory);
   const checks = rows.length ? `${rows.filter((row) => row.passed).length} din ${countWord(rows.length, 'verificare trecută', 'verificări trecute')}` : '';
-  return { verdict, mean, checks, read: true };
+  const computed = verdict === 'FAIL' && review.model_used === false;
+  return { verdict, mean, checks, read: true, computed };
 }
 
 /**
@@ -805,10 +856,10 @@ export function journalCoverHtml(episode, continuity) {
           ${canonLine}
         </div>
       </div>
-      <div class="cover-verdict tone-${tone}">
-        <span class="writers-label">Verdictul Directorului</span>
-        <strong class="cover-verdict-word">${escapeHtml(v.verdict)}</strong>
-        ${v.read ? [v.mean, v.checks].filter(Boolean).map((line) => `<span class="cover-verdict-line">${escapeHtml(line)}</span>`).join('') : '<span class="cover-verdict-line">Directorul nu a citit încă episodul.</span>'}
+      <div class="cover-verdict tone-${tone}${v.computed ? ' is-computed' : ''}">
+        <span class="writers-label">${v.computed ? 'Verificările calculate' : 'Verdictul Directorului'}</span>
+        <strong class="cover-verdict-word">${escapeHtml(v.computed ? 'RESPINS' : v.verdict)}</strong>
+        ${v.read ? [v.computed ? 'Directorul nu a citit episodul.' : v.mean, v.checks].filter(Boolean).map((line) => `<span class="cover-verdict-line">${escapeHtml(line)}</span>`).join('') : '<span class="cover-verdict-line">Directorul nu a citit încă episodul.</span>'}
       </div>
     </section>`;
 }

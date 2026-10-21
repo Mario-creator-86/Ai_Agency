@@ -1,6 +1,26 @@
-"""Offline regression tests for test qc captions are ours.
+"""Film QC never reads the studio's own subtitles as text.
 
-Providers are faked; all data is synthetic."""
+2026-10-10, film babcf272 «The Particle That Shouldn't Exist (But Does)»: the film-level look
+(`qc.span_picture_qc` -> `picture_qc.judge_clip`) was shown frames of the finished film, read
+the subtitles the studio itself burns in as «apare text sau un logo» in every scene, and the
+film failed; the repair that followed retired the stills and the test shot the Owner had
+approved. What is asserted here, on real films cut by ffmpeg with the studio's own captions
+burnt in by the studio's own ASS script:
+
+- a film whose only writing is its captions does not fail for text, whether its scenes' own
+  shots are still beside it (the look is shown them) or were released (the look is shown the
+  film with the caption band cut away, and told the subtitles are the studio's);
+- a shot that is no longer the file the film was joined from is never judged in its place;
+- lettering inside the generated picture still fails the scene, in both cases;
+- the 2026-10-09 triptych (tests/fixtures/panels) still fails as panels, in both cases;
+- the one-frame look (`evaluate_pictures`) is shown the shots too, and told about the captions;
+- a bought clip, judged before any edit, is asked exactly as before.
+
+No model is called. The provider's transport is faked by `PixelEye`, whose only sight is
+white lettering: it answers readable_text for any image holding a patch of near-white pixels,
+which on these dark test pictures only the studio's captions or the picture's own lettering
+can make.
+"""
 
 from __future__ import annotations
 
@@ -68,6 +88,24 @@ def white_pixels(picture: np.ndarray) -> int:
     return int((picture >= 235).all(axis=2).sum())
 
 
+def central_triptych_band(picture: np.ndarray) -> bool:
+    """The fake vision model sees the broad central black stripe of our fixture.
+
+    This detection is test-only; production panels remain the AI vision
+    model's responsibility, never an automatic pixel-only approval.
+    """
+    grey = cv2.cvtColor(picture, cv2.COLOR_BGR2GRAY)
+    begin, end = int(grey.shape[0] * .20), int(grey.shape[0] * .80)
+    zone = grey[begin:end]
+    flat = (zone.std(axis=1) < 2) & (zone.mean(axis=1) < 18)
+    run = 0
+    for row in flat:
+        run = run + 1 if row else 0
+        if run >= max(18, int(grey.shape[0] * .035)):
+            return True
+    return False
+
+
 class PixelEye:
     """The provider's transport, faked, with eyes that see one thing: white lettering.
 
@@ -90,6 +128,7 @@ class PixelEye:
         whites = [white_pixels(picture) for picture in images]
         self.calls.append({"prompt": prompt, "sizes": sizes, "white": whites})
         writing = any(count >= WHITE_PIXELS for count in whites)
+        triptych = any(central_triptych_band(picture) for picture in images)
         if '{"clips"' in prompt:
             scene = int(re.search(r"for scene (\d+)", prompt).group(1))
             verdict = {
@@ -101,10 +140,13 @@ class PixelEye:
                 "look_ok": True,
                 "technical_ok": True,
                 "same_shot": True,
-                "one_picture": True,
+                "one_picture": not triptych,
                 "bible_violations": "none",
-                "verdict": "keep",
-                "reason": "white lettering on the frame" if writing else "a dark test pattern",
+                "verdict": "back_to_still" if triptych else "keep",
+                "reason": (
+                    "not one picture: triptych with a central black strip"
+                    if triptych else "white lettering on the frame" if writing else "a dark test pattern"
+                ),
             }
             return GenerateResult(json.dumps({"clips": [verdict]}), 10, 40, None)
         scenes = [
@@ -449,7 +491,8 @@ def test_with_the_shots_released_the_look_sees_the_film_without_its_caption_band
     scenes = _scenes(record)
     assert all(scene["frames_from"] == "FILM_CROPPED" for scene in scenes.values())
     # The band is still read on the film's own frame, captions and all, and still passes.
-    assert all(scene["panels"]["status"] == "PASSED" for scene in scenes.values())
+    assert all(scene["panels"]["status"] == "NOT_APPLICABLE" for scene in scenes.values())
+    assert all(scene["picture"]["status"] == "PASSED" for scene in scenes.values())
     calls = model.clip_calls()
     assert len(calls) == 2
     for call in calls:
@@ -616,14 +659,14 @@ def test_the_triptych_still_fails_as_panels_whoever_looks(
     record = span_picture_qc(engine, None, ids["asset"], str(uuid4()))
 
     scenes = _scenes(record)
-    assert record["passed"] is False, record
-    # Nobody looks, so nothing is cropped for a look: the band reads the film's frame as is.
+    # With no vision-capable model, the studio must not invent either PASS
+    # or FAIL for panels. Publishing still requires a measured visual review.
+    assert record["passed"] is None and record["status"] == "NOT_RUN", record
     assert scenes[1]["frames_from"] == ("SHOT" if shots_beside_the_film else "FILM")
-    assert scenes[1]["panels"]["status"] == "FAILED"
-    assert "nu e o singură fotografie" in scenes[1]["reason"] and "la mijloc" in scenes[1]["reason"]
-    assert scenes[2]["panels"]["status"] == "PASSED" and scenes[2]["passed"] is None
-    (failure,) = record["failures"]
-    assert failure.startswith("Scena 1:")
+    assert scenes[1]["panels"]["status"] == "NOT_APPLICABLE"
+    assert scenes[1]["picture"]["status"] == "NOT_RUN"
+    assert scenes[2]["passed"] is None
+    assert record["failures"] == []
 
 
 @requires_burnt_captions
@@ -641,11 +684,12 @@ def test_quality_control_fails_the_triptych_and_not_one_scene_for_its_captions(
 
     spans = report["checks_json"]["picture_spans_qc"]
     scenes = _scenes(spans)
-    assert scenes[1]["passed"] is False and scenes[1]["panels"]["status"] == "FAILED"
+    assert scenes[1]["passed"] is False and scenes[1]["picture"]["status"] == "FAILED"
+    assert scenes[1]["panels"]["status"] == "NOT_APPLICABLE"
     assert scenes[2]["passed"] is True, scenes[2]
     assert not any("apare text" in reason for reason in report["failure_reasons_json"])
     assert any(
-        reason.startswith("Scena 1:") and "singură fotografie" in reason
+        "Scena 1:" in reason and ("one picture" in reason or "triptych" in reason)
         for reason in report["failure_reasons_json"]
     ), report["failure_reasons_json"]
     assert report["checks_json"]["picture_qc"]["frames_from"] == "SHOT"

@@ -279,19 +279,41 @@ def test_the_vendors_silence_is_trimmed_and_no_cut_carries_dead_air(
         assert 1.2 <= scene["audio_seconds"] <= 1.3, scene
         trimmed = scene["trimmed_silence"]
         assert trimmed["lead_seconds"] == pytest.approx(0.37, abs=0.03)
-        assert trimmed["trail_seconds"] == pytest.approx(0.42, abs=0.03)
+        # The tail is cut at the last letter, where the sound dies away (the pause rules'
+        # trim_to_last_letter, 2026-10-16): all of the vendor's 0.45 s after the words goes,
+        # and no silence is kept after the last sound for the join to add to.
+        assert trimmed["trail_seconds"] == pytest.approx(0.45, abs=0.03)
+        assert trimmed["takes"][-1]["rule"] == "last_letter"
+        assert trimmed["takes"][-1]["kept_tail_seconds"] <= 0.03
     # The captions moved with the words: the first word now starts at the take's start.
     film = Path(render["file_path"])
     srt = (film.parent / "captions.srt").read_text(encoding="utf-8")
     assert srt.split("\n")[1].startswith("00:00:00,0")
-    # The joined narration: no silence inside it longer than 0.25 s at -45 dB.
+    # The joined narration (the Owner's «pauza vocii», 2026-10-16): at each cut the pause
+    # frozen for it when the film was built, heard to within a frame (the kept edges, the pad
+    # and the frame rounding), and nothing more: the vendor's own silence (0.37 s before,
+    # 0.45 s after) is gone, and no silence inside the voice runs past the 1.2 s ceiling.
+    spans = production["timeline"]["spans"]
+    joins = [span["pause"] for span in spans]
+    assert all(pause is not None for pause in joins)
+    for pause in joins:
+        assert pause["heard"] == pytest.approx(pause["planned"], abs=1 / 24 + 1e-3), pause
     voice_track = film.parent / VOICE_TRACK_NAME
     with wave.open(str(voice_track), "rb") as out:
         length = out.getnframes() / out.getframerate()
     inside = [(a, b) for a, b in _gaps(voice_track) if b < length - 0.01 and a > 0.01]
     assert inside, "the cuts are measured"
-    assert all(b - a <= 0.25 for a, b in inside), inside
-    assert production["timeline"]["spoken_tail_seconds"] <= 0.15
+    longest = max(pause["planned"] for pause in joins[:-1])
+    assert all(b - a <= longest + 1 / 24 + 0.01 for a, b in inside), (inside, joins)
+    assert all(b - a <= 1.2 for a, b in inside), inside
+    # Measured on the voice track, never read back from the record: at every cut between two
+    # takes the silence the meter hears is the pause planned there, to within a frame and the
+    # detector's resolution, neither shorter nor longer (the voice's tone runs whole between
+    # cuts, so each silence inside the track is one join).
+    assert len(inside) == len(joins) - 1, (inside, joins)
+    for pause, (start, end) in zip(joins[:-1], inside, strict=True):
+        assert start - 0.01 <= pause["cut_at"] <= end + 1 / 24 + 0.01, (pause, start, end)
+        assert end - start == pytest.approx(pause["planned"], abs=1 / 24 + 0.01), (pause, start)
 
 
 @requires_ffmpeg

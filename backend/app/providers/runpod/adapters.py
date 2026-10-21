@@ -18,7 +18,16 @@ from app.providers.media_base import (
     VideoProvider,
 )
 from app.providers.media_http import MediaProviderError, TaskStillOpen, image_dimensions
-from app.providers.runpod.batch import BatchRequest, BatchRun, SubmittedItem, submit_round
+from app.providers.runpod.batch import (
+    BatchRequest,
+    BatchRun,
+    PreparedBatch,
+    SubmittedItem,
+    discard_prepared,
+    prepare_round,
+    submit_prepared,
+    submit_round,
+)
 from app.providers.runpod.client import Transport
 from app.providers.runpod.config import RunPodConfig
 from app.providers.runpod.errors import RunPodProtocolError
@@ -221,6 +230,28 @@ class RunPodConnection:
             transport=transport or self.core.transport,
         )
 
+    def prepare_batch(self, requests: Sequence[BatchRequest]) -> PreparedBatch:
+        return prepare_round(
+            self.config,
+            self.core.store.engine,
+            requests,
+            integration_id=self.integration_id,
+            storage_root=self.storage_root,
+            transport=self.core.transport,
+        )
+
+    def discard_prepared(self, prepared: PreparedBatch) -> None:
+        discard_prepared(prepared)
+
+    def submit_prepared(
+        self,
+        prepared: PreparedBatch,
+        *,
+        session: GpuSession,
+        on_submitted: Callable[[SubmittedItem], None],
+    ) -> BatchRun:
+        return submit_prepared(prepared, session=session, on_submitted=on_submitted)
+
     async def health_check(self) -> dict[str, Any]:
         reading = await self.core.health()
         return {
@@ -274,6 +305,8 @@ class RunPodConnection:
 
 
 class RunPodImageAdapter(RunPodConnection, ImageProvider):
+    _reference_route_cache: dict[str, RunPodImageAdapter]
+
     #: What a reference picture really did is proven by the Owner's paid test, never by the
     #: catalogue's declaration (the stills step reports such stills as unverified).
     REFERENCE_IMAGE_VERIFIED = False

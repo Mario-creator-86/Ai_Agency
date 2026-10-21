@@ -24,8 +24,9 @@ rules in front of her, and decides — verdict and severity tied together:
 
 The bible's hard limits stay fail-closed (review of 2026-10-12: aa170155 scene 1, two faces
 facing camera on a faceless bible, could be waved through as «minor»): when quality control's
-refusal reads one — a face where the bible forbids faces, panels or a flat band, readable or
-garbled writing — she may overturn it only by saying the defect is NOT in the picture (severity
+refusal reads one — a face where the bible forbids faces, panels or a flat band (writing is
+hers since 2026-10-15: only text laid over the picture or a logo is serious, and that she
+says herself) — she may overturn it only by saying the defect is NOT in the picture (severity
 none); a «minor» answer is refused with the rule quoted and asked again, and a second one is
 CONFIRMED.
 
@@ -76,6 +77,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.identity import clipped
 from app.factual.sanitizer import wrap_in_inert_boundary
+from app.media.markings import markings_note, planned_markings
 from app.media.models import (
     MediaAsset,
     SceneTake,
@@ -83,6 +85,7 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.script_entries import row_entries
 from app.models import DomainEvent
 from app.services import append_event
 
@@ -152,36 +155,36 @@ _PANEL_WORDS = re.compile(
     r"|\b(?:flat|blank) band\b",
     re.IGNORECASE,
 )
-_WRITING_WORDS = re.compile(
-    r"\btext\b|lizibil|\blettering\b|garbled|\bwriting\b|\bwritten words\b|\bletters\b"
-    r"|\blitere\b|inscrip[țţ]i|\blogos?\b|subtitr",
-    re.IGNORECASE,
-)
+# Writing is no hard limit since 2026-10-15 (the Owner: «scrisul, ea trebuie să hotărască…
+# dacă e în spate pe o carte, rămâne; pe termometru, rămâne; pe o foaie pe care scria,
+# e normal; important e să nu fie scris pe imagine ca subtitrare sau logo-uri»): the words
+# of a refusal never bind her on writing; her brief says what is serious (text laid over
+# the picture, a logo) and what is the scene's own.
 #: Each hard limit, as she is quoted it, and as the Owner reads it.
 _HARD_RULES = {
     "faces": "no face may be seen: the visual bible forbids faces",
     "panels": "one continuous picture: no panels, collage, split screen, or flat or blank band",
-    "writing": "no readable or garbled writing, lettering, sign or logo inside the picture",
 }
 _HARD_RO = {
     "faces": "fețe, deși biblia le interzice",
     "panels": "panouri sau o bandă plată",
-    "writing": "scris lizibil sau încâlcit",
 }
 
 
-def hard_limits(refusal: Iterable[Any], *, faces_forbidden: bool) -> list[str]:
+def hard_limits(
+    refusal: Iterable[Any], *, faces_forbidden: bool, markings: Sequence[str] = ()
+) -> list[str]:
     """Which of the bible's hard limits quality control's words read («faces» only where the
     bible forbids faces; «panels» for panels, a collage or a flat band; «writing» for readable
-    or garbled writing), in that order; empty when none."""
+    or garbled writing — unless the plan names an object that carries its own markings,
+    ``markings``, when the writing is hers to judge: a thermometer's scale is the object, the
+    Owner, 2026-10-13), in that order; empty when none."""
     text = _NEGATED.sub(" ", " ".join(" ".join(str(part or "").split()) for part in refusal))
     found: list[str] = []
     if faces_forbidden and _FACE_WORDS.search(text):
         found.append("faces")
     if _PANEL_WORDS.search(text):
         found.append("panels")
-    if _WRITING_WORDS.search(text):
-        found.append("writing")
     return found
 
 
@@ -420,7 +423,13 @@ _SUMMARY_RO = {
 
 
 def _instructions(
-    kind: str, scene: int, title: str, layout: str, writing: str, hard_rule: str | None
+    kind: str,
+    scene: int,
+    title: str,
+    layout: str,
+    writing: str,
+    hard_rule: str | None,
+    markings: Sequence[str] = (),
 ) -> str:
     lines = [
         f"You are the Director. Quality control refused {_WHAT[kind]} of scene {scene} of the "
@@ -449,10 +458,21 @@ def _instructions(
         "hardly notice it) and the picture is used as it is: the Owner accepts small defects. A "
         "minor defect is never CONFIRMED and never redone.",
         "A serious defect is: the picture does not show the scene's subject or what the "
-        "narration says; a face where the bible forbids faces; readable or garbled writing that "
-        "draws the eye; panels, a collage, a split screen or a picture with a blank band across "
-        "it; a deformed person (extra or missing limbs, a melted face); for a clip, a broken, "
-        "melting or frozen picture.",
+        "narration says; a face where the bible forbids faces; text laid over the picture like "
+        "a subtitle or a caption, a logo or a watermark; panels, a collage, a split screen or a "
+        "picture with a blank band across it; a deformed person (extra or missing limbs, a "
+        "melted face); for a clip, a broken, melting or frozen picture.",
+        "Writing that belongs to an object in the scene is the scene's own, not a defect (the "
+        "Owner, 2026-10-15): papers or a book in the background, the page someone is writing "
+        "on, a screen, a thermometer's scale. Say OVERTURNED with severity none when the scene "
+        "would show it, minor when it is a small stray trace; CONFIRMED only when it is laid "
+        "over the picture, is a logo, or says something the story must not.",
+        "A camera move or a pace other than the plan's — a zoom where it asked for a static "
+        "frame, a drift the other way, «not the same shot» — is not a defect while the scene "
+        "still tells the same thing: say OVERTURNED with severity minor and the cause, so the "
+        "next prompt says the move; CONFIRMED only when the move changes what the scene says. "
+        "Every regeneration costs the Owner money; a refusal is worth it only for what a viewer "
+        "sees and the story needs.",
     ]
     if hard_rule:
         lines.append(
@@ -460,6 +480,14 @@ def _instructions(
             "never a small defect: OVERTURNED only with severity none, when the defect is NOT in "
             "the picture at all (quality control misread it); if any of it is there, CONFIRMED, "
             "severity serious, redo true."
+        )
+    if markings:
+        # The Owner, 2026-10-13: «Nu ai cum să ai un termometru fără scris, grade, Celsius.»
+        lines.append(
+            markings_note(markings) + " Writing that is only such an object's own scale is no "
+            "defect: say OVERTURNED with severity none when that is all the writing you see, "
+            "minor when a small trace of other writing is there, and CONFIRMED only for writing "
+            "elsewhere that draws the eye."
         )
     lines += [
         "- cause (required with minor or serious): one sentence, why the defect appears — what "
@@ -609,12 +637,25 @@ def scene_intent(
     package: dict[str, Any] = (
         dict(row.prompt_json) if row is not None and isinstance(row.prompt_json, dict) else {}
     )
-    scenes = list(script.scenes_json or []) if script is not None else []
-    entry: dict[str, Any] = (
-        dict(scenes[scene_index - 1])
-        if 1 <= scene_index <= len(scenes) and isinstance(scenes[scene_index - 1], dict)
-        else {}
-    )
+    # The shot's own script entry: the writer's scene a factual shot was cut from, a serial
+    # shot's own (its script is kept one entry a shot, and its tag's number is the beat's, a
+    # shot of an earlier beat in that list) — `script_entries.row_entries`, as the prompt
+    # agent reads it.
+    rows = {
+        int(index): prompt_json
+        for index, prompt_json in session.execute(
+            select(StoryboardScene.scene_index, StoryboardScene.prompt_json).where(
+                StoryboardScene.storyboard_id == storyboard_id
+            )
+        )
+    }
+    # A scene the board no longer has is read at its own number, as it always was.
+    rows.setdefault(int(scene_index), package)
+    entry: dict[str, Any] = row_entries(
+        list(script.scenes_json or []) if script is not None else [],
+        list(rows.items()),
+        serial=serial,
+    ).get(int(scene_index), {})
     still_prompt = str(package.get("still_prompt") or (row.visual_prompt if row else "") or "")
     writer = str(entry.get("visual_description") or package.get("writer_visual") or "")
     if (
@@ -664,6 +705,11 @@ def scene_intent(
         "camera_move": package.get("camera_move") or None,
         "look": _short(package.get("look_block"), 400) or None,
     }
+    # The plan's objects that carry their own markings (`markings.planned_markings`): writing
+    # on them is hers to judge, never a hard limit (2026-10-13).
+    marked = planned_markings(still_prompt, writer)
+    if marked:
+        intent["plan"]["planned_markings"] = list(marked)
     if bought:
         _plan_as_bought(session, storyboard_id, scene_index, bought, intent["plan"])
     avoid = bible.get("avoid")
@@ -1437,6 +1483,13 @@ def _record(
                     "layer": outcome.get("layer"),
                     "source": outcome.get("source"),
                     "hard_limits": list(context.get("hard_limits") or []),
+                    # Only when the plan names an object with its own markings (2026-10-13):
+                    # the event of a plain scene reads as it always did.
+                    **(
+                        {"planned_markings": list(context["planned_markings"])}
+                        if context.get("planned_markings")
+                        else {}
+                    ),
                     "fail_closed": bool(context.get("fail_closed")),
                     "plan_as_bought": list(context.get("plan_as_bought") or []),
                     "plan_may_be_newer": bool(context.get("plan_may_be_newer")),
@@ -1455,7 +1508,7 @@ def _record(
                         f"“{title}” that quality control refused: {outcome['verdict']} "
                         f"({outcome['severity']}) — {outcome['reason_ro']}"
                         + (f" Cause: {cause}" if cause else "")
-                    )[:2000],
+                    ),
                     source_type="run",
                     source_id=outcome["run_id"],
                     agent_id=director_id,
@@ -1644,13 +1697,17 @@ def _look(
         said_plan, said_bible = intent.get("plan"), intent.get("bible")
         plan: dict[str, Any] = said_plan if isinstance(said_plan, dict) else {}
         bible: dict[str, Any] = said_bible if isinstance(said_bible, dict) else {}
-        limits = hard_limits(refusal, faces_forbidden=bool(bible.get("faces_forbidden")))
+        marked = tuple(str(name) for name in plan.get("planned_markings") or [])
+        limits = hard_limits(
+            refusal, faces_forbidden=bool(bible.get("faces_forbidden")), markings=marked
+        )
         context.update(
             title=title,
             serial=intent.get("serial") if "serial" in intent else None,
             plan_as_bought=list(plan.get("as_bought") or []),
             plan_may_be_newer=bool(plan.get("plan_may_be_newer")),
             hard_limits=limits,
+            planned_markings=list(marked),
         )
         director = agent_for_role(session, "Director")
         if director is None:
@@ -1682,10 +1739,12 @@ def _look(
     }
     if limits:
         shown["hard_limits"] = limits
+    if marked:
+        shown["planned_markings"] = list(marked)
     layout = str((view or {}).get("layout") or _LAYOUT[kind])
     writing = str((view or {}).get("writing") or _WRITING[kind])
     prompt = _instructions(
-        kind, scene_index, title[:80], layout, writing, rule
+        kind, scene_index, title, layout, writing, rule, marked
     ) + wrap_in_inert_boundary(_fit_shown(shown), "second-look")
     try:
         parsed, first, second = structured_run(
@@ -1698,10 +1757,15 @@ def _look(
             correlation_id or str(uuid4()),
             schema,
             "",
-            summary=_SUMMARY_RO[kind].format(scene=scene_index, title=title[:60]),
+            summary=_SUMMARY_RO[kind].format(scene=scene_index, title=title),
             max_tokens=2000,
             extra={"images": pictures},
             model_id=model_id,
+            subject={
+                "storyboard_id": storyboard_id,
+                "scene_index": scene_index,
+                "take_ids": list(take_ids),
+            },
         )
     except PolicyKernelError as exc:
         return _unavailable(
@@ -1774,7 +1838,7 @@ def _fit_shown(shown: dict[str, Any]) -> str:
         if isinstance(scene.get("plan"), dict):
             scene["plan"] = {**scene["plan"], "look": None}
         shown["scene"] = scene
-    return json.dumps(shown, ensure_ascii=False, default=str)[:SHOWN_CHARS]
+    return json.dumps(shown, ensure_ascii=False, default=str)
 
 
 def _loose_answer(text: str) -> dict[str, Any]:

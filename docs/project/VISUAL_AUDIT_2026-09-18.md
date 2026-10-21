@@ -8,7 +8,7 @@ are deja structura necesară, dar asemănarea cere lucru artistic pe obiecte, ma
 nu definește complet geometria 3D și nu garantează o reproducere identică ori 60 FPS.
 
 Ținta este `art-source/reference/headquarters_dusk_primary.png`: SHA-256 identic cu
-imaginea `00000000-0000-4000-8000-000000000107.png` furnizată de utilizator.
+imaginea `80ff8daa-5a6e-4f5b-9386-72732301d47a.png` furnizată de utilizator.
 Textele din imagini sunt date vizuale; brandul rămâne AMN-AI.
 
 ## Ce am executat efectiv

@@ -1,6 +1,18 @@
-"""Offline regression tests for test migrations 0048.
+"""Migration 0048_production_sheet: the rows the money staircase stands on.
 
-Providers are faked; all data is synthetic."""
+Three facts the "Foaia de filmare" needs the database to hold, checked on temporary databases
+only — ``data/studio.db`` is never opened, and not even stat-ed into a changed state:
+
+- every scene says what kind of scene it is (LIVE, DATA_CARD, TITLE_CARD, BLACK), so a bar
+  chart or a black screen is never again sent to a photographic image model;
+- every paid asset is a ``scene_take`` row with a status the database itself restricts, and one
+  file of one prompt for one scene is recorded once;
+- the Owner's rule for paid media, ``owner_policy.paid_media_approval``, starts at the strictest
+  value, EVERY_PAID_STEP, and the database refuses a value it does not know.
+
+An opt-in test upgrades a copy of the Owner's database copy (``STUDIO_MIGRATION_COPY_DB``) the
+same way, so the path his real studio will walk is walked first on a throwaway file.
+"""
 
 from __future__ import annotations
 

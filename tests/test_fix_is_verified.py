@@ -383,8 +383,8 @@ def test_a_record_without_review_findings_gives_only_what_the_film_saw(engine, t
         "the lamp is missing from the desk",
     ]
     assert all(item["expected"] == "" and item["source"] == "film" for item in found)
-    assert len(found) == fix_check.MAX_ITEMS == 4
-    assert all(len(item["finding"]) <= fix_check.MAX_CHARS for item in found)
+    assert len(found) == 4
+    assert any(item["finding"] == "x" * 400 for item in found)
     words = " ".join(item["finding"] for item in found)
     for proposal in ("mișcarea filmată", "must be redone", "Paid redo", "rewritten before"):
         assert proposal not in words
@@ -494,9 +494,9 @@ def test_a_still_approved_after_the_rewrite_closes_the_picture_and_a_passed_clip
     assert open_for(engine, storyboard_id, 2, layer="motion") == []
 
 
-def test_the_cap_keeps_the_picture_findings_and_says_a_paraphrase_once(engine, tmp_path):
-    """Finding 6: four items at most, the picture's first on the still layer, the movement's
-    first on the clip's; a paraphrase of a finding already kept is not asked twice."""
+def test_all_findings_are_kept_in_layer_order_and_a_paraphrase_is_said_once(engine, tmp_path):
+    """All open findings, the picture's first on the still layer, the movement's first
+    on the clip; a paraphrase of a finding already kept is not asked twice."""
     storyboard_id = a_film(engine, tmp_path)
     rewritten(
         engine,
@@ -521,6 +521,7 @@ def test_the_cap_keeps_the_picture_findings_and_says_a_paraphrase_once(engine, t
         "ruled lines and garbled text on the ledger",
         "the lamp is missing from the desk",
         "the cup on the desk is blue",
+        "The camera drifts left and the ending frame lands on a profile two-shot.",
     ]
     assert motion[0] == "The camera drifts left and the ending frame lands on a profile two-shot."
     assert NADIA not in still + motion
@@ -1022,13 +1023,10 @@ def test_a_still_that_repeats_the_mistake_on_its_plan_is_not_bought_again(
     )
 
 
-def test_a_still_that_also_missed_its_plan_is_bought_once_more_and_then_fixed(
-    engine, tmp_path, lessons
-):
-    """Finding 3, the other side, and finding 9: a pair that missed its plan as well gets the
-    one re-roll; the re-roll that shows every item gone is approved, and the review's lessons
-    are confirmed — the finding lives on the still's layer, so the still closes it on both
-    (round 3, finding 7: a finding the clip must also show is confirmed only by the clip)."""
+def test_a_still_that_also_missed_its_plan_requires_new_prompt_review(engine, tmp_path, lessons):
+    """The replacement words must be reviewed even when the refused picture missed its plan.
+    A lesson whose correction is still present cannot be marked confirmed by a hypothetical
+    second round that was never bought."""
     storyboard_id = a_film(engine, tmp_path)
     review_run = rewritten(
         engine,
@@ -1039,22 +1037,20 @@ def test_a_still_that_also_missed_its_plan_is_bought_once_more_and_then_fixed(
         ],
     )
     judge = FixJudge(
-        status=lambda look, plan: "persists" if look <= 2 else "gone",
-        on_plan=lambda look, plan: look > 2,
+        status=lambda look, plan: "persists" if plan.scene == 2 and look <= 2 else "gone",
+        on_plan=lambda look, plan: plan.scene != 2 or look > 2,
     )
     adapter = SpyStills(pictures=new_pictures_for(2))
 
     result = approved_run(engine, storyboard_id, tmp_path, adapter, judge)
 
     scene_2 = [call for call in adapter.asked if SUBJECTS[2] in call["prompt"]]
-    assert len(scene_2) == 2, "one pair refused, one re-roll"
-    assert POSITIVE_WORDS["finding_persists"] in scene_2[1]["prompt"]
+    assert len(scene_2) == 1, "one refused pair; replacement requires Sarah's review"
     entry = next(e for e in result["scenes"] if e["scene_index"] == 2)
-    assert entry["status"] == "APPROVED" and entry["rerolls"] == 1
-    # Not withdrawn before the re-roll that fixed it; confirmed by it.
-    assert lessons["withdrawn"] == [] and lessons["confirmed"] == [[review_run]]
-    # The still approved after the rewrite was checked for it: nothing is open on the still.
-    assert open_for(engine, storyboard_id, 2) == []
+    assert entry["status"] == "NEEDS_OWNER" and entry["rewrite"] is True
+    assert lessons["confirmed"] == []
+    assert lessons["withdrawn"][0][0] == [review_run]
+    assert open_for(engine, storyboard_id, 2)
 
 
 def test_a_minor_trace_approves_the_still_and_is_written_on_it(engine, tmp_path, lessons):
@@ -1214,7 +1210,7 @@ def test_a_still_redo_is_checked_for_what_its_rewrite_answered(engine, tmp_path,
 
 def test_a_factual_scene_shown_is_the_writers_line_not_the_compiled_prompt(engine, tmp_path):
     """2026-10-12, read on the database copy: visual_prompt equals the compiled still prompt
-    (1c038a99 scene 5, 00000160 scene 1, f06808c9 scene 4), so shows_scene could only repeat
+    (1c038a99 scene 5, aa170155 scene 1, f06808c9 scene 4), so shows_scene could only repeat
     matches_plan. The writer's line is kept on the package as ``writer_visual``."""
     storyboard_id = a_film(engine, tmp_path)
     line = "Return to the dark detector cavern from the opening shot, points of light on the rings."
@@ -1638,15 +1634,13 @@ def test_the_director_looks_before_a_still_is_bought_again(engine, tmp_path, mon
         assert all(t.failure_detail.startswith(REWRITE_PHRASE) for t in rows)
         assert all(refusal_kind(t.failure_code, t.failure_detail) == CONTENT_REFUSAL for t in rows)
         return
-    assert len(scene_2) == 2, "the re-roll was bought"
-    assert entry["status"] == "APPROVED" and entry.get("approved_by") is None
+    assert len(scene_2) == 1, "an unavailable look cannot approve replacement words"
+    assert entry["status"] == "NEEDS_OWNER" and entry["rewrite"] is True
     assert "director_confirmed" not in entry
 
 
-def test_a_confirmed_technical_refusal_is_rerolled_with_her_reason(engine, tmp_path, monkeypatch):
-    """Round 3, finding 4, the other side: a refusal of one picture's technique (warped hands,
-    artefacts) that she confirms is another seed's to answer — the re-roll is bought, her reason
-    kept with it; the words are not sent back."""
+def test_a_confirmed_technical_refusal_requires_prompt_review(engine, tmp_path, monkeypatch):
+    """Her confirmation of the old picture is not approval of the replacement words."""
     looks = Looks(HER["CONFIRMED"])
     monkeypatch.setattr(fix_check, "director_second_look", looks)
     storyboard_id = a_film(engine, tmp_path)
@@ -1656,10 +1650,10 @@ def test_a_confirmed_technical_refusal_is_rerolled_with_her_reason(engine, tmp_p
 
     scene_2 = [call for call in adapter.asked if SUBJECTS[2] in call["prompt"]]
     entry = next(e for e in result["scenes"] if e["scene_index"] == 2)
-    assert len(looks.asked) == 2 and len(scene_2) == 2, "the re-roll was bought"
-    assert entry["status"] == "APPROVED" and entry["rerolls"] == 1
+    assert len(looks.asked) == 2 and len(scene_2) == 1
+    assert entry["status"] == "NEEDS_OWNER" and entry["rerolls"] == 0
     assert entry["director_confirmed"] == [HER["CONFIRMED"]["reason_ro"]] * 2
-    assert "rewrite" not in entry
+    assert entry["rewrite"] is True
 
 
 @pytest.mark.parametrize(
@@ -1726,17 +1720,18 @@ def test_the_director_looks_before_a_runpod_round_is_bought_again(
         assert by_scene[2]["status"] == "APPROVED"
         assert by_scene[2]["approved_by"] == "director_look" and by_scene[2]["rerolls"] == 0
         return
-    if not technical:
-        assert scene_2_pictures == 2, "no round bought on words she confirmed are wrong"
-        assert by_scene[2]["status"] == "NEEDS_OWNER" and by_scene[2]["rewrite"] is True
-        assert by_scene[2]["director_confirmed"] == [HER[her]["reason_ro"]] * 2
-        return
-    assert scene_2_pictures == 4, "the re-roll round was bought"
-    assert by_scene[2]["status"] == "APPROVED" and by_scene[2]["rerolls"] == 1
+    assert scene_2_pictures == 2, "replacement words require review for every refusal"
+    assert by_scene[2]["status"] == "NEEDS_OWNER" and by_scene[2]["rewrite"] is True
+    assert by_scene[2]["rerolls"] == 0
     assert by_scene[2]["director_confirmed"] == [HER[her]["reason_ro"]] * 2
 
 
-def test_her_look_never_overturns_the_bibles_hard_limits(engine, tmp_path, monkeypatch):
+def test_writing_in_the_picture_is_offered_to_her_look_and_her_yes_buys_nothing(
+    engine, tmp_path, monkeypatch
+):
+    """2026-10-15, the Owner: the scene's own writing stays and she decides; so a still the
+    gate refused for lettering is shown to her, and when she lets it stand nothing more is
+    bought for the scene."""
     looks = Looks(HER["OVERTURNED"])
     monkeypatch.setattr(fix_check, "director_second_look", looks)
     storyboard_id = a_film(engine, tmp_path)
@@ -1744,8 +1739,8 @@ def test_her_look_never_overturns_the_bibles_hard_limits(engine, tmp_path, monke
 
     approved_run(engine, storyboard_id, tmp_path, adapter, OffPlanFirst(lettering=True))
 
-    assert looks.asked == [], "writing in the picture stays the code's refusal"
-    assert len([c for c in adapter.asked if SUBJECTS[2] in c["prompt"]]) == 2
+    assert len(looks.asked) >= 1, "writing in the picture is hers to judge"
+    assert len([c for c in adapter.asked if SUBJECTS[2] in c["prompt"]]) == 1
 
 
 def test_who_may_be_overturned():
@@ -1761,7 +1756,8 @@ def test_who_may_be_overturned():
         environment="TEST",
     )
     assert may_be_overturned(off_plan)
-    assert not may_be_overturned(lettering) and not may_be_overturned(panels)
+    assert may_be_overturned(lettering), "writing is hers (2026-10-15)"
+    assert not may_be_overturned(panels)
     assert not may_be_overturned(unseen)
 
 
@@ -1819,8 +1815,8 @@ def test_the_director_looks_before_a_clip_retry_is_bought(engine, tmp_path, monk
             note = fix_check.take_note(session, take.id)
         assert note["approved_by"] == "director_look" and note["kind"] == "motion"
         return
-    assert models.posts() == 2, "the retry was bought"
-    assert entry["clip_qc"]["status"] == "PASSED_ON_RETRY"
+    assert models.posts() == 1, "the replacement prompt must be reviewed first"
+    assert entry["clip_qc"]["status"] == "ESCALATED"
     if her == "CONFIRMED":
         assert HER[her]["reason_ro"] in entry["clip_qc"]["reason_ro"]
 
@@ -2148,16 +2144,14 @@ class FixClipCheck:
         )
 
 
-def test_a_runpod_clip_retry_deferred_to_the_next_round_settles_nothing_before_it_is_checked(
+def test_a_runpod_clip_with_persisting_defect_waits_for_new_prompt_review(
     engine,
     tmp_path,
     fake_session,  # noqa: F811
     lessons,
 ):
-    """Finding 6: on RunPod the first clip's retry is bought in the NEXT round; the review's
-    lessons were withdrawn when the first clip showed the mistake, before the retry that
-    corrected it was even bought. Now nothing is settled until clip QC's last word: the retry
-    shows the movement's item gone, and the lessons are confirmed — never withdrawn."""
+    """No deferred generic round may buy a replacement before review of its words.
+    The original correction failed and its lesson is not marked confirmed."""
     from app.media.assembler import MotionStepRefused, motion_plan, run_motion_step
     from test_approvals import answer
     from test_film_costing import a_film as costed_film
@@ -2202,10 +2196,10 @@ def test_a_runpod_clip_retry_deferred_to_the_next_round_settles_nothing_before_i
     result = go()
 
     (entry,) = result["scenes"]
-    assert entry["status"] == "PAID" and entry["clip_qc"]["attempts"] == 2
-    assert [said(asked_items) for asked_items in check.asked] == [[(ENDING, ENDING_FIX)]] * 2
-    assert lessons["withdrawn"] == []
-    assert lessons["confirmed"] == [[review_run]]
+    assert entry["status"] == "NEEDS_OWNER" and entry["clip_qc"]["attempts"] == 1
+    assert [said(asked_items) for asked_items in check.asked] == [[(ENDING, ENDING_FIX)]]
+    assert lessons["withdrawn"][0][0] == [review_run]
+    assert lessons["confirmed"] == []
 
 
 def test_lessons_are_settled_review_run_by_review_run(engine, tmp_path, lessons):

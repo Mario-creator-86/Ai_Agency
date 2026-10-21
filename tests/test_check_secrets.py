@@ -216,6 +216,39 @@ def test_the_workers_mirror_pin_passes_as_a_commit_line_only(tmp_path, capsys):
     assert code == 1 and "mirrors.lock.json" in output
 
 
+def test_ui_sound_source_sha256_lines_pass_but_keys_and_other_files_still_fail(
+    tmp_path, capsys
+):
+    """Sound attribution uses public asset digests, not credentials.
+
+    Only a whole sha256 field in the exact shipped manifest is exempt: the
+    detector still catches a new API token there or the same hex elsewhere.
+    """
+    root = tmp_path / "tree"
+    manifest = root / "frontend" / "public" / "sounds" / "ui" / "sources.json"
+    manifest.parent.mkdir(parents=True)
+    digest = secrets.token_hex(32)
+    clean = '{\n  "files": [\n    {\n      "sha256": "' + digest + '"\n    }\n  ]\n}\n'
+    manifest.write_text(clean, encoding="utf-8")
+    assert run_gate(root, empty_baseline(tmp_path), capsys)[0] == 0
+
+    key = fake_key()
+    manifest.write_text(
+        clean.replace('"sha256":', '"token": "' + key + '",\n      "sha256":'),
+        encoding="utf-8",
+    )
+    code, output = run_gate(root, empty_baseline(tmp_path), capsys)
+    assert code == 1 and "sources.json" in output
+    assert key not in output
+
+    manifest.write_text(clean, encoding="utf-8")
+    elsewhere = root / "frontend" / "public" / "sounds" / "elsewhere" / "sources.json"
+    elsewhere.parent.mkdir(parents=True)
+    elsewhere.write_text(clean, encoding="utf-8")
+    code, output = run_gate(root, empty_baseline(tmp_path), capsys)
+    assert code == 1 and "elsewhere/sources.json" in output
+
+
 def test_public_pixel_content_hashes_pass_but_credentials_and_other_fields_do_not(tmp_path, capsys):
     root = tmp_path / "tree"
     folder = root / "config"

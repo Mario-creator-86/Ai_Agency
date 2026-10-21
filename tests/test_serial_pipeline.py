@@ -51,7 +51,7 @@ from app.story.projection import (
     project_log_for_story,
     redact,
 )
-from app.story.review import episode_checks, review_episode
+from app.story.review import episode_checks, failed_rules, review_episode
 from app.story.serial_stage import run_serial_stage
 from app.story.services import (
     EpisodeNotGrounded,
@@ -197,11 +197,35 @@ def fake_showrunner(monkeypatch, answer: str, seen: list[str] | None = None):
     from app.story import services
 
     def fake_run(_engine, _registry, agent_id, task_type, prompt, *args, **kwargs):
+        if task_type == "shot_prompts":
+            # The storyboard stage invokes Kael after Marcus' serial episode.
+            # The showrunner's answer is not a final vendor prompt pack.
+            from e2e_shots import make_shot_plan
+
+            return {
+                "id": str(uuid4()),
+                "status": "SUCCEEDED",
+                "output_text": make_shot_plan(prompt),
+            }
         if seen is not None:
             seen.append(prompt)
         return {"id": str(uuid4()), "status": "SUCCEEDED", "output_text": answer}
 
     monkeypatch.setattr(services, "run_agent_task", fake_run)
+
+    # Unlike the Showrunner, Kael invokes run_agent_task from the agent kernel
+    # inside prompt_agent._run. Route only his shot requests to the deterministic
+    # final-prompt adapter; leave the Director's other tasks untouched.
+    from app.agents import services as agent_services
+
+    kernel_run = agent_services.run_agent_task
+
+    def shot_or_kernel(*args, **kwargs):
+        if len(args) >= 4 and args[3] == "shot_prompts":
+            return fake_run(*args, **kwargs)
+        return kernel_run(*args, **kwargs)
+
+    monkeypatch.setattr(agent_services, "run_agent_task", shot_or_kernel)
 
 
 #: The Director's rubric (review v2) with every part working: what a PASS carries.
@@ -361,11 +385,13 @@ def test_the_showrunner_prompt_contains_nothing_private(engine, staffed, monkeyp
 
     seen: list[str] = []
     names = roster_names(engine, log["id"])
-    fake_showrunner(monkeypatch, episode_answer(beats_for([safe], names)), seen)
+    beats = beats_for([safe], names)
+    beats[3]["part"] = "situation"  # no turn: the structure rule refuses it
+    fake_showrunner(monkeypatch, episode_answer(beats), seen)
     write_episode(engine, registry(), log["id"], str(uuid4()))
 
-    # One event in every beat fails the measured checks, so the writer is asked once more
-    # (brief v7): the second brief, with the refused answer in it, is as clean as the first.
+    # A draft the measured checks refuse is asked for once more (brief v7): the second
+    # brief, with the refused answer in it, is as clean as the first.
     assert len(seen) == 2
     for prompt in seen:
         for forbidden in (FAKE_KEY, MODEL_ID, PRICE, URL):
@@ -480,6 +506,7 @@ def test_the_checks_are_computed_before_any_model(engine, staffed, monkeypatch):
         "grounding",
         "privacy",
         "length",
+        "narration",
         "words_per_beat",
         "concentration",
         "language",
@@ -487,8 +514,11 @@ def test_the_checks_are_computed_before_any_model(engine, staffed, monkeypatch):
         "structure",
         "accessibility",
     }
-    assert all(check["passed"] for check in checks.values()), checks
-    assert 45 <= checks["length"]["seconds"] <= 70
+    # No rule refuses the 120-word fixture; its length (48 s, under the recommended 90) and
+    # its missing narrator are recommendations for the Director (2026-10-16).
+    assert failed_rules(checks) == [], checks
+    assert checks["length"]["advisory"] is True and checks["length"]["seconds"] == 48
+    assert checks["narration"]["advisory"] is True
 
 
 def test_a_leaked_pattern_in_the_dialogue_fails_without_asking_the_model(
@@ -715,15 +745,19 @@ def test_the_stage_is_skipped_without_a_language_model(engine, staffed, settings
     assert "model de limbaj" in outcome["reason"]
 
 
-def test_a_quiet_day_completes_with_the_reason(engine, staffed, settings, monkeypatch):
+def test_a_quiet_day_is_told_too(engine, staffed, settings, monkeypatch):
+    """2026-10-16, the Owner: the story is the showrunner's and the day its backdrop, so a
+    quiet day is told; the showrunner is told the day was quiet, and a non-answer is a
+    refused draft, never «a quiet day»."""
     close_daily_log(engine, TZ, business_date(TZ, datetime.now(UTC) - timedelta(days=3)))
-    fake_showrunner(monkeypatch, "")
+    seen: list[str] = []
+    fake_showrunner(monkeypatch, "", seen)
 
     outcome = run_serial_stage(engine, registry(), settings)
 
     assert outcome["status"] == "COMPLETED"
-    assert outcome["artefacts"]["episodes"] == 0
-    assert "liniștită" in outcome["reason"]
+    assert seen and "A quiet day" in seen[0]
+    assert "liniștită" not in outcome["reason"] and "respins" in outcome["reason"]
     with Session(engine) as session:
         assert session.scalars(select(StoryEpisode)).all() == []
 
@@ -1163,7 +1197,10 @@ def test_one_run_closes_the_missing_days_and_tells_the_newest_real_one(
         session.scalars(select(ModelRecord)).first().is_available = True
     allow_director_approval(engine)
     ids = events_on(engine, NOON_DAYS_AGO(5))
-    fake_showrunner(monkeypatch, episode_answer(beats_for(ids, cast_names(engine))))
+    beats = beats_for(ids, cast_names(engine))
+    for beat in beats:
+        beat["event_ids"] = []  # the newest day is told, quiet or not (2026-10-16)
+    fake_showrunner(monkeypatch, episode_answer(beats))
     fake_director(monkeypatch, "PASS")
 
     runners = {name: (lambda: {"status": COMPLETED, "reason": "ok"}) for name in STAGES[1:]}
@@ -1172,12 +1209,14 @@ def test_one_run_closes_the_missing_days_and_tells_the_newest_real_one(
         engine, settings, CredentialVault(tmp_path / "k.key"), stage_runners=runners
     )
 
-    told = date_days_ago(5)
+    # Since 2026-10-16 the newest closed day is told, quiet or not: the story is the
+    # showrunner's, the day its backdrop.
+    told = date_days_ago(1)
     closed = logged_dates(engine)
     assert [date_days_ago(d) for d in (5, 4, 3, 2, 1)] == closed[:5], closed
     previous = result["stages"][0]["artefacts"]["previous_day_log"]
     assert previous["business_date"] == date_days_ago(1)
-    assert told in previous["days_closed"]
+    assert date_days_ago(5) in previous["days_closed"]
     serial = next(s for s in result["stages"] if s["stage"] == "serial_queue")
     assert serial["status"] == COMPLETED, serial
     assert told in serial["reason"], serial["reason"]
@@ -1185,7 +1224,7 @@ def test_one_run_closes_the_missing_days_and_tells_the_newest_real_one(
     (episode,) = episode_rows(engine)
     with Session(engine) as session:
         assert session.get(DailyStudioLog, episode.log_id).business_date == told
-    assert set(episode.grounded_event_ids_json) <= set(ids)
+    assert episode.grounded_event_ids_json == []
     assert episode.storyboard_id
 
 
@@ -1218,24 +1257,27 @@ def test_no_log_is_made_for_a_day_before_the_studio_had_any_event(engine, staffe
     assert [log["business_date"] for log in closed] == [date_days_ago(2), date_days_ago(1)]
 
 
-def test_a_quiet_yesterday_hands_the_serial_the_newest_day_that_happened(
-    engine, staffed, settings, monkeypatch
-):
+def test_a_quiet_yesterday_is_the_day_the_serial_tells(engine, staffed, settings, monkeypatch):
+    """Until 2026-10-16 a quiet yesterday handed the serial the newest day that happened; the
+    story is the showrunner's now, so yesterday is told, quiet or not."""
     allow_director_approval(engine)
     ids = events_on(engine, NOON_DAYS_AGO(3))
     for days in (3, 2, 1):
         close_daily_log(engine, TZ, date_days_ago(days))
-    fake_showrunner(monkeypatch, episode_answer(beats_for(ids, cast_names(engine))))
+    beats = beats_for(ids, cast_names(engine))
+    for beat in beats:
+        beat["event_ids"] = []
+    seen: list[str] = []
+    fake_showrunner(monkeypatch, episode_answer(beats), seen)
     fake_director(monkeypatch, "PASS")
 
     outcome = run_serial_stage(engine, registry(), settings)
 
     assert outcome["status"] == "COMPLETED", outcome
-    assert outcome["artefacts"]["told_date"] == date_days_ago(3)
+    assert outcome["artefacts"]["told_date"] == date_days_ago(1)
     assert outcome["artefacts"]["written"] == 1
-    # The reason names the day told and the quiet days it passed over.
-    for days in (3, 2, 1):
-        assert date_days_ago(days) in outcome["reason"], outcome["reason"]
+    assert "A quiet day" in seen[0]
+    assert date_days_ago(1) in outcome["reason"], outcome["reason"]
 
 
 def test_an_older_day_is_never_told_after_a_newer_one(engine, staffed, settings, monkeypatch):
@@ -1258,13 +1300,17 @@ def test_an_older_day_is_never_told_after_a_newer_one(engine, staffed, settings,
     decide_episode(engine, written["episode"]["id"], True, "")
     storyboard_from_episode(engine, written["episode"]["id"], str(uuid4()))
     seen: list[str] = []
-    fake_showrunner(monkeypatch, episode_answer(beats_for(older, cast_names(engine))), seen)
+    quiet_beats = beats_for(older, cast_names(engine))
+    for beat in quiet_beats:
+        beat["event_ids"] = []
+    fake_showrunner(monkeypatch, episode_answer(quiet_beats), seen)
 
     outcome = run_serial_stage(engine, registry(), settings)
 
+    # D-1, quiet, is told after D-2 (2026-10-16: a quiet day is told too); D-3 never is.
     assert outcome["status"] == "COMPLETED", outcome
-    assert outcome["artefacts"]["written"] == 0 and seen == []
-    assert "liniștită" in outcome["reason"]
+    assert outcome["artefacts"]["told_date"] == date_days_ago(1)
+    assert all(event_id not in seen[0] for event_id in older)
 
 
 # ---------------------------------------------------------------------------
@@ -1818,7 +1864,9 @@ def test_a_v3_answer_is_stored_as_lines_with_nothing_but_speech(engine, staffed,
     assert first["speakers"] == [SARAH, KAEL]
     assert episode["continuity"]["template_version"] == EPISODE_TEMPLATE_VERSION
     checks = checks_of(engine, episode["id"])
-    assert all(check["passed"] for check in checks.values()), checks
+    # The 120-word fixture is under the recommended length and has no narrator: both are
+    # recommendations (2026-10-16); no rule refuses it.
+    assert failed_rules(checks) == [], checks
 
 
 def test_a_short_name_is_normalised_to_the_roster_name(engine, staffed, monkeypatch):
@@ -1971,7 +2019,9 @@ def test_the_brief_names_the_day_the_names_the_rooms_and_the_voices(engine, staf
     assert "no written text" in prompt.lower()
     for part in ("hook", "situation", "turn", "payoff", "button"):
         assert f'"{part}"' in prompt
-    assert "8 to 22 spoken words" in prompt
+    from app.story.services import WORDS_PER_BEAT
+
+    assert f"{WORDS_PER_BEAT[0]} to {WORDS_PER_BEAT[1]} spoken words" in prompt
     # Her voice, from her bible: the register and a phrase of hers.
     assert "executive briefing" in prompt and "Right. Where are we?" in prompt
     # The day's events and the serial's memory are data, inside the boundary.
@@ -2007,17 +2057,20 @@ def test_the_writer_counts_spoken_words_after_reading_a_short_refused_draft(
     assert f"{EPISODE_WORDS[0]} to {EPISODE_WORDS[1]}" in tail
     assert f"{WORDS_PER_BEAT[0]} to {WORDS_PER_BEAT[1]}" in tail
     assert "Only words inside lines[].text count" in tail
-    assert "first line" in tail and "whole hook beat" in tail
+    assert "first spoken line" in tail and "whole hook beat" in tail
+    assert "Narrator" in tail
 
 
-def test_the_speaking_cast_is_two_to_four_who_act_in_the_cited_events(engine, staffed, monkeypatch):
+def test_the_speaking_cast_is_two_to_four_whoever_the_story_needs(engine, staffed, monkeypatch):
+    """Since 2026-10-16 the story is the showrunner's: someone who acts in no cited event may
+    speak; the two-to-four rule stands, and who acts is measured and shown."""
     _, ids = letters_day(engine)
     nadia = "Nadia (Accountant)"
 
-    stranger = written(engine, monkeypatch, beats_for(ids, [SARAH, nadia]))
-    checks = checks_of(engine, stranger["id"])
-    assert checks["cast"]["passed"] is False
-    assert nadia in checks["cast"]["reason"]
+    outsider = written(engine, monkeypatch, beats_for(ids, [SARAH, nadia]))
+    checks = checks_of(engine, outsider["id"])
+    assert checks["cast"]["passed"] is True
+    assert nadia not in checks["cast"]["acting_in_cited_events"]
 
     alone = written(engine, monkeypatch, beats_for(ids, [SARAH]))
     assert checks_of(engine, alone["id"])["cast"]["passed"] is False
@@ -2074,10 +2127,12 @@ def test_the_storyboard_reads_the_lines_and_speaks_no_label(engine, staffed, mon
         assert "[" not in script.voiceover_full_text
         # The first speaker's bible comes first, so the voice bound is the one who speaks.
         assert first.character_ids_json[0] == kael.id
+        # The line as written, and the voice take it is said in (`pause_plan.serial_lines`).
         assert script.scenes_json[0]["lines"][0] == {
             "speaker": KAEL,
             "text": SPOKEN[0],
             "direction": "quietly",
+            "voice_group": "b1.1",
         }
         assert "Content" in first.visual_prompt  # the room, from the headquarters
 
@@ -2132,7 +2187,11 @@ def test_an_old_v2_episode_is_still_filmed_without_its_labels(engine, staffed, m
         assert first["narration"] == "Right. Where are we?\nThe render is running, do not touch it."
         # A line with no name on it is the narrator's.
         assert second["lines"] == [
-            {"speaker": None, "text": "The day went on without anyone noticing the cup."}
+            {
+                "speaker": None,
+                "text": "The day went on without anyone noticing the cup.",
+                "voice_group": "b2.1",
+            }
         ]
 
 
@@ -2309,14 +2368,14 @@ def test_words_per_beat_are_the_spoken_words_only(engine, staffed, monkeypatch):
     _, ids = letters_day(engine)
     beats = beats_for(ids, [SARAH, KAEL])
     beats[1]["lines"] = [{"speaker": SARAH, "text": "Fine."}, {"speaker": KAEL, "text": "Sure."}]
-    beats[2]["lines"][0]["text"] = " ".join((SPOKEN[0], SPOKEN[1], SPOKEN[0]))
+    beats[2]["lines"][0]["text"] = " ".join((SPOKEN[0], SPOKEN[1]) * 2 + (SPOKEN[0],))
     # A long acting note is not speech: the beat stays at its twenty spoken words.
     beats[3]["lines"][0]["direction"] = " ".join(["slowly"] * 40)
     checks = checks_of(engine, written(engine, monkeypatch, beats)["id"])
 
     measured = checks["words_per_beat"]
     assert measured["passed"] is False
-    assert measured["per_beat"] == [20, 2, 40, 20, 20, 20]
+    assert measured["per_beat"] == [20, 2, 60, 20, 20, 20]
     assert measured["outside"] == [2, 3]
     assert "2" in measured["reason"] and "3" in measured["reason"]
     assert checks["length"]["words"] == sum(measured["per_beat"])
@@ -2336,7 +2395,9 @@ def test_a_check_with_nothing_to_measure_does_not_pass(engine, staffed):
         }
     ]
     checks = checks_of(engine, stored_episode(engine, log["id"], empty, "", []))
-    for name in ("grounding", "concentration", "words_per_beat", "language"):
+    # Citing nothing is a beat of the story's own since 2026-10-16: grounding and
+    # concentration have nothing to refuse; the spoken words and the language still do.
+    for name in ("words_per_beat", "language"):
         assert checks[name]["passed"] is False, (name, checks[name])
         assert checks[name]["reason"], name
 
@@ -2390,7 +2451,7 @@ def test_the_director_reads_the_cited_events_the_voices_and_the_threads(
     ]
     assert "Summary of episode 3" in json.dumps(facts["previously"]["summaries"])
     # The brief: an outcome the cited event does not hold fails the episode, and the rubric.
-    assert "an outcome that is not in the event it cites" in prompt
+    assert "invents a studio fact" in prompt and "the Narrator" in prompt
     for part in ("hook", "situation", "turn", "payoff", "voices", "button"):
         assert f'"{part}": 1-5' in prompt
 
@@ -2623,7 +2684,8 @@ def test_no_script_is_written_beside_an_episode_waiting_for_the_owner(
     assert len(episode_rows(engine)) == 1
 
 
-def test_a_quiet_today_writes_no_script(engine, staffed, settings, monkeypatch):
+def test_a_quiet_today_is_written_too(engine, staffed, settings, monkeypatch):
+    """2026-10-16: a quiet day is told; the showrunner is asked and told the day was quiet."""
     moved = tomorrow_is(monkeypatch)
     close_daily_log(engine, TZ, moved)  # a day with no event at all
     written_: list[str] = []
@@ -2632,9 +2694,9 @@ def test_a_quiet_today_writes_no_script(engine, staffed, settings, monkeypatch):
     outcome = run_serial_next(engine, registry(), settings)
 
     assert outcome["status"] == "COMPLETED", outcome
-    assert outcome["artefacts"]["written"] == 0
-    assert "liniștită" in outcome["reason"]
-    assert written_ == [] and episode_rows(engine) == []
+    assert "liniștită" not in outcome["reason"]
+    assert written_ and "A quiet day" in written_[0]
+    assert episode_rows(engine) == []  # the stand-in answered nothing
 
 
 def test_no_script_is_written_before_today_is_closed(engine, staffed, settings, monkeypatch):
@@ -2744,7 +2806,7 @@ def test_the_next_writer_is_given_the_plan_and_says_whether_it_kept_it(
 
     assert outcome["artefacts"]["approved"] == 1, outcome
     (prompt,) = seen
-    assert "keep it only if" in prompt
+    assert "keep it when the story continues it" in prompt
     assert inside_a_boundary(prompt, NEXT["premise"])
     assert inside_a_boundary(prompt, NEXT["cold_open_line"])
     rows = {row.id: row for row in episode_rows(engine)}

@@ -13,7 +13,7 @@ const FIX = JSON.parse(fs.readFileSync(new URL('./fixtures/replay_runs_2026-09-1
 const RUN = FIX.complete.run;
 const EVENTS = FIX.complete.events;
 const TZ = 'Europe/Bucharest';
-const ARIS = '00000000-0000-4000-8000-0000000000aa';
+const ARIS = '4df0b539-49dc-41aa-b68f-748c67d87532';
 
 /** A fake /events over a list, as the backend answers it (after, limit, has_more, next_cursor). */
 function ledgerApi(rows, calls = []) {
@@ -300,8 +300,8 @@ test('the captured fixture\'s run (07:36) plays what was captured, and says it w
   assert.equal(tl.end, Date.parse(run.finished_at));
   const f = frameAt(tl, Date.parse('2026-09-12T07:36:40Z'));
   assert.equal(f.stage, 'idea_generation');
-  assert.equal(f.agents['00000000-0000-4000-8000-0000000000aa'].runtime_state, 'THINKING', 'Dr. Aris proposing topics, 07:36:34-07:36:59');
-  assert.equal(f.agents['00000000-0000-4000-8000-0000000000aa'].task_type, 'propose_topics');
+  assert.equal(f.agents['4df0b539-49dc-41aa-b68f-748c67d87532'].runtime_state, 'THINKING', 'Dr. Aris proposing topics, 07:36:34-07:36:59');
+  assert.equal(f.agents['4df0b539-49dc-41aa-b68f-748c67d87532'].task_type, 'propose_topics');
   assert.equal(f.topics.titles.length, 0, 'no topic proposed yet at 07:36:40');
   assert.equal(frameAt(tl, Date.parse('2026-09-12T07:37:00Z')).topics.titles.length, 6);
 });

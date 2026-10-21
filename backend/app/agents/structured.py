@@ -1,12 +1,16 @@
 """Answer, or think and then answer.
 
-Ollama generation asks for thinking off, so a model's whole token budget goes to its visible
-answer — which is right for a model that then answers plainly (qwen3.5 verifies a claim in
-seventy tokens). Some models do the opposite: asked not to think, they narrate their
+Local Ollama generation asks for thinking off, so a model's whole token budget goes to its
+visible answer — which is right for a model that then answers plainly (qwen3.5 verifies a
+claim in seventy tokens). Some models do the opposite: asked not to think, they narrate their
 reasoning into the answer instead — the Director on `glm-5.3` wrote twelve thousand tokens
 of inventory and reached the JSON only as the budget ran out; asked a second time to
 "just format it", it narrated again. Such a model answers cleanly only when it is allowed
-to think natively, where the reasoning stays out of the visible text.
+to think natively, where the reasoning stays out of the visible text. Ollama Cloud is
+therefore asked nothing about thinking by the adapter (`integrations.llm`, 2026-10-15); a
+structured first attempt asks for thinking off itself, except from the models that narrate
+without it (`NARRATES_WITHOUT_THINKING`), because a model left to think natively on a long
+review reasoned to its output limit and answered nothing (`first_attempt_extra`).
 
 So a structured answer is asked for twice at most: once with thinking off; if no object at all
 comes back, once more with the model's own thinking on and the same budget. No model is
@@ -26,6 +30,7 @@ is the content, which it is told.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel
@@ -46,6 +51,40 @@ NATIVE_THINKING = {"think": True}
 #: answers plainly (qwen3.5 did, in 133 tokens) is held to the object; one that narrates
 #: regardless (glm-5.3 did, even so) is caught by the parse and gets its second attempt.
 JSON_ONLY = {"format": "json"}
+#: Models that narrate their reasoning into the visible answer when told not to think (the
+#: probe of 2026-10-15 on the Owner's Cloud account: glm-5.3-flash, seven shapes of seven):
+#: asked nothing about thinking on the first attempt, so they think natively, as Cloud does
+#: by default. Every other model is asked, on the first attempt, for JSON with thinking off
+#: — what bounds the answer: deepseek-v4.1-flash asked nothing reasoned to its 393k-token
+#: limit twice (05:45Z and 08:04Z) and answered nothing, twelve minutes each, while the
+#: Director's ladder waited on her rewrite review. Matched on the model name's start.
+NARRATES_WITHOUT_THINKING = ("glm",)
+
+
+def first_attempt_extra(model_name: str | None) -> dict[str, Any]:
+    """The first attempt's request terms for this model: JSON, and thinking off unless the
+    model is one that narrates without it (`NARRATES_WITHOUT_THINKING`)."""
+    name = str(model_name or "").lower()
+    if any(name.startswith(prefix) for prefix in NARRATES_WITHOUT_THINKING):
+        return dict(JSON_ONLY)
+    return {**JSON_ONLY, "think": False}
+
+
+def _model_name(engine: Engine, agent_id: str, model_id: str | None) -> str | None:
+    """The name of the model the run will use: ``model_id`` or the agent's own."""
+    from sqlalchemy.orm import Session  # noqa: PLC0415
+
+    from app.agents.models import Agent, ModelRecord  # noqa: PLC0415
+
+    with Session(engine) as session:
+        chosen = model_id
+        if chosen is None:
+            agent = session.get(Agent, agent_id)
+            chosen = agent.model_id if agent is not None else None
+        model = session.get(ModelRecord, chosen) if chosen else None
+        return str(model.model_name) if model is not None else None
+
+
 #: The second attempt after an object the schema refused: the same question, the refusal quoted
 #: (`identity.refusal_words`), JSON mode again and thinking off.
 REFUSED_NOTE = (
@@ -90,6 +129,7 @@ def structured_run[T: BaseModel](
     format_tokens: int = 0,
     extra: dict[str, Any] | None = None,
     model_id: str | None = None,
+    subject: Mapping[str, Any] | None = None,
 ) -> tuple[T | None, dict[str, Any], dict[str, Any] | None]:
     """Run the task; when the answer does not validate, run it once more the way its failure
     asks: no object at all, the same prompt with native thinking; an object the schema refused
@@ -100,12 +140,14 @@ def structured_run[T: BaseModel](
     an ``error_detail`` that says so — so a caller's waiting note names what was wrong, not
     «răspuns fără forma cerută». ``schema_hint`` and ``format_tokens`` are kept for callers.
     ``model_id`` runs both attempts on that model instead of the agent's own
-    (`run_agent_task`), e.g. one that can see the pictures attached.
+    (`run_agent_task`), e.g. one that can see the pictures attached. ``subject`` names what the
+    call works on, for both attempts (`run_agent_task`).
     """
     del schema_hint, format_tokens
     attempts: list[dict[str, Any]] = []
     parsed: T | None = None
     refusal: str | None = None
+    first_terms = first_attempt_extra(_model_name(engine, agent_id, model_id))
     for attempt in (0, 1):
         again = attempt == 1 and refusal is not None
         native = attempt == 1 and refusal is None
@@ -130,8 +172,9 @@ def structured_run[T: BaseModel](
             max_tokens=max_tokens,
             temperature=temperature,
             emit_message=False,
-            extra={**(NATIVE_THINKING if native else JSON_ONLY), **(extra or {})},
+            extra={**(NATIVE_THINKING if native else first_terms), **(extra or {})},
             model_id=model_id,
+            subject=subject,
         )
         attempts.append(result)
         text = result.get("output_text") or ""

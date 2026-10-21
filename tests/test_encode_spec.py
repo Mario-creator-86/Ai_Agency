@@ -140,6 +140,59 @@ def _voice(target: Path, seconds: float) -> None:
 # --------------------------------------------------------------------------- the arguments
 
 
+def test_the_final_encode_is_made_again_tighter_until_it_meets_the_bitrate_floor(
+    tmp_path, monkeypatch
+):
+    """2026-10-16 05:35Z, 7c26a7ce «Speed of Light»: a dark, nearly still film at 24 fps came
+    out of CRF 17 at 4.4 Mbps, quality control failed it under its 6 Mbps floor, and the free
+    re-encode from the same takes could only have made the same file again. The encoder now
+    measures what it made and tightens the CRF in steps until the floor is met."""
+    import subprocess
+
+    from app.media import assembler
+
+    runs: list[list[str]] = []
+    rates = {17: 4_400_000, 12: 5_900_000, 8: 7_100_000}
+    output = tmp_path / "final.mp4"
+
+    def fake_run(args, work_dir, carry=()):
+        runs.append(list(args))
+        output.write_bytes(b"film")
+        return subprocess.CompletedProcess(list(args), 0, "", "")
+
+    monkeypatch.setattr(assembler, "run_encoder", fake_run)
+    monkeypatch.setattr(
+        assembler,
+        "_video_bit_rate",
+        lambda exe, path: rates[int(runs[-1][runs[-1].index("-crf") + 1])],
+    )
+    args = ["-i", "x", *assembler.final_video_args(24), str(output)]
+
+    res, record = assembler.encode_to_floor("ffmpeg", args, tmp_path, output, floor=6_000_000)
+
+    assert res.returncode == 0
+    assert [int(r[r.index("-crf") + 1]) for r in runs] == [17, 12, 8]
+    assert record["crf"] == 8 and record["video_bit_rate"] == 7_100_000
+    assert [t["crf"] for t in record["tightened"]] == [17, 12]
+
+    # At the floor from the first run: one encode, nothing tightened.
+    runs.clear()
+    rates[17] = 6_500_000
+    res, record = assembler.encode_to_floor("ffmpeg", args, tmp_path, output, floor=6_000_000)
+    assert len(runs) == 1 and record["crf"] == 17 and record["tightened"] == []
+
+    # A failed run is returned as it is, never tightened.
+    runs.clear()
+
+    def failing(args, work_dir, carry=()):
+        runs.append(list(args))
+        return subprocess.CompletedProcess(list(args), 1, "", "boom")
+
+    monkeypatch.setattr(assembler, "run_encoder", failing)
+    res, record = assembler.encode_to_floor("ffmpeg", args, tmp_path, output, floor=6_000_000)
+    assert res.returncode == 1 and len(runs) == 1 and record["video_bit_rate"] is None
+
+
 def test_the_final_encode_is_named_in_full():
     from app.media.assembler import final_video_args
 
@@ -154,6 +207,7 @@ def test_the_final_encode_is_named_in_full():
     assert value("-level:v") == "4.2"
     assert value("-preset") == "slow"
     assert value("-crf") == "17"
+    assert final_video_args(30, crf=12)[final_video_args(30).index("-crf") + 1] == "12"
     assert value("-maxrate") == "14M"
     assert value("-bufsize") == "28M"
     assert value("-bf") == "2"

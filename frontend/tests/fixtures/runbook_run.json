@@ -1,58 +1,58 @@
 {
-  "business_date": "2026-09-12",
-  "status": "COMPLETED",
-  "started_at": "2026-09-12T20:48:06.030353+00:00",
-  "finished_at": "2026-09-12T20:59:45.043742+00:00",
-  "stages_total": 12,
-  "stages_completed": 12,
-  "stages": [
-    {
-      "stage": "preflight",
-      "status": "COMPLETED"
-    },
-    {
-      "stage": "performance_intake",
-      "status": "COMPLETED"
-    },
-    {
-      "stage": "idea_generation",
-      "status": "COMPLETED"
-    },
-    {
-      "stage": "research_and_verification",
-      "status": "COMPLETED"
-    },
-    {
-      "stage": "selection",
-      "status": "COMPLETED"
-    },
-    {
-      "stage": "script_and_storyboard",
-      "status": "COMPLETED"
-    },
-    {
-      "stage": "media",
-      "status": "COMPLETED"
-    },
-    {
-      "stage": "edit_and_qc",
-      "status": "COMPLETED"
-    },
-    {
-      "stage": "publish",
-      "status": "COMPLETED"
-    },
-    {
-      "stage": "post_run",
-      "status": "COMPLETED"
-    },
-    {
-      "stage": "daily_log",
-      "status": "COMPLETED"
-    },
-    {
-      "stage": "serial_queue",
-      "status": "COMPLETED"
-    }
-  ]
+ "business_date": "2026-09-12",
+ "status": "COMPLETED",
+ "started_at": "2026-09-12T20:48:06.030353+00:00",
+ "finished_at": "2026-09-12T20:59:45.043742+00:00",
+ "stages_total": 12,
+ "stages_completed": 12,
+ "stages": [
+  {
+   "stage": "preflight",
+   "status": "COMPLETED"
+  },
+  {
+   "stage": "performance_intake",
+   "status": "COMPLETED"
+  },
+  {
+   "stage": "idea_generation",
+   "status": "COMPLETED"
+  },
+  {
+   "stage": "research_and_verification",
+   "status": "COMPLETED"
+  },
+  {
+   "stage": "selection",
+   "status": "COMPLETED"
+  },
+  {
+   "stage": "script_and_storyboard",
+   "status": "COMPLETED"
+  },
+  {
+   "stage": "media",
+   "status": "COMPLETED"
+  },
+  {
+   "stage": "edit_and_qc",
+   "status": "COMPLETED"
+  },
+  {
+   "stage": "publish",
+   "status": "COMPLETED"
+  },
+  {
+   "stage": "post_run",
+   "status": "COMPLETED"
+  },
+  {
+   "stage": "daily_log",
+   "status": "COMPLETED"
+  },
+  {
+   "stage": "serial_queue",
+   "status": "COMPLETED"
+  }
+ ]
 }

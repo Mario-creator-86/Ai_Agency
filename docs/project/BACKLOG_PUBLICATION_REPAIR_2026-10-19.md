@@ -1,0 +1,27 @@
+# Existing-film priority and correct rewrite limits — 2026-10-19
+
+Owner instruction: repair and publish the films already standing before starting another script or film. The inspection found the daily run drafting a new serial while Supernova scenes 6 and 8 and the preceding serial's scenes 17, 18 and 26 were still waiting.
+
+## Root cause and repair
+
+`scene_rewrite.scene_context` never carried the actual image/video provider model into prompt lint. Factual repairs therefore fell back to Runway's legacy 1,000 UTF-16 allowance. Serial repairs also explicitly overrode their motion allowance with that legacy number. The selected RunPod worker contract accepts 20,000 characters for LTX-2.5 and Qwen routes. The historical DeepSeek responses for Supernova scenes 6 and 8 are 1,085 and 1,124 characters: they were refused by this incorrect check before Sarah could review/save them.
+
+The rewrite context now resolves the selected storyboard/scene production routes; lint and the agent's provider_limits read the same route. RunPod's declared contract determines the allowance. Unknown vendors keep the conservative legacy limit. No prompt is truncated or hand-written, no stored paid still is replaced by this fix, and Sarah's verdict still decides saving. Read-only replay of the two actual rejected responses reproduces the old length blocks and removes only those blocks under the actual route.
+
+`finish_existing_films_first` defaults true, honoring the new Owner instruction. New ideation/research/selection/script and serial stages are deferred while approved/unpublished work remains. Repair, media, quality review and publishing remain admitted. Standalone serial stage entry points obey the same rule. Closed, superseded and remotely confirmed uploaded films release the gate; a QC-rejected rendered film remains unfinished. The existing retirement/Owner rules remain intact. No film was closed or approved by this maintenance.
+
+The normal preclaim sheet scan now runs the existing idempotent factual/serial recovery passes before choosing the next task. Film continuation and sheet repair share a recovery lane ordered by storyboard age; repair retains precedence within the same film and more urgent non-film work retains precedence. Not-before times, leases and STOP remain enforced. The first activation exposed a newer sheet repair at priority 6 overtaking older continuation tasks at priority 4; a failing regression reproduced this gap before the common recovery lane fixed it. Thus an older film recovered after a restart can precede an already queued newer episode. The scan defers unused redo quotations, preserving the authoritative core hash and avoiding the eager recalculation found in the sheet-loading task. No queue rows were manually inserted or reordered.
+
+## Verification and activation
+
+110 focused tests passed, including new cases observed failing before the fix: selected route allowance, false 1,000 cap on serial/factual repairs, unknown-vendor fallback, no truncation, backlog admission, repair/publish admission, direct serial entry, gate release, configurable opt-out, older film claim, newer repair versus older continuation, urgent non-film priority, same-film repair precedence and preclaim recovery. Existing same-day/morning serial tests now expect an explicit backlog deferral while still asserting one board and one continuation. Python lint/format passed; scoped mypy with imports silent passed in all seven checked modules. The general import-following check retains 21 pre-existing diagnostics outside this scope; the new local name collision found during checking was fixed.
+
+Autonomy was paused through the normal versioned Owner command (45→46), allowing the in-progress model request to finish and preventing another call. `scripts/restart.py --stop-only --wait 180 --break-after 3600` stopped the normal launcher cleanly at 17:37:40 local. No force termination, paid probe, render-cap reset, model migration or publication override was performed.
+
+After tests, the normal launcher was started hidden through uv, PID 38976. `/health/live` returned 200 HEALTHY with STOP still set. The maintenance verified policy version 46 had not changed and restored the previously active autonomy through the same Owner API (version 47). Current production continues through ordinary worker recovery and policy/budget/Director checks. Publication itself is not yet confirmed; it must be evidenced by a remote video ID.
+
+Evidence: output/backlog-publication-repair-2026-10-19/ contains policy-before.json, pause.json, activated.json, tests.xml, read-only-scenes.json, historical-validation.json and source.diff. No recurring monitoring was enabled.
+
+The ordering follow-up paused version 47→48 and stopped cleanly at 17:49:40 local. The corrected source passed 110 focused tests in 50.32 seconds, lint/format and scoped typing. Launcher PID 9000 returned HEALTHY; the untouched maintenance STOP was restored to the prior active state through version 49. No queue rows were changed manually. The earlier newer-film repair completed under STOP without a paid call; its recorded shot_prompts invocations were BLOCKED_POLICY.
+
+Live ordering verified at 14:51:18 UTC: normal worker claimed Supernova FILM_CONTINUE at 14:51:07 UTC, ahead of the newer episode. Evidence order-resume-final.json. This proves resumed selection, not completed correction or publication. No recurring follow-up was started.

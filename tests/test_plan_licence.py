@@ -1,6 +1,10 @@
-"""Offline regression tests for test plan licence.
+"""The voice's commercial licence is read from the vendor's account (2026-10-10).
 
-Providers are faked; all data is synthetic."""
+Film babcf272 could only go private: five narrations «nicio confirmare de folosire comercială»,
+because the evidence was a «da» the Owner had to type on the ElevenLabs connection. His card:
+«Da, citește singur». The studio reads the plan (a GET; faked here, never the network) and
+records the licence when the plan is paid and active; a free or unknown plan records nothing.
+"""
 
 from __future__ import annotations
 

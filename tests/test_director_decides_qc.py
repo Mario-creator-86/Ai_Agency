@@ -1,6 +1,40 @@
-"""Offline regression tests for test director decides qc.
+"""The Director decides a film that failed quality control (2026-10-10, film babcf272).
 
-Providers are faked; all data is synthetic."""
+The film was assembled from takes the Owner approved (scenes 1-4, scene 2 his approved test
+shot) and scene 5, a still of three stacked panels. Its QC report failed on scene 5's panels
+(real), on every scene for «text or a logo» (the studio's own burned-in subtitles: false) and on
+scenes 2 and 3 for the bible's near-black void (takes he approved: his choice). The mechanical
+repair then redid scenes 1 and 2 unasked and retired his approved takes. Since then the
+Director reads the report first and decides; these tests hold that, with a scripted Director
+(no vendor, no credit; the redo path is faked where it would buy):
+
+- captions misread and his approved takes: ACCEPT, a PASSED report listing her overrules,
+  nothing redone, nothing bought, his takes untouched, a STATUS letter to him;
+- scene 5's panels REAL: only scene 5 is redone, through the redo path with ``unasked`` and his
+  sheet choices: its new still, then the film rejoined from its takes for free (his LOCAL_MOVE;
+  a filmed scene gets the motion filmed from the new still); the new film is measured again;
+- a scene whose take he approved, listed by her, is not redone (and the redo path itself refuses
+  a plan that would retire one of his takes); a motion for his LOCAL_MOVE scene is not bought;
+- an answer that does not validate twice, or no model at all: nothing is redone, the report
+  waits in her inbox;
+- CLOSE closes the film through the Director's own retirement path; an ACCEPT of a finding that
+  is not hers (rights, his music library's licences, his production rule) is refused;
+- the watchdog pass queues the film's continuation once per report, and the continuation reads
+  the report, she decides, and the accepted film goes to the publication path.
+
+The 2026-10-10 review of this package added: a purchase that made no film yet is told to him
+and carried on once its take is approved (BOUGHT_WAITING, one paid round for a still and its
+motion); a REPAIR he said no to, or whose question expired, is hers again; with his limits
+spent she is told REPAIR is not possible and a REPAIR that can do nothing does not validate;
+walks refused by his mode do not use up her tries.
+
+The second review (babcf272 walked after the restart) added: a paid round that delivered
+nothing does not spend his limits; a still given back after a redo that delivered nothing is
+never the new still (no rejoin of the same film); a refused rejoin keeps her decision waiting
+and is tried again, and an approved take bought for her and in no film is something she can
+still do; candidates the gate turned down wait (since the same evening, for her own look,
+tests/test_director_looks_at_pictures.py) for a few days, not for ever.
+"""
 
 from __future__ import annotations
 
@@ -28,6 +62,7 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.renders_cap import renders_per_layer
 from app.media.services import seed_default_character_bibles
 from app.models import ApprovalRequest, DomainEvent, OwnerPolicy
 from app.providers.base import GenerateResult, HealthResult
@@ -108,9 +143,10 @@ def test_director_finding_keeps_the_end_of_the_actual_qc_diagnosis():
 class ScriptedModel:
     """Every agent's model: the Director answers ``director``; anyone else gets ``other``."""
 
-    def __init__(self, director, other: str = "{}"):
+    def __init__(self, director, other: str = "{}", accountant: str | None = None):
         self.director = director
         self.other = other
+        self.accountant = accountant
         self.asked: list[str] = []
 
     async def health_check(self):
@@ -120,7 +156,9 @@ class ScriptedModel:
         return []
 
     async def generate(self, model, prompt, **kwargs):
-        if "director-qc" in prompt:
+        if self.accountant is not None and 'hash="repurchase-verdict"' in prompt:
+            answer = self.accountant
+        elif "director-qc" in prompt:
             self.asked.append(prompt)
             answer = self.director(prompt) if callable(self.director) else self.director
         else:
@@ -803,7 +841,8 @@ def test_captions_misread_and_his_approved_takes_are_accepted_and_nothing_is_red
     nothing_bought(engine)
     # He is told, in a STATUS letter: not a question.
     (letter,) = letters(engine, LETTER_KIND)
-    assert letter.intent == "STATUS" and letter.body_json.get("to") == "Owner"
+    # 2026-10-15: her acceptance after QC is the Director's matter (letters rule), not his.
+    assert letter.intent == "STATUS" and letter.body_json.get("to") == "Director"
     assert "fals, controlul a citit greșit filmul" in letter.body_text
     assert "alegerea ta" in letter.body_text
     assert "publicare" in letter.body_text
@@ -1021,9 +1060,9 @@ def test_a_take_he_approved_without_final_is_redone_by_her_confirmed_repair_and_
 
     assert redo.calls == [
         ("still", 1, True),
+        ("still", 5, True),
         ("motion", 1, True),
         ("motion", 2, True),
-        ("still", 5, True),
         ("rejoin", None, False),
     ]
     assert redo.confirmed == [True, True, True, True]
@@ -1456,7 +1495,31 @@ def test_a_report_she_could_not_decide_is_asked_again_only_after_a_while(
             {"status": "SKIPPED", "cause": f"director_qc:{film['report']}"},
             "c",
         )
-    assert _pass(engine, settings) == {"queued": []}  # it waits in her inbox now
+    # …except once under the Owner's renders cap (2026-10-15): a film whose tries ran out
+    # before the rule is walked one more time, so her decision runs and the cap ships what
+    # there is; walked under the rule, it waits in her inbox as before.
+    monkeypatch.setattr(director_qc_review, "CAP_RULE_SINCE", "2099-01-01T00:00:00+00:00")
+    assert _pass(engine, settings) == {"queued": [film["board"]]}
+    (cap_task,) = [
+        task
+        for task in _continuations(engine)
+        if str(task.idempotency_key or "").endswith(f"-cap-rule-{film['report']}")
+    ]
+    assert cap_task.payload["cause"] == f"director_qc:{film['report']}"
+    with Session(engine) as session, session.begin():
+        for task in session.scalars(select(TaskQueueItem)):
+            task.status = "DONE"
+        append_event(
+            session,
+            "runbook.film_continued",
+            "storyboard",
+            film["board"],
+            1,
+            {"status": "COMPLETED", "cause": f"director_qc:{film['report']}"},
+            "c",
+        )
+    monkeypatch.setattr(director_qc_review, "CAP_RULE_SINCE", "2000-01-01T00:00:00+00:00")
+    assert _pass(engine, settings) == {"queued": []}  # walked under the rule: it waits
 
 
 def test_after_the_restart_the_continuation_puts_the_film_before_her_and_publishes_it(
@@ -1548,7 +1611,17 @@ def _real_film(
             model.is_available = True
         provider_id = session.scalar(select(Agent.provider_id))
     registry = ProviderRegistry()
-    registry.register(provider_id, ScriptedModel(director))
+    # Real redo path now includes Nadia's mandatory second-purchase gate. These fixtures
+    # exercise purchase policy and QC; her refusal/discussion is covered in its own tests.
+    registry.register(
+        provider_id,
+        ScriptedModel(
+            director,
+            accountant=json.dumps(
+                {"verdict": "APPROVE", "reason": "Corecția este justificată și în plafon."}
+            ),
+        ),
+    )
     return storyboard_id, asset_id, world, registry
 
 
@@ -1637,9 +1710,12 @@ def test_under_every_paid_step_her_repair_is_asked_and_his_yes_carries_it_out(
 
 
 @requires_ffmpeg
-def test_when_his_limits_are_spent_nothing_is_bought_and_the_film_waits_for_her(
+def test_when_his_limits_are_spent_nothing_is_bought_and_the_film_ships_as_it_stands(
     engine, settings, tmp_path, monkeypatch
 ):
+    """Until 2026-10-15 the film waited for her (and then for his card); the Owner that day:
+    «publicăm ce avem» — with the limits spent nothing is bought and her decision is ACCEPT
+    under the cap, the film on to publication."""
     from app.runbook import stages
     from test_daily_run_stages import _approvals, _scripted_qc
 
@@ -1653,8 +1729,9 @@ def test_when_his_limits_are_spent_nothing_is_bought_and_the_film_waits_for_her(
     assert world["models"].posts() == posts_before
     assert _approvals(engine) == []
     decided = events(engine, DECISION_EVENT)
-    limited = [e for e in decided if (e.payload.get("done") or {}).get("limited")]
-    assert limited, [e.payload for e in decided]
+    newest = decided[-1].payload
+    assert newest["outcome"] == "ACCEPTED", [e.payload for e in decided]
+    assert newest["accepted_under_cap"]["limited"], newest["accepted_under_cap"]
 
 
 @requires_ffmpeg
@@ -2376,8 +2453,31 @@ def test_an_empty_round_is_not_delivered_by_the_next_rounds_still(engine):
     assert empty_id != made_id
 
 
+def _verified_current_picture(engine, take_id, tmp_path):
+    """Only tests about actual reuse need the same file/hash identity as production."""
+    import hashlib
+
+    from app.media.assembler import still_fields, take_hash
+
+    data = b"verified delivered picture " + take_id.encode()
+    path = tmp_path / f"{take_id}.png"
+    path.write_bytes(data)
+    with Session(engine) as session, session.begin():
+        take = session.get(SceneTake, take_id)
+        scene = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == take.storyboard_id,
+                StoryboardScene.scene_index == take.scene_number,
+            )
+        )
+        take.prompt_hash = take_hash(still_fields(scene.visual_prompt, None), take.model_id)
+        take.path = str(path)
+        take.sha256 = hashlib.sha256(data).hexdigest()
+
+
 def test_a_motion_with_the_same_words_is_bought_from_a_new_still_without_turning_to_the_picture(
     engine,
+    tmp_path,
 ):
     """The cyclotron's scenes 4 and 5 (2026-10-12): their stills approved the day before and
     never animated were retired by the «same prompt» escalation and bought again (269 credits)
@@ -2395,7 +2495,8 @@ def test_a_motion_with_the_same_words_is_bought_from_a_new_still_without_turning
         # Scene 3's clip was made after its still: the still is the film's picture.
         assert stages._still_newer_than_film(session, film["board"], 3, film["asset"]) is False
     with Session(engine) as session, session.begin():
-        _take(session, film["board"], 5, "still", None)  # a new still, approved, in no film
+        take_id = _take(session, film["board"], 5, "still", None)
+    _verified_current_picture(engine, take_id, tmp_path)
     with Session(engine) as session:
         assert stages._still_newer_than_film(session, film["board"], 5, film["asset"]) is True
         # A scene the film has no still for, with no approved still either: nothing new.
@@ -2417,7 +2518,8 @@ def test_a_motion_with_the_same_words_is_bought_from_a_new_still_without_turning
         assert stages._still_newer_than_film(session, film["board"], 3, film["asset"]) is False
     time.sleep(0.01)
     with Session(engine) as session, session.begin():
-        _take(session, film["board"], 3, "still", None)  # approved after the film's clip
+        take_id = _take(session, film["board"], 3, "still", None)
+    _verified_current_picture(engine, take_id, tmp_path)
     with Session(engine) as session:
         assert stages._still_newer_than_film(session, film["board"], 3, film["asset"]) is True
 
@@ -2677,7 +2779,7 @@ def test_a_film_not_rejoined_for_days_is_hers_again(engine, settings, studio, mo
 
 
 def test_an_approved_take_bought_for_her_and_in_no_film_is_something_she_can_still_do(
-    engine, settings, studio, monkeypatch
+    engine, settings, studio, monkeypatch, tmp_path
 ):
     """Before the fix a refused rejoin left NOTHING_DONE: she was asked again with scene 5's
     one paid redo spent (its still delivered), was told REPAIR was not possible, and accepted
@@ -2698,6 +2800,7 @@ def test_an_approved_take_bought_for_her_and_in_no_film_is_something_she_can_sti
     )
     (new_still,) = redo.new_stills
     _his_look(engine, new_still, "APPROVED")
+    _verified_current_picture(engine, new_still, tmp_path)
     with Session(engine) as session, session.begin():
         # What the walk before this fix wrote after the refused rejoin.
         append_event(
@@ -2774,7 +2877,7 @@ def test_candidates_the_gate_turned_down_wait_for_her_look_then_the_film_is_hers
 def test_a_motion_redo_the_step_held_is_a_refusal_in_its_words_never_a_purchase(
     engine, settings, studio, monkeypatch
 ):
-    """2026-10-12, the cyclotron (00000160): the motion step held the Director's redo of scenes
+    """2026-10-12, the cyclotron (aa170155): the motion step held the Director's redo of scenes
     4 and 5 NEEDS_OWNER (an unpriced RunPod profile) and bought nothing, yet the walk told the
     Owner «s-a cumpărat (1 refacere cumpărată); preluarea nouă așteaptă aprobarea» five times
     through the night. A redo that bought nothing is a refusal, in the step's own words."""
@@ -2863,7 +2966,7 @@ def test_a_picture_that_cannot_be_rewritten_either_keeps_the_refusal(engine, mon
 # --------------------------------------------- small defects, their causes and their lessons
 #
 # 2026-10-12, 16:50, the Owner stopped the studio: 19.50 USD of RunPod that day, 11.05 on redos,
-# and all three films (f06808c9, 1c038a99, 00000160) still failing QC. «DIRECTOAREA ACCEPTĂ
+# and all three films (f06808c9, 1c038a99, aa170155) still failing QC. «DIRECTOAREA ACCEPTĂ
 # DEFECTELE MICI! DAR TREBUIE SĂ ÎNȚELEAGĂ DE CE APAR DEFECTELE ȘI LA VIITOARELE PROMPTURI SĂ SE
 # ASIGURE CĂ NU MAI SUNT!» and «Nu putem permite loopuri pe bani și picarea QC dacă deja a fost
 # aprobată».
@@ -3331,7 +3434,7 @@ def _schema_of(context: dict[str, Any]):
 
 
 def test_a_scene_that_passed_before_with_the_same_takes_is_never_real_nor_redone(engine):
-    """00000160, 2026-10-12: scene 1 (still 7a0be480, clip 843617b8) passed the film QCs of
+    """aa170155, 2026-10-12: scene 1 (still 7a0be480, clip 843617b8) passed the film QCs of
     14:45 and 15:03 (10-11) and 08:15 UTC, failed the one of 10:35 UTC unchanged, and her REPAIR
     bought a new still and clip for it."""
     from app.agents.reviews import failed_render_reading
@@ -3482,7 +3585,7 @@ def test_a_finding_no_check_claimed_is_never_settled():
 
 
 def test_only_a_scene_a_real_finding_names_is_redone(engine):
-    """00000160, 08:18 UTC: scenes 4 and 5 had passed that very report; her REPAIR of scene 3
+    """aa170155, 08:18 UTC: scenes 4 and 5 had passed that very report; her REPAIR of scene 3
     listed their stills too (to join takes bought for an earlier repair) and new motion was
     bought for both."""
     from app.agents.reviews import failed_render_reading
@@ -3509,7 +3612,7 @@ def test_only_a_scene_a_real_finding_names_is_redone(engine):
 # The adversarial review of the four commits of 2026-10-12 confirmed what follows; each test
 # names the defect it holds shut. Every model and provider is faked; nothing is bought.
 
-#: Today's words of the checks (00000160 and 1c038a99, read on a copy of the studio's database).
+#: Today's words of the checks (aa170155 and 1c038a99, read on a copy of the studio's database).
 YUNET = "Scena 4: YuNet a găsit fețe în cadrul first (1), deși biblia vizuală interzice fețele"
 NO_SOUND = "The film has no audio stream"
 CAVERN = (
@@ -3572,13 +3675,15 @@ def test_what_quality_control_measured_as_serious_is_never_accepted():
     )
 
 
-def test_with_his_limits_spent_a_serious_defect_goes_to_his_card_and_nothing_is_bought(
+def test_with_his_limits_spent_a_serious_defect_ships_as_it_stands_and_nothing_is_bought(
     engine, settings, studio, monkeypatch
 ):
-    """Finding 1, the money side: a serious defect may not be ACCEPTED, and with his cap spent a
-    REPAIR could not validate either — the film waited in her inbox and he heard nothing. Now
-    her REPAIR is carried out to his cap: nothing bought, his card asks him, she is not asked
-    again while it waits."""
+    """Finding 1, the money side: a serious defect may not be ACCEPTED by her, and with his cap
+    spent a REPAIR could not validate either — the film waited in her inbox and he heard
+    nothing; then (2026-10-12) his card asked him what becomes of the film. The Owner answered
+    for good on 2026-10-15: «publicăm ce avem». Her REPAIR is carried out to the cap: nothing
+    bought, no card, her decision ACCEPT under the cap, the film on to publication, the
+    serious defect kept as the lesson."""
     from app.decisions.models import OwnerDecision
     from app.decisions.producers.redo_cap import dedupe_key
     from app.runbook import stages
@@ -3596,15 +3701,16 @@ def test_with_his_limits_spent_a_serious_defect_goes_to_his_card_and_nothing_is_
 
     assert len(model.asked) == 1
     assert "REPAIR is not possible" in model.asked[0] and "REPAIR it anyway" in model.asked[0]
-    assert redo.calls == [] and outcome["passed_asset"] is None
-    assert outcome["outcome"] == "NOTHING_DONE"
+    assert redo.calls == [] and outcome["passed_asset"] == film["asset"]
+    assert outcome["outcome"] == "ACCEPTED"
     (decided,) = events(engine, DECISION_EVENT)
-    assert decided.payload["done"]["limited"] and decided.payload["done"]["card_id"]
+    assert decided.payload["accepted_under_cap"]["limited"] == [5]
+    assert not (decided.payload.get("done") or {}).get("card_id")
     with Session(engine) as session:
         card = session.scalar(
             select(OwnerDecision).where(OwnerDecision.dedupe_key == dedupe_key(film["board"]))
         )
-        assert card is not None and card.status == "PENDING"
+        assert card is None
     assert len(events(engine, "runbook.qc_paid_redo")) == rounds_before
 
 
@@ -3793,7 +3899,9 @@ def test_the_rewrite_before_a_redo_reads_why_her_defect_appeared(engine, monkeyp
     assert reasons[-1] == "Directoarea a privit din nou scena: turnul e acolo."
 
 
-def test_a_motion_redo_the_motion_layer_cannot_treat_turns_to_the_picture(engine, monkeypatch):
+def test_a_motion_redo_the_motion_layer_cannot_treat_turns_to_the_picture(
+    engine, monkeypatch, tmp_path
+):
     """Finding 9: a MOTION redo she picked for a finding about the picture could never be
     rewritten (every untreated finding was the picture's), and stayed PROMPT_NOT_CORRECTED."""
     from app.media import scene_rewrite
@@ -3822,7 +3930,8 @@ def test_a_motion_redo_the_motion_layer_cannot_treat_turns_to_the_picture(engine
     # A newer approved still already waits: the motion is bought from it as its words are.
     film = failed_film(engine, local_move=False)
     with Session(engine) as session, session.begin():
-        _take(session, film["board"], 5, "still", None)
+        take_id = _take(session, film["board"], 5, "still", None)
+    _verified_current_picture(engine, take_id, tmp_path)
     asked.clear()
     kinds = ["motion"]
     reading = {"findings": [], "media_asset_id": film["asset"]}
@@ -4512,3 +4621,399 @@ def test_her_second_look_sees_the_scene_as_quality_control_judged_it(engine, mon
 
     assert frames == ["a.png", "b.png", "c.png"]
     assert asked == [(film["asset"], 5, [603, 640, 677])]
+
+
+def test_a_ready_repair_is_carried_on_the_moment_it_is_ready_not_an_hour_later(
+    engine, settings, studio, monkeypatch
+):
+    """2026-10-15, 2d276038: her repair's new still was approved at 10:14Z, the decision stood
+    BOUGHT_WAITING at 10:24Z, and the pass would not queue the walk that carries on her list
+    before an hour had passed since her decision — the film stood while the Owner asked where
+    the publication was. A repair that is ``ready`` (or whose candidates wait for her ``look``)
+    and that no walk has read since her decision is queued at once; once a walk ran for it,
+    the hour's throttle applies as before (a walk that cannot move the film is not repeated
+    every ten minutes)."""
+    from datetime import timedelta
+
+    from app.runbook import stages
+    from app.services import append_event
+    from app.workflows.passes import director_qc_review
+
+    film = failed_film(engine, local_move=False)
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch, still_status="PAID")
+    _production(engine)
+    assert director_qc_review.RETRY_MINUTES == 60  # the hour stays what it is
+
+    first = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+    assert first["outcome"] == "BOUGHT_WAITING"
+    assert _pass(engine, settings) == {"queued": []}  # it waits for his look
+
+    (new_still,) = redo.new_stills
+    _his_look(engine, new_still, "APPROVED")
+    state = decision_state(engine, film["report"])
+    assert state["ready"] is True
+    # Ready, and no walk read it since her decision: queued now, within the hour.
+    assert _pass(engine, settings) == {"queued": [film["board"]]}
+    assert _pass(engine, settings) == {"queued": []}  # the one continuation stands queued
+
+    # The queued continuation ran and recorded itself seconds after her decision (11:29:53Z:
+    # 19 ms after it): that walk is the one that produced her decision, so it heard her, and
+    # a repair still ready (or lapsed) is carried on at once.
+    with Session(engine) as session, session.begin():
+        task = session.scalars(
+            select(TaskQueueItem).where(TaskQueueItem.task_type == "FILM_CONTINUE")
+        ).all()[-1]
+        task.status = "COMPLETED"
+        append_event(
+            session,
+            "runbook.film_continued",
+            "storyboard",
+            film["board"],
+            1,
+            {"status": "WAITING", "cause": f"{director_qc_review.CAUSE_PREFIX}{film['report']}"},
+            "c",
+        )
+    assert decision_state(engine, film["report"])["ready"] is True
+    assert _pass(engine, settings) == {"queued": [film["board"]]}
+    # The same record read as a walk that ran after her decision and never reached her (the
+    # window closed): the hour's throttle holds.
+    monkeypatch.setattr(director_qc_review, "HEARD_WINDOW", timedelta(0))
+    assert _pass(engine, settings) == {"queued": []}
+
+
+def test_a_lapsed_repair_is_put_before_her_at_once_not_an_hour_later(
+    engine, settings, studio, monkeypatch
+):
+    """11:29Z, 2d276038: the stills bought for her repair came back refused by her own look,
+    the repair lapsed, and the report was hers again — but not before an hour had passed
+    since her decision. A lapsed repair no walk has read since is queued at once; the hour
+    holds once a walk ran for it."""
+    from app.runbook import stages
+    from app.workflows.passes import director_qc_review
+
+    film = failed_film(engine, local_move=False)
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch, still_status="PAID")
+    _production(engine)
+    assert director_qc_review.RETRY_MINUTES == 60
+    stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+    (new_still,) = redo.new_stills
+
+    _his_look(engine, new_still, "REJECTED")
+
+    state = decision_state(engine, film["report"])
+    assert state["lapsed"] and not state["final"]
+    assert _pass(engine, settings) == {"queued": [film["board"]]}
+    assert _pass(engine, settings) == {"queued": []}
+
+
+def test_a_scene_at_the_renders_cap_is_not_bought_again_and_the_film_ships_as_it_stands(
+    engine, settings, studio, monkeypatch
+):
+    """The Owner, 2026-10-15 12:20Z: «Randările odată făcute, de maxim 3x pentru fiecare
+    imagine sau mișcare … orice iese, chiar dacă pică, Directorul se uită peste ce avem, și
+    publică!» Scene 5's still was made three times already; her REPAIR lists it; nothing is
+    bought, no card asks him what becomes of the film: her decision is ACCEPT under the cap,
+    the PASSED report her decision stands on is written, the film passes to publication, and
+    her verdicts stay what they were (the lesson for the next film)."""
+    from app.decisions.models import OwnerDecision
+    from app.runbook import stages
+
+    film = failed_film(engine, local_move=False)
+    now = utc_now()
+    with Session(engine) as session, session.begin():
+        for n in range(3):
+            take_id = str(uuid4())
+            session.add(
+                SceneTake(
+                    id=take_id,
+                    storyboard_id=film["board"],
+                    scene_number=5,
+                    kind="still",
+                    prompt_hash=uuid4().hex,
+                    model_id="seedream5_pro",
+                    resolution="1080:1920",
+                    status="REJECTED",
+                    failure_code="LOCAL.STILL_GATE",
+                    path=f"storage/{take_id}.bin",
+                    sha256=uuid4().hex,
+                    remote_task_id=f"task-{n}",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        assert stages._renders_made(session, film["board"])[(5, "still")] >= 3
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch, still_status="PAID")
+    _production(engine)
+
+    done = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert redo.calls == []  # nothing bought
+    assert done["outcome"] == "ACCEPTED" and done["passed_asset"] == film["asset"]
+    (repair,) = done["repairs"]
+    assert repair["limited"] and repair["limited"][0]["scene_index"] == 5
+    assert repair["limited"][0]["renders"] == {"still": repair["limited"][0]["renders"]["still"]}
+    assert repair["limited"][0]["renders"]["still"] >= renders_per_layer()
+    assert "card_id" not in repair and repair["ship"]["limited"]
+    decided = events(engine, DECISION_EVENT)[-1].payload
+    assert decided["decision"] == "ACCEPT" and decided["outcome"] == "ACCEPTED"
+    assert decided["accepted_under_cap"]["limited"] == [5]
+    assert "Acceptat sub plafonul Proprietarului" in decided["summary"]
+    assert any(v.get("verdict") == "REAL" for v in decided["verdicts"])  # the lesson stays
+    with Session(engine) as session:
+        card = select(OwnerDecision.id).where(OwnerDecision.kind == "redo_cap")
+        assert session.scalar(card) is None
+        passed = session.scalar(
+            select(QualityControlReport).where(
+                QualityControlReport.media_asset_id == film["asset"],
+                QualityControlReport.status == "PASSED",
+            )
+        )
+        assert passed is not None
+    assert len(model.asked) == 1
+    assert _pass(engine, settings) == {"queued": []}
+
+
+def test_a_motion_continuing_its_stills_round_is_still_under_the_renders_cap(
+    engine, settings, studio, monkeypatch
+):
+    """22:21Z, f06808c9 scene 4: three shots of the scene had been made; her REPAIR asked a
+    fourth, as the motion of the scene's new still (it continues that still's round, so the
+    round counts did not apply), the Accountant refused it on the cap's own words, and the
+    film waited. The renders cap holds for a continuation too: nothing is bought and the
+    film ships under the cap."""
+    from app.runbook import stages
+
+    film = failed_film(engine, local_move=False)
+    now = utc_now()
+    with Session(engine) as session, session.begin():
+        for n in range(3):
+            take_id = str(uuid4())
+            session.add(
+                SceneTake(
+                    id=take_id,
+                    storyboard_id=film["board"],
+                    scene_number=5,
+                    kind="motion",
+                    prompt_hash=uuid4().hex,
+                    model_id="seedance",
+                    resolution="1080:1920",
+                    status="REJECTED",
+                    failure_code="QC.CLIP",
+                    path=f"storage/{take_id}.bin",
+                    sha256=uuid4().hex,
+                    remote_task_id=f"shot-{n}",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        assert stages._renders_made(session, film["board"])[(5, "motion")] >= 3
+    monkeypatch.setattr(stages, "_open_still_rounds", lambda session, board: {5: "round-1"})
+    repairs = [{"scene_index": 5, "redo": "motion", "reason": "the clip warps"}]
+    registry, model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch, still_status="PAID")
+    _production(engine)
+
+    done = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert redo.calls == []  # nothing bought
+    assert done["outcome"] == "ACCEPTED" and done["passed_asset"] == film["asset"]
+    (repair,) = done["repairs"]
+    assert repair["limited"] and repair["limited"][0]["scene_index"] == 5
+    assert repair["limited"][0]["renders"]["motion"] >= renders_per_layer()
+    decided = events(engine, DECISION_EVENT)[-1].payload
+    assert decided["decision"] == "ACCEPT" and decided["accepted_under_cap"]["limited"] == [5]
+
+
+def test_a_report_whose_repair_was_bought_twice_ships_as_it_stands(
+    engine, settings, studio, monkeypatch
+):
+    """The same cap, on the report: her repair was bought and came back twice (the two
+    BOUGHT_WAITING decisions of 2d276038 at 10:24Z and 11:29Z); the third reading buys nothing
+    and the film ships as it stands."""
+    from app.media import director_qc
+    from app.runbook import stages
+
+    film = failed_film(engine, local_move=False)
+    for _ in range(stages.REPAIR_ROUNDS_PER_REPORT):
+        director_qc.record_decision(
+            engine,
+            {
+                "report_id": film["report"],
+                "media_asset_id": film["asset"],
+                "storyboard_id": film["board"],
+                "decided_by": director_qc.DIRECTOR,
+                "decision": "REPAIR",
+                "summary": "o refacere cumpărată",
+                "verdicts": [],
+                "repairs": [],
+                "outcome": "BOUGHT_WAITING",
+                "final": False,
+            },
+            "c",
+        )
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch, still_status="PAID")
+    _production(engine)
+
+    done = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert redo.calls == []
+    assert done["outcome"] == "ACCEPTED" and done["passed_asset"] == film["asset"]
+    (repair,) = done["repairs"]
+    assert repair["limited"][0]["report_rounds"] == stages.REPAIR_ROUNDS_PER_REPORT
+
+
+def test_a_verdict_without_a_reason_takes_it_from_the_cause_and_overlong_words_are_cut():
+    """12:38Z, 2d276038: her second answer wrote a cause and a lesson for every REAL finding
+    and no reason — «verdicts.N.reason: Field required» seven times — so her decision was
+    refused twice and the film waited while the Owner asked for the publication. What she
+    found is in the cause: the form takes the reason from it, and cuts an overlong reason,
+    cause or lesson to its room instead of refusing the whole decision."""
+    from app.agents.reviews import LESSON_MAX_CHARS, FindingVerdict
+
+    verdict = FindingVerdict.model_validate(
+        {
+            "finding": 2,
+            "verdict": "REAL",
+            "severity": "serious",
+            "cause": "Promptul still păstrează lista casei de studio.",
+            "lesson": "Numește doar obiectele camerei cerute.",
+        }
+    )
+    assert verdict.reason == "Promptul still păstrează lista casei de studio."
+    from_lesson = FindingVerdict.model_validate(
+        {"finding": 3, "verdict": "REAL", "lesson": "Scrie postura prima."}
+    )
+    assert from_lesson.reason == "Scrie postura prima."
+    long = FindingVerdict.model_validate(
+        {
+            "finding": 4,
+            "verdict": "REAL",
+            "reason": "r" * 900,
+            "cause": "c" * 900,
+            "lesson": "l" * (LESSON_MAX_CHARS + 50),
+        }
+    )
+    assert len(long.reason) == 400 and len(long.cause) == 400
+    assert len(long.lesson) == LESSON_MAX_CHARS
+    # No reason anywhere: still refused, as the form always did.
+    import pytest
+
+    with pytest.raises(ValueError):
+        FindingVerdict.model_validate({"finding": 5, "verdict": "REAL"})
+
+
+def test_a_film_accepted_under_the_cap_and_refused_by_her_viewing_is_walked_again(
+    engine, settings, studio, monkeypatch
+):
+    """12:49Z, 2d276038: accepted under the cap, then refused by her viewing on the publish
+    path, the film stood: an ACCEPTED report is final and the pass never queued it again. A
+    film accepted under the cap whose newest viewing refused it and that is not out on a
+    channel is walked again at once; once a viewing approved it, nothing more is queued."""
+    from app.media.models import EditorialReview
+    from app.runbook import stages
+
+    film = failed_film(engine, local_move=False)
+    now = utc_now()
+    with Session(engine) as session, session.begin():
+        for n in range(3):
+            take_id = str(uuid4())
+            session.add(
+                SceneTake(
+                    id=take_id,
+                    storyboard_id=film["board"],
+                    scene_number=5,
+                    kind="still",
+                    prompt_hash=uuid4().hex,
+                    model_id="seedream5_pro",
+                    resolution="1080:1920",
+                    status="REJECTED",
+                    failure_code="LOCAL.STILL_GATE",
+                    path=f"storage/{take_id}.bin",
+                    sha256=uuid4().hex,
+                    remote_task_id=f"task-{n}",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    FakeRedoPath(engine, monkeypatch, still_status="PAID")
+    _production(engine)
+    done = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+    assert done["outcome"] == "ACCEPTED"
+    assert _pass(engine, settings) == {"queued": []}  # accepted: nothing to queue
+
+    def viewed(verdict: str) -> None:
+        with Session(engine) as session, session.begin():
+            session.add(
+                EditorialReview(
+                    id=str(uuid4()),
+                    media_asset_id=film["asset"],
+                    storyboard_id=film["board"],
+                    verdict=verdict,
+                    story="",
+                    reasons_json=[],
+                    notes_json={},
+                    reviewer_agent_id=None,
+                    run_id=None,
+                    frames_seen=0,
+                    model_used=False,
+                    created_at=utc_now(),
+                    event_id=None,
+                )
+            )
+            if verdict == "REJECT":  # as the viewing leaves the storyboard (13:10Z live)
+                session.get(Storyboard, film["board"]).status = "REJECTED"
+
+    viewed("REJECT")
+    with Session(engine) as session:
+        # The publish queue keeps the film: its refused viewing is notes under the cap.
+        assert film["asset"] not in stages._viewing_rejected(session)
+    assert _pass(engine, settings) == {"queued": [film["board"]]}
+    assert _pass(engine, settings) == {"queued": []}  # once per refused viewing
+    with Session(engine) as session, session.begin():
+        task = session.scalars(
+            select(TaskQueueItem).where(TaskQueueItem.task_type == "FILM_CONTINUE")
+        ).all()[-1]
+        assert task.payload["cause"] == f"director_qc:{film['report']}"
+        task.status = "COMPLETED"
+    assert _pass(engine, settings) == {"queued": []}  # that viewing's walk stands
+    # The walk ran and could not publish (13:31Z: the queue's own reading of the refusal):
+    # the next waits PUBLISH_RETRY_MINUTES, doubling, then is queued under a new key.
+    from app.workflows.passes import director_qc_review
+
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            "runbook.film_continued",
+            "storyboard",
+            film["board"],
+            1,
+            {"status": "COMPLETED", "cause": f"director_qc:{film['report']}"},
+            "c",
+        )
+    assert _pass(engine, settings) == {"queued": []}  # within the wait
+    monkeypatch.setattr(director_qc_review, "PUBLISH_RETRY_MINUTES", 0)
+    assert _pass(engine, settings) == {"queued": [film["board"]]}
+    viewed("APPROVE")
+    assert _pass(engine, settings) == {"queued": []}

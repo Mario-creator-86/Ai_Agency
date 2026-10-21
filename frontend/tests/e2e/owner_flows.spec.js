@@ -17,6 +17,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/** Select an employee through the actual scene now that the bottom strip is retired. */
+async function selectSceneEmployee(page, id) {
+  const pageIndex = await page.evaluate(id => window.__studio.engine.positions.find(p => p.id === id)?.page, id);
+  if (pageIndex === undefined) throw Error('Employee has no scene desk');
+  const annex = page.locator('#pixel-office-pages button').nth(pageIndex);
+  if (await annex.isVisible()) await annex.click();
+  const point = await page.evaluate(id => {
+    const e=window.__studio.engine,p=e.visiblePositions().find(p=>p.id===id),s=e.viewport.worldToScreen(p.x,p.y-28),r=e.canvas.getBoundingClientRect();
+    return {x:r.x+s.x/e.dpr,y:r.y+s.y/e.dpr};
+  },id);
+  await page.mouse.click(point.x,point.y);
+}
+
 const FRONTEND = fileURLToPath(new URL('../..', import.meta.url));
 const ROOT = path.resolve(FRONTEND, '..');
 const EVIDENCE = process.env.E2E_EVIDENCE || path.join(ROOT, 'data/pixel-details-backup');
@@ -137,7 +150,8 @@ test('pixel studio: real staff, keyboard selection, autonomy settings and respon
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.screenshot({ path: path.join(EVIDENCE, 'pixel-before-check.png'), fullPage: true });
-  await page.waitForSelector('#pixel-roster button', { timeout: 30_000 });
+  await page.waitForSelector('#pixel-roster button', { state: 'attached', timeout: 30_000 });
+  assert.equal(await page.locator('#pixel-roster').isVisible(), false);
   const snapshot = await owner(page, '/snapshot');
   const staff = await page.locator('#pixel-roster button').count();
   assert.ok(staff > 0);
@@ -179,10 +193,9 @@ test('pixel studio: real staff, keyboard selection, autonomy settings and respon
   await page.waitForSelector('#budget-form');
   await page.click('#autonomy-modal a[href="#autonomy-overview"]');
   await page.click('[data-autonomy-go="policy"]');
-  await page.waitForSelector('#autonomy-modal[open]', { state: 'detached' });
+  assert.equal(await page.locator('#autonomy-modal').evaluate(d=>d.open), true);
   await page.waitForSelector('#autonomy-mode-buttons', { state: 'visible' });
   assert.ok(await page.locator('#autonomy-mode-buttons').isVisible());
-  await page.click('#open-autonomy-btn');
   await page.waitForSelector('#autonomy-modal[open] .autonomy-summary');
   await page.click('[data-autonomy-go="schedule"]');
   await page.waitForSelector('#runbook-modal[open]');
@@ -193,8 +206,7 @@ test('pixel studio: real staff, keyboard selection, autonomy settings and respon
   await page.keyboard.press('Escape');
   await page.waitForSelector('#autonomy-modal[open]', { state: 'detached' });
   await page.waitForTimeout(400);
-  await page.click('#side-close');
-  await page.waitForSelector('html[data-side="closed"]');
+  assert.equal(await page.locator('.dashboard-autonomy').isVisible(), true);
   await page.waitForTimeout(500);
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: path.join(EVIDENCE, 'pixel-studio-desktop.png'), fullPage: true });
@@ -204,7 +216,7 @@ test('pixel studio: real staff, keyboard selection, autonomy settings and respon
   assert.ok((await page.locator('#open-autonomy-btn svg').boundingBox()).width <= 32);
   assert.ok(await page.evaluate(() => document.getElementById('office-canvas').getBoundingClientRect().width <= window.innerWidth));
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
-  await page.locator('#pixel-roster button').first().click();
+  await selectSceneEmployee(page, await page.evaluate(()=>window.__studio.engine.positions[0].id));
   await page.waitForSelector('#agent-inspector[open]');
   await page.keyboard.press('Escape');
   await page.waitForSelector('#agent-inspector[open]', { state: 'detached' });
@@ -244,7 +256,7 @@ test('personal desks: committed backend states, seated gestures, annex selection
   assert.equal((await owner(page, `/agents/${researcher.id}/resume`, { method: 'POST' })).status, 200);
   await page.waitForFunction(id => window.__studio.engine.agents.find(a => a.id === id)?.lifecycle === 'ACTIVE', researcher.id);
   const extra = seats.find(p => p.page === 1);
-  await page.locator(`#pixel-roster [data-agent="${extra.id}"]`).click();
+  await selectSceneEmployee(page, extra.id);
   await page.waitForSelector('#agent-inspector[open]');
   assert.equal(await page.evaluate(() => window.__studio.engine.page), 1);
   assert.equal(await page.locator('#pixel-office-pages [aria-pressed="true"]').textContent(), 'Birouri suplimentare 1');
@@ -289,7 +301,7 @@ test('personal desks: committed backend states, seated gestures, annex selection
   if (await page.isVisible('#side-close')) await page.click('#side-close');
   await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(EVIDENCE, 'seated-agents-desktop.png'), fullPage: true });
-  await page.locator(`#pixel-roster [data-agent="${researcher.id}"]`).click();
+  await selectSceneEmployee(page, researcher.id);
   await page.waitForSelector('#agent-inspector[open]');
   await page.waitForTimeout(750);
   assert.equal((await owner(page, '/e2e/agent-state', { method: 'POST', body: JSON.stringify({ agent_id: researcher.id, runtime_state: 'THINKING' }) })).status, 200);

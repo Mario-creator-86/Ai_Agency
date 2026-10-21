@@ -21,9 +21,9 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -37,7 +37,8 @@ from sqlalchemy.orm import Session
 from app.config import ROOT
 from app.db import lock_for_write
 from app.factual.editorial import dangles
-from app.media import music_library
+from app.media import film_length, music_library, pause_plan
+from app.media import pauses as pause_rules
 from app.media.balance_rule import (
     DEFAULT_MARGIN,
     LOW_BALANCE,
@@ -47,6 +48,7 @@ from app.media.balance_rule import (
     purchase_stop_ro,
     start_refusal_ro,
 )
+from app.media.cap_choice import CAP_KEEPS_RO, CapChoice, choose_under_cap, record_cap_choice
 from app.media.cards import (
     CARD_KINDS,
     CardError,
@@ -76,6 +78,9 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.montage import keep_frozen
+from app.media.pause_plan import frozen_beat
+from app.media.prepared_batch import RoundWork, flow_call, purchase_flow
 from app.media.production_policy import (
     FailureRecord,
     FailureVerdict,
@@ -86,6 +91,23 @@ from app.media.production_policy import (
     replan_after_failure,
 )
 from app.media.prompt_lint import LintScene, has_block, lint_film, summary_ro
+from app.media.renders_cap import (
+    CAP_LOCAL_MOVE_BY,
+    cap_local_move_words,
+    cap_local_moves,
+    clip_retries,
+    max_rerolls,
+    motion_spent,
+    motion_spent_words,
+    record_cap_local_move,
+    record_motion_spent,
+    renders_by_scene,
+    renders_left,
+    renders_made,
+    renders_of_ro,
+    renders_per_layer,
+    renders_ro,
+)
 from app.media.sheet_words import NO_SHOT, NO_STILL
 from app.media.speaker_voices import SPEAKER_GAP_SECONDS
 from app.media.toolchain import (
@@ -96,6 +118,8 @@ from app.media.toolchain import (
     EDGE_KEEP_SECONDS,
     LOUDNESS_TARGET_LUFS,
     MASTER_SAMPLE_RATE,
+    SILENCE_MIN_SECONDS,
+    SILENCE_THRESHOLD_DB,
     TRUE_PEAK_CEILING_DBTP,
     TRUE_PEAK_TARGET_DBTP,
     AudioMasterError,
@@ -121,6 +145,7 @@ from app.providers.media_http import (
 from app.providers.retry import SAFE_TO_RESEND_STATUSES
 from app.providers.runpod.wiring import billing_name, bind_scene, sync_take_quality
 from app.services import append_event, utc_now
+from app.wording import count as count_ro
 from app.wording import decimal as ro_decimal
 
 
@@ -168,8 +193,15 @@ DISSOLVE_WORDS: tuple[str, ...] = ("DISSOLVE", "CROSSFADE", "CROSS_DISSOLVE", "M
 #: It was 0.35 s on top of the vendor's own trailing silence, never trimmed: the rehearsal film
 #: measured 0.28-0.61 s of digital silence at every cut (audit Q4). Since 2026-10-02 each take's
 #: silent edges are cut first (`_trimmed_take`, -45 dB, keeping EDGE_KEEP_SECONDS either side)
-#: and the breath is 0.12 s, so a cut carries at most about 0.22 s with the frame rounding.
-SPOKEN_TAIL_SECONDS = 0.12
+#: and the breath was 0.12 s, so a cut carried at most about 0.22 s with the frame rounding.
+#: 2026-10-16, the Owner («de ce se taie cadrul? de ce nu-l lăsăm complet?»): every shot
+#: breathes 0.4 s after its words, so its movement ends before the cut; the clip is bought
+#: for it (`_voiced_clip_seconds`) and quality control counts it (`qc.film_length_budget`).
+LEGACY_SPOKEN_TAIL_SECONDS = 0.4
+#: Since 2026-10-16 («pauza vocii», the Owner) a film built under the pause rules has each
+#: row's pause frozen on its storyboard (`pause_plan.freeze_rows`) and the render lays its
+#: voice out by them (`pause_plan.voice_layout`); this constant only reads a film built before
+#: (no frozen pause), and the estimators that are still to read the frozen pauses.
 
 #: How long one scene's motion may take, and how often the task is asked about.
 MOTION_DEADLINE_SECONDS = 600
@@ -646,17 +678,39 @@ def _shift_times(values: Any, by: float, limit: float) -> Any:
 
 
 def _trimmed_take(
-    ffmpeg_exe: str, said: TTSResult, work_dir: Path, name: str
+    ffmpeg_exe: str,
+    said: TTSResult,
+    work_dir: Path,
+    name: str,
+    *,
+    to_last_letter: bool | None = None,
 ) -> tuple[TTSResult, dict[str, Any]]:
     """The take with the vendor's silence before and after its words cut away (audit Q4).
 
-    The take is decoded to a 48 kHz, 24-bit mono WAV (``name``.wav in ``work_dir``), its
-    silent edges measured (`toolchain.speech_edges`: under -45 dB for 50 ms), and all but
-    EDGE_KEEP_SECONDS of each cut, never into a word the vendor timed. Its word timing and
-    the vendor's character alignment move earlier by what was cut from the front, so the
-    captions stay on the words. The vendor's own file, kept as the narration take, is not
-    touched: this is done again, for nothing, every time the take is used. A take that cannot
-    be decoded or measured is returned as it came, and the record says why.
+    The take is decoded to a 48 kHz, 24-bit mono WAV (``name``.wav in ``work_dir``) and its
+    silent edges measured (`toolchain.speech_edges`: under -45 dB for 50 ms).
+
+    With the pause rules' ``trim_to_last_letter`` switch on (`pauses.switch`, the Owner's
+    decision 7 of 2026-10-16; ``to_last_letter``, the switch as a frozen film was built under,
+    when given) and the vendor's timing at hand, the tail is cut at the end of
+    the take's last LETTER or DIGIT plus EDGE_KEEP_SECONDS, or later where the sound has not
+    yet died away: at the first point after the last letter starts where the signal falls
+    under -45 dBFS and stays there for SILENCE_MIN_SECONDS (or to the end of the file), and
+    never inside a sound (`pauses.trim_cut`). The vendor stretches a take's final "." to the
+    end of its file, so the old rule below, which let the vendor's clock veto the meter, cut
+    0.000 s on all 55 kept takes. The head is cut by the meter, never past the first sound.
+
+    Otherwise (the switch off, or no timing) all but EDGE_KEEP_SECONDS of each measured edge
+    is cut, never into a word the vendor timed, as before.
+
+    The record says what was cut (``lead_seconds``, ``trail_seconds``) and the silence the
+    meter still hears inside what is kept, before the first sound and after the last
+    (``kept_head_seconds``, ``kept_tail_seconds``): the pad a join adds is the planned pause
+    less these (`pauses.render_pad`). Its word timing and the vendor's character alignment
+    move earlier by what was cut from the front, so the captions stay on the words. The
+    vendor's own file, kept as the narration take, is not touched: this is done again, for
+    nothing, every time the take is used. A take that cannot be decoded or measured is
+    returned as it came, and the record says why.
     """
     import wave  # noqa: PLC0415
 
@@ -702,15 +756,46 @@ def _trimmed_take(
         return said, record
     finally:
         source.unlink(missing_ok=True)
-    cut_lead = max(0.0, lead - EDGE_KEEP_SECONDS)
-    cut_trail = max(0.0, trail - EDGE_KEEP_SECONDS)
-    words = take_word_timing(said)
-    if words:
-        # The vendor's clock wins over the meter: a word it timed is never cut.
-        cut_lead = min(cut_lead, max(0.0, min(float(w["start"]) for w in words)))
-        cut_trail = min(cut_trail, max(0.0, duration - max(float(w["end"]) for w in words)))
-    first = int(round(cut_lead * rate))
-    last = max(first + 1, params.nframes - int(round(cut_trail * rate)))
+    loud = _loud_samples(frames, params.sampwidth, params.nchannels)
+    cut = None
+    letter = _last_letter(said)
+    by_letter = (
+        pause_rules.switch("trim_to_last_letter") if to_last_letter is None else to_last_letter
+    )
+    if loud is not None and letter is not None and by_letter:
+        cut = pause_rules.trim_cut(
+            loud,
+            rate,
+            last_letter=letter,
+            lead_seconds=lead,
+            edge_keep=EDGE_KEEP_SECONDS,
+            settle_seconds=SILENCE_MIN_SECONDS,
+        )
+    if cut is not None and letter is not None:
+        first = cut.head
+        last = max(first + 1, cut.tail)
+        record.update(
+            rule="last_letter",
+            head_sample=first,
+            tail_sample=last,
+            last_letter_seconds=round(letter[1], 3),
+            guard_seconds=round(max(0, cut.tail - cut.letter_cut) / rate, 3),
+            guard_moved=cut.guard_moved,
+        )
+    else:
+        cut_lead = max(0.0, lead - EDGE_KEEP_SECONDS)
+        cut_trail = max(0.0, trail - EDGE_KEEP_SECONDS)
+        words = take_word_timing(said)
+        if words:
+            # The vendor's clock wins over the meter: a word it timed is never cut.
+            cut_lead = min(cut_lead, max(0.0, min(float(w["start"]) for w in words)))
+            cut_trail = min(cut_trail, max(0.0, duration - max(float(w["end"]) for w in words)))
+        first = int(round(cut_lead * rate))
+        last = max(first + 1, params.nframes - int(round(cut_trail * rate)))
+        record["rule"] = "meter"
+    edges = pause_rules.kept_edges(loud, rate, first, last) if loud is not None else None
+    if edges is not None:
+        record.update(kept_head_seconds=edges[0], kept_tail_seconds=edges[1])
     step = params.sampwidth * params.nchannels
     kept = frames[first * step : last * step]
     buffer = io.BytesIO()
@@ -759,6 +844,36 @@ def _trimmed_take(
         ),
         record,
     )
+
+
+def _loud_samples(frames: bytes, sample_width: int, channels: int) -> Any:
+    """Per sample, whether the decoded take is at or above SILENCE_THRESHOLD_DB; None when the
+    samples cannot be read (the trim then keeps the meter's rule)."""
+    try:
+        return pause_rules.loud_samples(frames, sample_width, channels, SILENCE_THRESHOLD_DB)
+    except (ImportError, ValueError) as exc:
+        logger.warning("take_samples_unread", extra={"error": type(exc).__name__})
+        return None
+
+
+def _last_letter(said: TTSResult) -> tuple[float, float] | None:
+    """(start, end) of the take's last letter or digit as the vendor timed it: its character
+    ``alignment`` (never ``normalized_alignment``, which times the text as the vendor spelt it
+    out), else the last word the adapter timed; None when the take carries no timing."""
+    alignment = pause_rules.alignment_of(said.raw_response)
+    if alignment is not None:
+        return pause_rules.last_letter_times(alignment)
+    timed = [
+        item
+        for item in (said.word_timings or [])
+        if isinstance(item, dict)
+        and isinstance(item.get("start"), int | float)
+        and isinstance(item.get("end"), int | float)
+    ]
+    if not timed:
+        return None
+    last = max(timed, key=lambda item: float(item["end"]))
+    return float(last["start"]), float(last["end"])
 
 
 def _aligned_starts(words: list[str], timed: Any, span: float) -> list[float] | None:
@@ -1273,6 +1388,11 @@ def motion_request(
         model if isinstance(model, str) else None,
         metadata if isinstance(metadata, dict) else None,
     )
+    if package.get("prompt_format") == "editor_final_v1":
+        return motion, {
+            "prompt_format": "editor_final_v1",
+            **({"negative_prompt": negative} if negative else {}),
+        }
     if not motion:
         prompt = picture
     elif from_still:
@@ -1597,6 +1717,60 @@ def _shot_frames(ffmpeg_exe: str, path: Path) -> int | None:
     return frames if isinstance(frames, int) and frames > 0 else None
 
 
+def _video_bit_rate(ffmpeg_exe: str, path: Path) -> int | None:
+    """The finished film's average video bitrate as quality control measures it, or None."""
+    from app.media.qc import probe_media_file  # noqa: PLC0415
+
+    rate = probe_media_file(path, ffmpeg_exe).get("video_bit_rate")
+    return int(rate) if isinstance(rate, int | float) and rate > 0 else None
+
+
+def _with_crf(args: Sequence[str], crf: int) -> list[str]:
+    """The same encoder arguments at another CRF."""
+    out = list(args)
+    out[out.index("-crf") + 1] = str(int(crf))
+    return out
+
+
+def encode_to_floor(
+    ffmpeg_exe: str,
+    command_args: Sequence[str],
+    work_dir: Path,
+    output_mp4: Path,
+    *,
+    carry: Sequence[str] = (),
+    floor: int | None = None,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+    """The final encode, made again at each of FLOOR_CRF_STEPS in turn while the film comes
+    out under quality control's bitrate floor: the encoder keeps to the floor it is measured
+    against, instead of quality control refusing the film and the free re-encode making the
+    same file again. Returns the last run and the encode's record (``crf``, ``video_bit_rate``,
+    and ``tightened``: every reading that fell short). A failed run is returned as it is."""
+    if floor is None:
+        from app.media.qc import MIN_VIDEO_BITRATE  # noqa: PLC0415
+
+        floor = int(MIN_VIDEO_BITRATE)
+    args = list(command_args)
+    crf = int(args[args.index("-crf") + 1]) if "-crf" in args else FINAL_CRF
+    record: dict[str, Any] = {"crf": crf, "video_bit_rate": None, "floor": floor, "tightened": []}
+    steps = [step for step in FLOOR_CRF_STEPS if step < crf]
+    while True:
+        res = run_encoder(args, work_dir, carry=tuple(carry))
+        if res.returncode != 0 or not output_mp4.is_file() or output_mp4.stat().st_size == 0:
+            return res, record
+        rate = _video_bit_rate(ffmpeg_exe, output_mp4)
+        record["crf"], record["video_bit_rate"] = crf, rate
+        if rate is None or rate >= floor or not steps:
+            return res, record
+        record["tightened"].append({"crf": crf, "video_bit_rate": rate})
+        logger.info(
+            "final_encode_under_floor",
+            extra={"crf": crf, "video_bit_rate": rate, "floor": floor, "next_crf": steps[0]},
+        )
+        crf = steps.pop(0)
+        args = _with_crf(args, crf)
+
+
 def _video_stream_seconds(ffmpeg_exe: str, path: Path) -> float | None:
     """How long the picture actually lasts, or None when it cannot be measured."""
     from app.media.qc import probe_media_file  # noqa: PLC0415
@@ -1651,7 +1825,17 @@ INTERMEDIATE_VIDEO_ARGS: tuple[str, ...] = (
 )
 
 
-def final_video_args(fps: int = TIMELINE_FPS) -> list[str]:
+#: The finished film's quality setting, and the tighter ones tried in turn when the encode
+#: comes out under quality control's bitrate floor (`qc.MIN_VIDEO_BITRATE`, 6 Mbps). A film
+#: of dark, nearly still picture at 24 fps needs few bits at CRF 17 (2026-10-16 05:35Z,
+#: 7c26a7ce «Speed of Light»: 4.4 Mbps, quality control failed the film for it, and the free
+#: re-encode from the same takes could only have made the same file again). More bits into a
+#: dark picture are not wasted: its gradients keep more steps.
+FINAL_CRF = 17
+FLOOR_CRF_STEPS: tuple[int, ...] = (12, 8, 4)
+
+
+def final_video_args(fps: int = TIMELINE_FPS, crf: int = FINAL_CRF) -> list[str]:
     """The finished film's video encode, in full.
 
     H.264 High at level 4.2 (1080x1920 at up to 60 fps), CRF 17 on the slow preset with a
@@ -1659,6 +1843,7 @@ def final_video_args(fps: int = TIMELINE_FPS) -> list[str]:
     picture; the Nepal film had 2.6 Mbps. Two B-frames, a keyframe every half second and no
     scene-cut keyframes, so the platform's re-encode finds a regular GOP. 4:2:0, BT.709
     limited range, and the index at the front of the file so playback starts at once.
+    ``crf`` is tightened by `encode_to_floor` when the film comes out under the floor.
     """
     return [
         "-c:v",
@@ -1670,7 +1855,7 @@ def final_video_args(fps: int = TIMELINE_FPS) -> list[str]:
         "-preset",
         "slow",
         "-crf",
-        "17",
+        str(int(crf)),
         "-maxrate",
         "14M",
         "-bufsize",
@@ -1751,29 +1936,44 @@ def scene_spans(
     *,
     fps: int = TIMELINE_FPS,
     kinds: Sequence[str | None] | None = None,
+    pauses: Sequence[float | None] | None = None,
 ) -> list[float]:
     """How long each scene lasts on the timeline, on whole frames.
 
-    A scene with words lasts min(planned, spoken + SPOKEN_TAIL_SECONDS), and never less than
-    its words: a word is never cut, so words longer than the plan set the length. Every
-    speaking scene keeps its whole breath, rounded up to a frame: quality control counts the
-    breaths (qc.film_length_budget), and the planned lengths used to pad the Nepal film with
-    silence. A scene with no words keeps its plan, except a silent composed scene (``kinds``:
-    BLACK, TITLE_CARD, DATA_CARD), which lasts at most what quality control allows its kind
-    (qc.MAX_SILENT_CARD_SECONDS): one beat of black, a title read, a chart's animation.
+    With ``pauses`` (a film whose pauses were frozen when it was built, «pauza vocii», the
+    Owner 2026-10-16): a scene with words lasts its words plus the silence the film adds after
+    them (the frozen pause, or what the render pads after the take: 0.0 for a cut inside one
+    take), a silent card its kind's length, and every cut lands on the frame nearest its exact
+    time on the cumulative timeline (`pauses.snap_cumulative`), so many rows never drift from
+    the voice. Without ``pauses`` (a film built before them):
+
+    A scene with words lasts spoken + LEGACY_SPOKEN_TAIL_SECONDS, whatever its plan said: a word
+    is never cut, and the breath after the last word is the shot's (2026-10-16, the Owner:
+    the clip used to be cut the moment the words ended, when the plan ran short, and the
+    movement never finished). Every speaking scene keeps its whole breath, rounded up to a
+    frame: quality control counts the breaths (qc.film_length_budget), and the clip was
+    bought for it (`_voiced_clip_seconds`). A scene with no words keeps its plan, except a
+    silent composed scene (``kinds``: BLACK, TITLE_CARD, DATA_CARD), which lasts at most what
+    quality control allows its kind (qc.MAX_SILENT_CARD_SECONDS): one beat of black, a title
+    read, a chart's animation.
     """
     from app.media.qc import MAX_SILENT_CARD_SECONDS  # noqa: PLC0415 - qc reads the models
 
     kinds = list(kinds) if kinds is not None else [None] * len(planned)
+    if pauses is not None:
+        exact: list[float] = []
+        for plan, said, kind, pause in zip(planned, spoken, kinds, pauses, strict=True):
+            if isinstance(said, int | float) and float(said) > 0:
+                exact.append(float(said) + max(0.0, float(pause or 0.0)))
+            elif kind in MAX_SILENT_CARD_SECONDS:
+                exact.append(min(float(plan), MAX_SILENT_CARD_SECONDS[kind]))
+            else:
+                exact.append(float(plan))
+        return pause_rules.snap_cumulative(exact, fps)
     spans: list[float] = []
     for plan, said, kind in zip(planned, spoken, kinds, strict=True):
         if isinstance(said, int | float) and float(said) > 0:
-            tail = (
-                min(SPOKEN_TAIL_SECONDS, max(0.0, float(plan) - float(said)))
-                if float(plan) > 0
-                else SPOKEN_TAIL_SECONDS
-            )
-            spans.append(whole_frames(float(said) + tail, fps, up=True))
+            spans.append(whole_frames(float(said) + LEGACY_SPOKEN_TAIL_SECONDS, fps, up=True))
         elif kind in MAX_SILENT_CARD_SECONDS:
             spans.append(whole_frames(min(float(plan), MAX_SILENT_CARD_SECONDS[kind]), fps))
         else:
@@ -2522,6 +2722,15 @@ class TakesMissing(RuntimeError):
     """
 
 
+class FilmOverTheWall(TakesMissing):
+    """A film frozen under the pause rules is longer than its channel's wall even with every
+    pause at its floor (`film_length.wall_refusal`, or the render's own fit of its measured
+    voice, `_lay_out_voice`): quality control would refuse it at the wall, so nothing more is
+    bought for it — no still, no clip — before the wall is said (the Owner's decision 9,
+    2026-10-16). A TakesMissing, so every caller that holds a film for missing takes holds
+    this one too; the message is the Owner's, in Romanian."""
+
+
 class ClipsNotAccepted(TakesMissing):
     """A PRODUCTION film would show a LIVE scene as a still the Owner did not choose.
 
@@ -2656,6 +2865,11 @@ def classify_vendor_failure(exc: BaseException, previous: str | None = None) -> 
     )
 
 
+#: A still the Owner's renders cap approved as the scene's picture (`stills_stage`): it is
+#: the scene's whatever words it was made on, so `usable_take` matches it without its hash.
+CAP_APPROVER = "director_cap"
+
+
 def usable_take(
     session: Session,
     storyboard_id: str,
@@ -2698,7 +2912,9 @@ def usable_take(
             and row.seconds < min_seconds
         ):
             continue
-        if not any(take_hash(fields, row.model_id) == row.prompt_hash for fields in field_options):
+        if row.approved_by != CAP_APPROVER and not any(
+            take_hash(fields, row.model_id) == row.prompt_hash for fields in field_options
+        ):
             continue
         if not row.path or not row.sha256:
             continue
@@ -3063,6 +3279,407 @@ def _context_fields(context: dict[str, Any] | None) -> dict[str, str] | None:
     return kept or None
 
 
+# ----------------------------------------------------------------- one take per voice group
+# 2026-10-16, the Owner («pauza vocii»): one voice take per writer's scene (factual) and per
+# speaker's run inside a beat (serial), the montage cutting the picture on the take's own
+# word timing. A film built before the pause rules is voiced row by row, as it always was.
+
+
+def frozen_film(scenes: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether this film is timed by its frozen pauses: every row carries the pause frozen when
+    its storyboard was built (`scene_view`, `film_length.is_frozen`) and its knobs can be read.
+    Whatever the pause rules say now: the film is said in the voice takes it was built with
+    (its own ``voice_group`` tags) and laid out by its own pauses, so switching the rules or
+    their voice groups off never re-times it, nor re-buys a take already paid for (the Owner's
+    decision 8, 2026-10-16)."""
+    return film_length.is_frozen(scenes) and film_length.film_knobs(scenes) is not None
+
+
+@dataclass
+class _VoiceUnit:
+    """One row's words, or one speaker's part of them, in the voice track: the take they are
+    said in (its index), where they begin inside it, how long they last there, their words
+    timed from their own beginning and the voice's own pause after them inside the take."""
+
+    row: int
+    part: dict[str, Any]
+    voice: Any
+    text: str
+    take: int = -1
+    offset: float = 0.0
+    seconds: float = 0.0
+    words: tuple[dict[str, Any], ...] | None = None
+    gap_after: float | None = None
+
+
+@dataclass
+class _VoiceTake:
+    """One take of the voice track: its units in order, the voice and the group it is said in,
+    and, once said, the recording, its narration take, what it cost and how it was trimmed."""
+
+    units: list[_VoiceUnit]
+    voice: Any
+    group: Any
+    said: Any = None
+    take_id: str | None = None
+    reused: bool = False
+    bought: int = 0
+    trim: dict[str, Any] | None = None
+    timed: bool = True
+
+    @property
+    def text(self) -> str:
+        return " ".join(unit.text for unit in self.units)
+
+    @property
+    def direction(self) -> str:
+        notes: list[str] = []
+        for unit in self.units:
+            note = " ".join(str(unit.part.get("direction") or "").split())
+            if note and note not in notes:
+                notes.append(note)
+        return "; ".join(notes)
+
+    @property
+    def first_row(self) -> int:
+        return self.units[0].row
+
+
+def voice_takes(
+    scenes: Sequence[Mapping[str, Any]],
+    parts: Sequence[tuple[list[dict[str, Any]], bool]],
+    voices: Sequence[Any],
+    *,
+    grouped: bool,
+) -> tuple[list[_VoiceTake], list[list[_VoiceUnit]]]:
+    """The film's words as the voice track says them: (the takes in order, each row's units).
+
+    With ``grouped`` the units of one voice group (a factual row's ``voice_group``, a serial
+    part's) said one after another in one voice are one take; a voice that says it cannot
+    time its words (``TIMES_WORDS`` False) is voiced row by row, its cuts unplaceable. Without
+    it every unit is a take of its own, as a film was voiced before the groups. A row with no
+    words has no unit."""
+    takes: list[_VoiceTake] = []
+    rows: list[list[_VoiceUnit]] = []
+    for row, (scene, (scene_parts, by_speaker)) in enumerate(zip(scenes, parts, strict=True)):
+        units: list[_VoiceUnit] = []
+        for part in scene_parts:
+            text = " ".join(str(part.get("text") or "").split())
+            if not text:
+                continue
+            voice = part.get("adapter") or voices[row]
+            unit = _VoiceUnit(row=row, part=part, voice=voice, text=text)
+            group = None
+            if grouped and getattr(type(voice), "TIMES_WORDS", True) is not False:
+                group = part.get("voice_group") if by_speaker else scene.get("voice_group")
+            last = takes[-1] if takes else None
+            if (
+                group is not None
+                and last is not None
+                and last.group == group
+                and last.voice is voice
+                and last.units[-1].row in (row, row - 1)
+            ):
+                last.units.append(unit)
+            else:
+                takes.append(_VoiceTake(units=[unit], voice=voice, group=group))
+            unit.take = len(takes) - 1
+            units.append(unit)
+        rows.append(units)
+    return takes, rows
+
+
+def _unit_join(scene: Mapping[str, Any], position: int, count: int) -> dict[str, Any]:
+    """The frozen join after the ``position``-th of a row's ``count`` units: its pause after
+    for its last unit, else the row's inner pause there (the row's pause after when the two
+    no longer line up)."""
+    inner = scene.get("inner_pauses") or []
+    if position < count - 1 and position < len(inner) and isinstance(inner[position], Mapping):
+        return dict(inner[position])
+    return dict(scene.get("pause_after") or {})
+
+
+def _join_seconds(record: Mapping[str, Any]) -> tuple[str, float, float]:
+    """(class, seconds, floor) of a frozen join between two takes. A join frozen as a cut
+    inside a take that is voiced as two takes after all (the voice groups off, a voice that
+    cannot time its words) is the join it would be voiced alone (``fallback``)."""
+    chosen = record
+    if record.get("class") == pause_rules.IN_TAKE and isinstance(record.get("fallback"), Mapping):
+        chosen = record["fallback"]
+    seconds = float(chosen.get("seconds") or 0.0)
+    floor = chosen.get("floor")
+    return (
+        str(chosen.get("class") or pause_rules.WORD),
+        seconds,
+        min(seconds, float(floor) if isinstance(floor, int | float) else seconds),
+    )
+
+
+@dataclass
+class _FrozenTiming:
+    """A film's voice laid out by its frozen pauses (`_lay_out_voice`): the layout, each row's
+    pause record for the timeline, the room each row's pause leaves a short clip, the take
+    whose pad follows each row, each row's words measured from its start (``audio``: the
+    captions' clock), each row's reading (``readings``: its span less its share of the frozen
+    pauses, what a later estimate of the row adds that share back to), the wall, and what the
+    film is still over it with every pause at its floor (``over_seconds``)."""
+
+    layout: pause_plan.Layout
+    pauses: list[dict[str, Any]]
+    room: list[float]
+    pad_take: list[int | None]
+    audio: list[float]
+    pieces: list[list[dict[str, Any]]]
+    wall: float | None
+    wall_factors: list[float] | None
+    readings: list[float | None] = field(default_factory=list)
+    over_seconds: float = 0.0
+
+
+def _lay_out_voice(
+    scenes: Sequence[Mapping[str, Any]],
+    takes: Sequence[_VoiceTake],
+    rows: Sequence[Sequence[_VoiceUnit]],
+    *,
+    cut_in_pause: float,
+    wall: float | None,
+    rules: pause_rules.PauseRules | None,
+    fps: int = TIMELINE_FPS,
+) -> _FrozenTiming:
+    """The voice laid under the pictures by the film's frozen pauses (the Owner's «pauza
+    vocii», 2026-10-16): each take's join is the frozen pause after its last words less the
+    silence its trim kept and the next take's head (`pauses.render_pad`), a silent card the
+    pause it is, every cut on a frame of the cumulative timeline (`pause_plan.voice_layout`).
+    A film over its wall gives up its pauses toward their floors, the ladder keeping its order
+    (`pauses.fit_to_wall`, the stages of ``rules``: without readable rules the frozen pauses
+    stand as built); a BEAT and a card are never compressed, and what is still over is
+    ``over_seconds``.
+
+    A join with no planned silence of its own (an interruption, a cut between two words of
+    takes voiced apart) is planned as the kept edges it is heard as: the plan says so, and
+    quality control reads the silence heard there against it. A row's ``room`` (what its pause
+    may give up for a short clip) is never more than the part of the pause its own shot holds
+    (``cut_in_pause`` of the pad), so the cut never moves into its last word."""
+    from app.media.qc import MAX_SILENT_CARD_SECONDS  # noqa: PLC0415 - qc reads the models
+
+    beta = max(0.0, min(1.0, float(cut_in_pause)))
+    layout_rows: list[Sequence[pause_plan.Unit] | float] = []
+    for row, scene in enumerate(scenes):
+        units = rows[row]
+        if units:
+            layout_rows.append([pause_plan.Unit(u.take, u.offset, u.seconds) for u in units])
+            continue
+        kind = scene_kind_of(dict(scene))
+        plan = float(scene.get("duration_seconds") or 0.0)
+        layout_rows.append(
+            min(plan, MAX_SILENT_CARD_SECONDS[kind]) if kind in MAX_SILENT_CARD_SECONDS else plan
+        )
+    joins: list[dict[str, Any]] = []
+    for k, take in enumerate(takes):
+        last = take.units[-1]
+        units = rows[last.row]
+        where = next(i for i, unit in enumerate(units) if unit is last)
+        cls, seconds, floor = _join_seconds(_unit_join(scenes[last.row], where, len(units)))
+        following = takes[k + 1] if k + 1 < len(takes) else None
+        head = 0.0
+        if following is not None and following.first_row in (last.row, last.row + 1):
+            head = max(0.0, float((following.trim or {}).get("kept_head_seconds") or 0.0))
+        tail = max(0.0, float((take.trim or {}).get("kept_tail_seconds") or 0.0))
+        joins.append(
+            {
+                "class": cls,
+                "seconds": seconds,
+                "floor": floor,
+                "tail": tail,
+                "head": head,
+                "pad": pause_rules.render_pad(seconds, tail, head),
+            }
+        )
+
+    def laid(pads: Sequence[float]) -> pause_plan.Layout:
+        return pause_plan.voice_layout(
+            layout_rows,
+            [
+                pause_plan.TakeJoin(float(take.said.duration_seconds), pad)
+                for take, pad in zip(takes, pads, strict=True)
+            ],
+            fps=fps,
+            cut_in_pause=beta,
+        )
+
+    pads = [float(join["pad"]) for join in joins]
+    layout = laid(pads)
+    factors: list[float] | None = None
+    total = round(sum(layout.spans), 6)
+    over = round(max(0.0, total - wall), 3) if wall is not None else 0.0
+    if wall is not None and rules is not None and total > wall + 1e-6 and pads:
+        # Fitted on the exact timeline to the last whole frame at or under the wall, so the
+        # film's end, put on its frame, never runs past the wall by a rounding.
+        exact = sum(layout.exact) if layout.exact else total
+        fit = pause_rules.fit_to_wall(
+            [
+                {
+                    "class": join["class"],
+                    "seconds": join["pad"],
+                    "floor": max(
+                        0.0, min(join["pad"], join["floor"] - join["tail"] - join["head"])
+                    ),
+                }
+                for join in joins
+            ],
+            fixed_seconds=exact - sum(pads),
+            wall=math.floor(wall * fps + 1e-6) / fps,
+            rules=rules,
+        )
+        factors = list(fit.factors)
+        pads = list(fit.seconds)
+        for join, pad in zip(joins, pads, strict=True):
+            if pad < join["pad"]:
+                join["wall_pad"] = pad
+        layout = laid(pads)
+        over = round(max(0.0, sum(layout.spans) - wall), 3)
+    count = len(scenes)
+    ends = [round(start + span, 6) for start, span in zip(layout.starts, layout.spans, strict=True)]
+    records: list[dict[str, Any]] = []
+    room = [0.0] * count
+    pad_take: list[int | None] = [None] * count
+    audio = [0.0] * count
+    pieces: list[list[dict[str, Any]]] = [[] for _ in range(count)]
+
+    def join_record(unit: _VoiceUnit, at: float) -> dict[str, Any]:
+        take = takes[unit.take]
+        if unit is not take.units[-1]:
+            return {
+                "class": pause_rules.IN_TAKE,
+                "planned": 0.0,
+                "heard": unit.gap_after,
+                "keep_tail": None,
+                "pad": 0.0,
+                "head": None,
+                "cut_at": at,
+                "wall_k": None,
+            }
+        join = joins[unit.take]
+        written = layout.pads[unit.take]
+        planned = float(join["seconds"])
+        if "wall_pad" in join:
+            planned = min(planned, round(join["wall_pad"] + join["tail"] + join["head"], 4))
+        if join["class"] in pause_rules.EDGES_ONLY:
+            # No silence of its own is planned: what is heard is the edges the trim kept.
+            planned = round(join["tail"] + join["head"], 4)
+        return {
+            "class": join["class"],
+            "planned": round(planned, 4),
+            "heard": round(join["tail"] + written + join["head"], 4),
+            "keep_tail": round(join["tail"], 4),
+            "pad": round(written, 4),
+            "head": round(join["head"], 4),
+            "cut_at": at,
+            "wall_k": factors if "wall_pad" in join else None,
+            "floor": join["floor"],
+        }
+
+    for row, scene in enumerate(scenes):
+        units = rows[row]
+        cut_at = round(ends[row], 4)
+        if not units:
+            frozen = scene.get("pause_after")
+            frozen = frozen if isinstance(frozen, Mapping) else {}
+            records.append(
+                {
+                    "class": str(frozen.get("class") or pause_rules.CARD),
+                    "planned": 0.0,
+                    "heard": round(layout.spans[row], 4),
+                    "keep_tail": None,
+                    "pad": 0.0,
+                    "head": None,
+                    "cut_at": cut_at,
+                    "wall_k": None,
+                }
+            )
+            continue
+        start = layout.starts[row]
+        for unit in units:
+            offset = max(0.0, layout.take_starts[unit.take] + unit.offset - start)
+            pieces[row].append(
+                {
+                    "text": unit.text,
+                    "offset": round(offset, 4),
+                    "seconds": round(unit.seconds, 4),
+                    "words": [dict(word) for word in unit.words]
+                    if unit.words is not None
+                    else None,
+                }
+            )
+        audio[row] = round(max(piece["offset"] + piece["seconds"] for piece in pieces[row]), 3)
+        record = join_record(units[-1], cut_at)
+        inner = [
+            join_record(unit, round(start + pieces[row][i + 1]["offset"], 4))
+            for i, unit in enumerate(units[:-1])
+        ]
+        if inner:
+            record["inner"] = inner
+        records.append(record)
+        last = units[-1]
+        if last is takes[last.take].units[-1]:
+            pad_take[row] = last.take
+            if record["class"] not in (pause_rules.BEAT, pause_rules.CARD) and (
+                record["class"] not in pause_rules.EDGES_ONLY
+            ):
+                # The shot holds the take's kept tail and ``cut_in_pause`` of the pad: no more
+                # than that may be given up, or the cut would fall inside the last word.
+                most = min(beta * float(record["pad"]), record["planned"] - record["floor"])
+                room[row] = math.floor(max(0.0, most) * fps + 1e-6) / fps
+    # Each row's reading: its exact span less the share of the frozen pauses it holds
+    # (`film_length.RowPause.share`), so an estimate that adds that share back is this span
+    # (the kept edges, the inner joins and the pads are inside the span, never counted twice).
+    plans = film_length.frozen_rows(scenes)
+    readings: list[float | None] = [None] * count
+    if plans is not None and len(layout.exact) == count:
+        for row, row_plan in enumerate(plans):
+            if rows[row]:
+                readings[row] = round(max(0.0, layout.exact[row] - row_plan.share), 3)
+    return _FrozenTiming(
+        layout=layout,
+        pauses=records,
+        room=room,
+        pad_take=pad_take,
+        audio=audio,
+        pieces=pieces,
+        wall=wall,
+        wall_factors=factors,
+        readings=readings,
+        over_seconds=over,
+    )
+
+
+def _placed_pauses(
+    timing: _FrozenTiming, scenes: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any] | None]:
+    """Each row's pause record with the cut where the final timeline puts it (a pause given
+    up for a clip moved every cut after it)."""
+    clock = 0.0
+    placed: list[dict[str, Any] | None] = []
+    for scene, record in zip(scenes, timing.pauses, strict=True):
+        clock += float(scene["duration_seconds"])
+        placed.append({**record, "cut_at": round(clock, 4)})
+    return placed
+
+
+def _silence_wav(path: Path, seconds: float, rate: int = MASTER_SAMPLE_RATE) -> Path:
+    """A silent mono 16-bit WAV of ``seconds``: the voice track before a film's first take
+    when the film opens on a silent card."""
+    import wave  # noqa: PLC0415
+
+    frames = max(1, int(round(seconds * rate)))
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(bytes(2 * frames))
+    return path
+
+
 def narration_fields(
     text: str, voice: Any, context: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -3187,8 +3804,14 @@ def keep_narration(
     part: int,
     parts: int,
     correlation_id: str,
+    take_text: str | None = None,
+    rows: Sequence[int] | None = None,
 ) -> str | None:
     """A narration just bought, kept as a PAID take with its audio and its sidecar.
+
+    A take said over several rows (one voice group, `voice_takes`) also keeps its own words
+    (``take_text``) and the rows it is said over (``rows``), so the sheet can price every one
+    of them at 0 once it is kept (`voiced_scenes`).
 
     Never fails the render that bought it: a narration that could not be kept is logged and
     the film goes on (it would only be bought again next time)."""
@@ -3210,6 +3833,14 @@ def keep_narration(
                     "part": part,
                     "parts": parts,
                     "characters": len(" ".join(str(scene_text).split())),
+                    **(
+                        {
+                            "take_text_sha256": _text_sha(take_text),
+                            "rows": [int(row) for row in rows],
+                        }
+                        if take_text is not None and rows
+                        else {}
+                    ),
                 },
                 ensure_ascii=False,
                 default=str,
@@ -3260,8 +3891,13 @@ def voiced_scenes(
         int(scene["scene_index"]): _text_sha(str(scene.get("voiceover_segment") or ""))
         for scene in scenes
     }
+    texts_by_row = {
+        int(scene["scene_index"]): " ".join(str(scene.get("voiceover_segment") or "").split())
+        for scene in scenes
+    }
     covered: dict[tuple[int, str], set[int]] = {}
     needed: dict[tuple[int, str], int] = {}
+    spread: dict[tuple[int, str], set[int]] = {}
     for row in rows:
         if not row.path or wanted.get(int(row.scene_number)) is None:
             continue
@@ -3277,9 +3913,22 @@ def voiced_scenes(
         group = (int(row.scene_number), str(kept.get("voice_key") or ""))
         covered.setdefault(group, set()).add(int(kept.get("part") or 0))
         needed[group] = int(kept.get("parts") or 1)
-    return {
+        # A take said over several rows (one voice group): every row it is said over is
+        # voiced while the take holds their words as they are now.
+        said_over = kept.get("rows")
+        if isinstance(said_over, list) and len(said_over) > 1 and kept.get("take_text_sha256"):
+            texts = [texts_by_row.get(int(number)) for number in said_over]
+            if all(text is not None for text in texts) and kept["take_text_sha256"] == _text_sha(
+                " ".join(str(text) for text in texts)
+            ):
+                spread.setdefault(group, set()).update(int(number) for number in said_over)
+    voiced = {
         scene for (scene, _voice), parts in covered.items() if len(parts) >= needed[(scene, _voice)]
     }
+    for (scene, _voice), over in spread.items():
+        if scene in voiced:
+            voiced.update(over)
+    return voiced
 
 
 def _scene_parts(
@@ -3316,6 +3965,30 @@ def narration_to_buy(
     if not voices or any(voice is None for voice in voices):
         return 0  # the placeholder narrates: nothing is bought
     characters = 0
+    if frozen_film(scenes):
+        # One take per voice group, as the render says them (`voice_takes`): the same words,
+        # the same voices, the same neighbours, so the same keys are found kept or bought.
+        given = [
+            voice_segments_for_scene(scene) if voice_segments_for_scene else None
+            for scene in scenes
+        ]
+        grouped_parts: list[tuple[list[dict[str, Any]], bool]] = []
+        for scene, listed in zip(scenes, given, strict=True):
+            said = [p for p in (listed or []) if str(p.get("text") or "")]
+            grouped_parts.append(
+                (said, True) if said else ([{"text": scene["voiceover_segment"]}], False)
+            )
+        # The film's own groups (frozen with it), never the rules' switch as it is now.
+        takes, _rows = voice_takes(scenes, grouped_parts, voices, grouped=True)
+        contexts = narration_context([[take.text] for take in takes])
+        for take, around in zip(takes, contexts, strict=True):
+            if not bought_voice(take.voice):
+                continue
+            key = narration_key(take.text, take.voice, around[0])
+            number = int(scenes[take.first_row]["scene_index"])
+            if reused_narration(engine, storyboard_id, number, key) is None:
+                characters += len(take.text)
+        return characters
     spoken = [
         _scene_parts(scene, voice, voice_segments_for_scene)
         for scene, voice in zip(scenes, voices, strict=True)
@@ -3356,8 +4029,15 @@ def scene_view(row: StoryboardScene) -> dict[str, Any]:
     so the router and the tier know which scenes carry the film.
     """
     kind = scene_kind_of({"scene_kind": row.scene_kind})
+    # The pauses frozen on the row when its storyboard was built (`pause_plan.freeze_rows`):
+    # the voice take its words are said in, the silence after them and between its own takes.
+    # None on a row built before the pause rules: the render keeps the legacy timing for it.
+    frozen = frozen_beat(row.prompt_json)
     return {
         "scene_index": row.scene_index,
+        "voice_group": frozen["voice_group"] if frozen else None,
+        "pause_after": frozen["pause_after"] if frozen else None,
+        "inner_pauses": frozen["inner_pauses"] if frozen else [],
         "visual_prompt": row.visual_prompt,
         # The compiled package: its motion prompt is what the video model is sent
         # (motion_request), never the still's words again.
@@ -3410,7 +4090,9 @@ def buy_stills(
     production: dict[str, Any] = {}
     results: list[dict[str, Any]] = []
     previous_kind: str | None = None
-    stopped: str | None = None
+    # A film frozen longer than its wall even at every pause's floor buys no still: quality
+    # control would refuse it at the wall (`film_length.wall_refusal`, «pauza vocii»).
+    stopped: str | None = film_length.wall_refusal(scenes)
     for scene in scenes:
         index = int(scene["scene_index"])
         entry: dict[str, Any] = {"scene_index": index, "scene_kind": scene_kind_of(scene)}
@@ -3848,9 +4530,15 @@ def _clip_slowdowns(
     card_clips: list[Path | None],
     lengths: list[float],
     production: dict[str, Any],
+    shrink: Callable[[int, float], float] | None = None,
 ) -> list[float]:
     """How many times slower each LIVE clip plays to fill its shot: 1.0 for a clip that covers
     it (it is cut), and for every scene without a clip.
+
+    ``shrink(position, have)`` (a film timed by its frozen pauses, `pause_plan`): before a
+    clip is declared too short, the pause after the scene's words gives up whole frames toward
+    its floor until the clip fills the span (the Owner's «pauza vocii», 2026-10-16); it
+    updates the timeline and the voice and returns the seconds it took off ``lengths``.
 
     The clip is measured, not read from its take: a vendor may deliver less than it billed.
     One short of its span by at most SLOWDOWN_ALLOWANCE is slowed (the factor asks
@@ -3873,6 +4561,12 @@ def _clip_slowdowns(
         if record is not None:
             record["clip_seconds"] = round(have, 3)
         need = lengths[position]
+        if shrink is not None and not clip_fits(have, need):
+            taken = shrink(position, have)
+            if taken > 0:
+                need = lengths[position]
+                if record is not None:
+                    record["pause_shrunk_seconds"] = round(taken, 3)
         stretch = clip_stretch(have, need)
         if stretch <= 1.0:
             continue
@@ -3938,13 +4632,21 @@ def _timeline_record(
     dither: bool,
     framings: list[dict[str, Any] | None] | None = None,
     slows: list[float] | None = None,
+    pauses: list[dict[str, Any] | None] | None = None,
+    pause_profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The film's timeline as the manifest keeps it, and as quality control reads it: the
     frame rate, and each scene's place (start, end), how it is joined from the scene before,
     its shot's length and whether its shot is a generated clip (``moving``), slowed down to
     fill its span (``slow_factor``, `_clip_slowdowns`). A scene cut to a second framing of its
     picture carries it (``second_framing``), and the film counts the shots on screen and their
-    average length (audit Q6)."""
+    average length (audit Q6).
+
+    A film timed by its frozen pauses («pauza vocii», 2026-10-16) records each scene's pause
+    after its words (``pause``: its class, the seconds planned and heard, the silence the trim
+    kept, the pad the render added, the next take's head, where the cut fell, the wall's
+    factor) and every number they came from (``pause_profile``); a film built before them
+    keeps the legacy ``spoken_tail_seconds``."""
     spans: list[dict[str, Any]] = []
     clock = 0.0
     framings = framings if framings is not None else [None] * len(scenes)
@@ -3970,6 +4672,8 @@ def _timeline_record(
                 "second_framing": framings[position],
             }
         )
+        if pauses is not None:
+            spans[-1]["pause"] = pauses[position]
         clock += length
     spoken = [scene.get("audio_seconds") for scene in scenes]
     narration = (
@@ -3978,10 +4682,18 @@ def _timeline_record(
         else None
     )
     on_screen = len(spans) + sum(1 for framing in framings if framing)
+    timing: dict[str, Any] = (
+        {
+            "pause_profile": pause_profile,
+            "pause_rule_version": (pause_profile or {}).get("rule_version"),
+        }
+        if pauses is not None
+        else {"spoken_tail_seconds": LEGACY_SPOKEN_TAIL_SECONDS}
+    )
     return {
         "fps": TIMELINE_FPS,
         "dither": "zscale error_diffusion" if dither else "swscale",
-        "spoken_tail_seconds": SPOKEN_TAIL_SECONDS,
+        **timing,
         "film_seconds": round(clock, 6),
         "narration_seconds": narration,
         "spans": spans,
@@ -4257,8 +4969,12 @@ def spoken_words(text: str) -> int:
     return said
 
 
-def estimated_narration_seconds(text: str) -> float:
-    """How long the studio's voice will take to say ``text``, before it is voiced."""
+def estimated_narration_seconds(text: str, voice: Any = None) -> float:
+    """How long the voice will take to say ``text``, before it is voiced: the high rate a
+    clip is bought for of ``voice`` (a `pauses.VoiceProfile`: the voice a film's pauses were
+    frozen with, «pauza vocii»), else the legacy SECONDS_PER_SPOKEN_WORD."""
+    if voice is not None:
+        return pause_rules.speech_seconds(text, voice, high=True)
     return round(spoken_words(text) * SECONDS_PER_SPOKEN_WORD, 3)
 
 
@@ -4266,9 +4982,11 @@ def _rendered_narration(
     session: Session, storyboard_id: str
 ) -> dict[int, tuple[float, frozenset[str]]]:
     """Per scene, the trimmed narration length the newest render measured (``audio_seconds``,
-    what its shot span was cut from) and the narration takes it was said from. Empty for a
-    render with no kept takes (a placeholder voice). A FAILED render keeps them too
-    (`_fail_job` writes what was built)."""
+    what its shot span was cut from; for a film timed by its frozen pauses its
+    ``reading_seconds``, the span less the share of the pauses an estimate adds back,
+    `_lay_out_voice`) and the narration takes it was said from. Empty for a render with no
+    kept takes (a placeholder voice). A FAILED render keeps them too (`_fail_job` writes what
+    was built)."""
     jobs = session.scalars(
         select(VideoRenderJob)
         .where(VideoRenderJob.storyboard_id == storyboard_id)
@@ -4281,7 +4999,7 @@ def _rendered_narration(
         for entry in production.get("scenes") or []:
             if not isinstance(entry, dict):
                 continue
-            said = entry.get("audio_seconds")
+            said = entry.get("reading_seconds", entry.get("audio_seconds"))
             takes = entry.get("narration_takes")
             if (
                 isinstance(said, int | float)
@@ -4352,7 +5070,14 @@ def narration_readings(
     2026-10-10 (review): a dialogue scene's takes are in two voices, and the reading wanted
     every part from ONE voice: such a scene stayed ESTIMATED even after a render measured it,
     the sheet said «Pregătit» for a clip every render refused, and its redo was priced at the
-    estimate, below what the refusal said its words need."""
+    estimate, below what the refusal said its words need.
+
+    A film timed by its frozen pauses («pauza vocii», 2026-10-16) is read by
+    `_frozen_readings`: its words from the start of its take to its last letter, the pause
+    after them being its frozen pause, never the vendor's own trailing silence."""
+    plans = film_length.frozen_rows(scenes)
+    if plans is not None:
+        return _frozen_readings(session, storyboard_id, scenes, plans)
     wanted: dict[int, tuple[str, str]] = {}
     for scene in scenes:
         words = " ".join(str(scene.get("voiceover_segment") or "").split())
@@ -4430,6 +5155,189 @@ def narration_readings(
     return readings
 
 
+def _take_pieces(
+    kept: Mapping[str, Any],
+    units: Sequence[str],
+    vendor_seconds: float,
+    cut_in_pause: float,
+    picture_slide_words: int = 0,
+) -> list[tuple[float, float]]:
+    """(seconds, least) of each unit's words in one kept take, as the render cuts and trims it
+    under the pause rules. A unit inside the take: from where its shot starts (the picture cut
+    before it, `pause_plan.take_cuts` with the film's ``cut_in_pause`` and L-cut, or the
+    take's first letter less the head the trim keeps) to the next cut, measured. The take's
+    last unit: to its last letter and the edge the trim keeps, where the trim cuts it (never
+    the vendor's end of file: the vendor stretches the final "." to it and the trim cuts that
+    away, `pauses.trim_cut`); the silence after it is the row's frozen pause. Only where the
+    sound has not died away by then does the trim keep more, which the measured margin and
+    the clip's slow-down cover. Untimed: each unit its share of the vendor's length, the
+    shortest a quarter less (FASTEST_SPOKEN_SHARE), the last the trim's most less
+    (UNTIMED_TRIM_MAX_SECONDS)."""
+    from app.media.toolchain import EDGE_KEEP_SECONDS  # noqa: PLC0415
+
+    raw = kept.get("raw_response")
+    words = pause_plan.take_words(raw if isinstance(raw, dict) else None, kept.get("word_timings"))
+    count = len(units)
+    vendor = float(vendor_seconds)
+    if count == 1:
+        if not words:
+            return [(round(vendor, 3), round(max(0.0, vendor - UNTIMED_TRIM_MAX_SECONDS), 3))]
+        head = max(0.0, words[0].first - EDGE_KEEP_SECONDS)
+        said = round(max(0.0, min(vendor, words[-1].last + EDGE_KEEP_SECONDS) - head), 3)
+        return [(said, said)]
+    cuts = pause_plan.take_cuts(
+        units,
+        vendor,
+        words,
+        cut_in_pause=cut_in_pause,
+        picture_slide_words=picture_slide_words,
+    )
+    pieces: list[tuple[float, float]] = []
+    if cuts.timed and words:
+        head = max(0.0, words[0].first - EDGE_KEEP_SECONDS)
+        letters = min(vendor, words[-1].last + EDGE_KEEP_SECONDS)
+        for position in range(count):
+            start = cuts.offsets[position] if position else head
+            end = cuts.offsets[position + 1] if position + 1 < count else letters
+            seconds = round(max(0.0, end - start), 3)
+            pieces.append((seconds, seconds))
+        return pieces
+    for position in range(count):
+        start = cuts.offsets[position]
+        end = cuts.offsets[position + 1] if position + 1 < count else vendor
+        seconds = round(max(0.0, end - start), 3)
+        least = (
+            max(0.0, seconds - UNTIMED_TRIM_MAX_SECONDS)
+            if position + 1 == count
+            else seconds * FASTEST_SPOKEN_SHARE
+        )
+        pieces.append((seconds, round(least, 3)))
+    return pieces
+
+
+def _frozen_readings(
+    session: Session,
+    storyboard_id: str,
+    scenes: Sequence[dict[str, Any]],
+    plans: Sequence[film_length.RowPause],
+) -> dict[int, NarrationReading]:
+    """Per row with words of a film timed by its frozen pauses («pauza vocii»), its
+    `NarrationReading`: its words from where its shot starts to its last letter, the silence
+    after them being the row's frozen pause (`film_length.RowPause`), never the vendor's own
+    trailing silence, which the render's trim cuts.
+
+    NARRATION_RENDERED when the newest render measured the row (``audio_seconds``) from takes
+    that all still hold the board's words as they are now. Else NARRATION_MEASURED from the
+    kept takes: a take said over several rows (one voice group, `voice_takes`) cut at its rows'
+    words on its own timing (`_take_pieces`), as the render cuts it; a row's own takes, every
+    part present, end to end (the joins between them are the row's frozen inner pauses). Else
+    NARRATION_ESTIMATED: its words at their voices' high rates as the one estimate reads them
+    (`film_length.RowPause.speech`: each speaker's part at its own voice's rate, an L-cut's
+    words on the shot they are said under; `estimated_narration_seconds` of its slowest voice
+    when the freeze did not count its parts), the shortest at FASTEST_SPOKEN_SHARE of it."""
+    texts = {
+        int(scene["scene_index"]): " ".join(str(scene.get("voiceover_segment") or "").split())
+        for scene in scenes
+    }
+    if not any(texts.values()):
+        return {}
+    beta = plans[0].beta if plans else 0.0
+    slide = plans[0].slide if plans else 0
+    rows = session.scalars(
+        select(SceneTake)
+        .where(
+            SceneTake.storyboard_id == storyboard_id,
+            SceneTake.kind == NARRATION_KIND,
+            SceneTake.status.in_(REUSABLE_TAKE_STATUSES),
+        )
+        .order_by(SceneTake.created_at)
+    ).all()
+    # The newest reading of each row wins: the takes come oldest first.
+    grouped: dict[int, tuple[float, float]] = {}
+    by_part: dict[tuple[int, int, str], dict[int, tuple[float, float]]] = {}
+    current: set[str] = set()
+    for row in rows:
+        if not row.path:
+            continue
+        path = Path(row.path)
+        try:
+            kept = json.loads(_sidecar(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(kept, dict) or not path.is_file():
+            continue
+        seconds = kept.get("duration_seconds")
+        if isinstance(seconds, bool) or not isinstance(seconds, int | float) or seconds <= 0:
+            seconds = row.seconds
+        if not isinstance(seconds, int | float) or seconds <= 0:
+            continue
+        said_over = kept.get("rows")
+        if isinstance(said_over, list) and len(said_over) > 1 and kept.get("take_text_sha256"):
+            numbers = [int(number) for number in said_over]
+            units = [texts.get(number) or "" for number in numbers]
+            if not all(units) or kept["take_text_sha256"] != _text_sha(" ".join(units)):
+                continue
+            current.add(row.id)
+            for number, piece in zip(
+                numbers, _take_pieces(kept, units, float(seconds), beta, slide), strict=True
+            ):
+                grouped[number] = piece
+            continue
+        index = int(row.scene_number)
+        words = texts.get(index)
+        if not words or kept.get("scene_text_sha256") != _text_sha(words):
+            continue
+        current.add(row.id)
+        parts = max(1, int(kept.get("parts") or 1))
+        part = int(kept.get("part") or 0)
+        (piece,) = _take_pieces(kept, [words], float(seconds), beta)
+        by_part.setdefault((index, parts, str(kept.get("voice_key") or "")), {})[part] = piece
+        by_part.setdefault((index, parts, ""), {})[part] = piece
+    # A row said in several takes (a speaker each) is its takes end to end and the joins the
+    # render lays between them: its frozen inner pauses (in the row's share), and its pause
+    # after for any join it holds no record of (`_unit_join`), counted here.
+    plan_of = {int(scene["scene_index"]): plan for scene, plan in zip(scenes, plans, strict=True)}
+    complete: dict[int, list[tuple[float, float]]] = {}
+    for (index, parts, _voice), found in by_part.items():
+        if all(part in found for part in range(parts)):
+            plan = plan_of.get(index)
+            unrecorded = max(0, parts - 1 - (plan.joins if plan else 0))
+            joined = unrecorded * (plan.after if plan else 0.0)
+            complete.setdefault(index, []).append(
+                (
+                    sum(found[part][0] for part in range(parts)) + joined,
+                    sum(found[part][1] for part in range(parts)) + joined,
+                )
+            )
+    rendered = _rendered_narration(session, storyboard_id) if current else {}
+    readings: dict[int, NarrationReading] = {}
+    for scene, plan in zip(scenes, plans, strict=True):
+        index = int(scene["scene_index"])
+        words = texts.get(index) or ""
+        if not words:
+            continue
+        measured = rendered.get(index)
+        if measured is not None and measured[1] <= current:
+            readings[index] = NarrationReading(measured[0], NARRATION_RENDERED, measured[0])
+        elif index in grouped:
+            seconds, least = grouped[index]
+            readings[index] = NarrationReading(seconds, NARRATION_MEASURED, min(seconds, least))
+        elif complete.get(index):
+            longest = max(seconds for seconds, _least in complete[index])
+            shortest = min(least for _seconds, least in complete[index])
+            readings[index] = NarrationReading(longest, NARRATION_MEASURED, min(longest, shortest))
+        else:
+            estimate = (
+                plan.speech
+                if plan.speech is not None
+                else estimated_narration_seconds(words, plan.voice)
+            )
+            readings[index] = NarrationReading(
+                estimate, NARRATION_ESTIMATED, round(estimate * FASTEST_SPOKEN_SHARE, 3)
+            )
+    return readings
+
+
 def scene_narration_lengths(
     session: Session, storyboard_id: str, scenes: Sequence[dict[str, Any]]
 ) -> dict[int, tuple[float, str]]:
@@ -4452,11 +5360,31 @@ def expected_shot_spans(
         lengths[int(scene["scene_index"])][0] if int(scene["scene_index"]) in lengths else None
         for scene in scenes
     ]
+    # A film timed by its frozen pauses: each row holds its share of them, every cut on a
+    # frame of the cumulative timeline, as the render lays it (`scene_spans` with pauses); a
+    # row whose words are only estimated also holds the voice's own pause at a cut inside its
+    # take, which a voiced take measures with its words (`film_length.in_take_holds`).
+    plans = film_length.frozen_rows(scenes)
+    held = [
+        _held_pause(plans[position], lengths.get(int(scene["scene_index"])))
+        if plans is not None
+        else 0.0
+        for position, scene in enumerate(scenes)
+    ]
     timed = [
         {**scene, "duration_seconds": span}
         for scene, span in zip(
             scenes,
-            scene_spans(planned, spoken, kinds=[scene_kind_of(scene) for scene in scenes]),
+            scene_spans(
+                planned,
+                spoken,
+                kinds=[scene_kind_of(scene) for scene in scenes],
+                pauses=(
+                    [plan.share + more for plan, more in zip(plans, held, strict=True)]
+                    if plans is not None
+                    else None
+                ),
+            ),
             strict=True,
         )
     ]
@@ -4483,6 +5411,10 @@ def clip_plan(
     lengths = scene_narration_lengths(session, storyboard_id, scenes)
     joins = scene_joins(list(scenes))
     floors = _refused_spans(session, storyboard_id, scenes)
+    # A film timed by its frozen pauses («pauza vocii»): each clip holds its row's share of
+    # them (the pause after a take's last row, nothing after a cut inside a take), never the
+    # legacy breath after every row.
+    plans = film_length.frozen_rows(scenes)
     sizes: dict[int, dict[str, Any]] = {}
     for position, scene in enumerate(scenes):
         if is_composed(scene):
@@ -4499,7 +5431,16 @@ def clip_plan(
         if found is not None:
             said, source = found
             dissolve = joins[position + 1] if position + 1 < len(joins) else 0.0
-            voiced = _voiced_clip_seconds(said, source, dissolve)
+            voiced = _voiced_clip_seconds(
+                said,
+                source,
+                dissolve,
+                pause=(
+                    plans[position].share + _held_pause(plans[position], found)
+                    if plans is not None
+                    else None
+                ),
+            )
             entry["spoken_seconds"] = round(said, 3)
             if voiced > planned:
                 entry.update(seconds=voiced, source=source)
@@ -4512,36 +5453,41 @@ def clip_plan(
     return sizes
 
 
-def _voiced_clip_seconds(said: float, source: str, dissolve: float) -> float:
-    """The clip ``said`` seconds of words need: the words, the breath, the dissolve into the
+def _held_pause(plan: film_length.RowPause | None, found: tuple[float, str] | None) -> float:
+    """The voice's own pause a row's shot holds at a cut inside its take, counted where the
+    row's words are only estimated (`film_length.RowPause.held`): a voiced take's reading
+    measures that pause with its words."""
+    if plan is None or found is None or found[1] != NARRATION_ESTIMATED:
+        return 0.0
+    return float(plan.held)
+
+
+def _voiced_clip_seconds(
+    said: float, source: str, dissolve: float, *, pause: float | None = None
+) -> float:
+    """The clip ``said`` seconds of words need: the words, the silence the shot holds after
+    them (``pause``: the row's share of its frozen pauses, `film_length.RowPause.share`; the
+    legacy LEGACY_SPOKEN_TAIL_SECONDS for a film built before them), the dissolve into the
     next scene and the margin of where the length comes from (``source``), on whole frames."""
     margin = (
         said * NARRATION_ESTIMATE_MARGIN
         if source == NARRATION_ESTIMATED
         else MEASURED_NARRATION_MARGIN_SECONDS
     )
-    return round(whole_frames(said + SPOKEN_TAIL_SECONDS + dissolve + margin, up=True), 3)
+    held = LEGACY_SPOKEN_TAIL_SECONDS if pause is None else max(0.0, float(pause))
+    return round(whole_frames(said + held + dissolve + margin, up=True), 3)
 
 
 def script_clip_seconds(scenes: Sequence[dict[str, Any]]) -> dict[int, float]:
-    """Per filmed scene of a script (by position, from 1, as its storyboard numbers them), the
-    clip `clip_plan` will buy for it before a word is voiced: its words estimated, plus the
-    breath, the dissolve into the next scene and the estimate's margin; never shorter than a
-    plan the scene states. What the story review reads a scene's length against its motion
-    model's longest clip by (2026-10-10, film 6fe6a577)."""
-    joins = scene_joins(list(scenes))
-    sizes: dict[int, float] = {}
-    for position, scene in enumerate(scenes):
-        if is_composed(scene):
-            continue
-        said = estimated_narration_seconds(
-            str(scene.get("narration") or scene.get("voiceover_segment") or "")
-        )
-        dissolve = joins[position + 1] if position + 1 < len(joins) else 0.0
-        voiced = _voiced_clip_seconds(said, NARRATION_ESTIMATED, dissolve) if said > 0 else 0.0
-        planned = motion_seconds(scene) if scene.get("duration_seconds") else 0.0
-        sizes[position + 1] = max(voiced, planned)
-    return sizes
+    """Per filmed row of a script (by position, from 1, as its storyboard numbers them), the
+    clip `clip_plan` will buy for it before a word is voiced: the one estimate's
+    (`film_length.factual_clips`): its words at the narrator's high rate with the estimate's
+    margin, the share of the pauses the storyboard will freeze around it, the dissolve into the
+    next row; never shorter than a plan the row states. What the story review reads a scene's
+    length against its motion model's longest clip by (2026-10-10, film 6fe6a577). ``scenes``
+    are the storyboard's rows as `film_length.factual_rows` cuts them (with the montage off,
+    the script's scenes)."""
+    return film_length.factual_clips(scenes)
 
 
 def _words_sha(scene: dict[str, Any]) -> str:
@@ -4604,7 +5550,9 @@ def clip_fits(clip_seconds: float | None, span: float) -> bool:
 
 
 def _percent_longer(clip_seconds: float, span: float) -> int:
-    return math.ceil((float(span) / float(clip_seconds) - 1.0) * 100 - 1e-6)
+    # Read to a thousandth of a percent first: a span laid on the timeline is rounded to the
+    # microsecond, and 6.7500003 s against 5.0 s is the 35% the sheet reads, not 36%.
+    return math.ceil(round((float(span) / float(clip_seconds) - 1.0) * 100, 3) - 1e-6)
 
 
 def clip_short_words(
@@ -4654,6 +5602,7 @@ def clip_readiness(
     from_prompt: bool = False,
     least_span: float | None = None,
     estimated: bool = False,
+    room: float = 0.0,
 ) -> dict[str, Any]:
     """Whether a filmed scene's shot may be cut into its film: the one reading the shooting
     sheet shows, the pre-check of `assemble_from_takes` makes before anything is voiced, and
@@ -4673,13 +5622,23 @@ def clip_readiness(
     says so, and the render measures the words and decides; a clip too short even for
     ``least_span`` is CLIP_SHORT before anything is bought (review of 2026-10-10).
 
+    ``room`` (a film timed by its frozen pauses, «pauza vocii»): what the pause after the
+    scene's words may give up, in whole frames toward its floor, for a clip that cannot be
+    slowed into the whole span (`film_length.RowPause.room`). As the render does it
+    (`_clip_slowdowns`): only for such a clip, and only the frames it needs
+    (`pause_plan.shrink_frames`, ``pause_given_seconds``); a clip that fits the span as it
+    is reads as it always did.
+
     Returns {scene_index, ok, how, code, why_ro, take_id, clip_seconds, span, needed_seconds,
-    slowed_by, risk_ro}. Reads only.
+    slowed_by, risk_ro, pause_given_seconds}. Reads only.
     """
     index = int(scene["scene_index"])
     fields = motion_fields(scene, still_sha256, from_prompt=from_prompt)
-    least = min_clip_seconds(span)
-    shortest = min_clip_seconds(least_span) if least_span is not None else least
+    room = max(0.0, float(room))
+    least = min_clip_seconds(max(0.0, float(span) - room))
+    shortest = (
+        min_clip_seconds(max(0.0, float(least_span) - room)) if least_span is not None else least
+    )
     reading: dict[str, Any] = {
         "scene_index": index,
         "ok": False,
@@ -4692,6 +5651,7 @@ def clip_readiness(
         "needed_seconds": round(least, 3),
         "slowed_by": None,
         "risk_ro": "",
+        "pause_given_seconds": None,
     }
     shot = _shot_take(session, storyboard_id, index, fields, least)
     at_risk = False
@@ -4714,11 +5674,19 @@ def clip_readiness(
                 ),
             }
         stretch = clip_stretch(have, span)
+        given = None
+        if have and room > 0 and not clip_fits(have, span):
+            # As the render: the pause gives up only the frames the clip needs.
+            frames = pause_plan.shrink_frames(have, span, room, TIMELINE_FPS, clip_fits)
+            if frames > 0:
+                given = round(frames / TIMELINE_FPS, 4)
+                stretch = clip_stretch(have, float(span) - given)
         return {
             **reading,
             "ok": True,
             "how": "slowed" if stretch > 1.0 else "shot",
             "slowed_by": round(stretch, 4) if stretch > 1.0 else None,
+            "pause_given_seconds": given,
         }
     short = _shot_take(session, storyboard_id, index, fields, 0.0)
     have = shot_clip_seconds(short) if short is not None else None
@@ -4745,6 +5713,7 @@ def assembly_readiness(
     environment: str,
     local_moves: set[int],
     from_prompt: bool = False,
+    cap_moves: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Whether each filmed scene can go into the film assembled from its takes, and why not:
     what the shooting sheet shows and `assemble_from_takes` checks before anything is voiced.
@@ -4754,13 +5723,25 @@ def assembly_readiness(
     `narration_readings`), and the shortest it can come out (the same over each reading's
     ``least``) until a render measured the words; each reading is `clip_readiness`'s, with
     ``span_source`` and the sheet's ``reason_ro``. A scene without a shot it may cut in is
-    ready only by the Owner's LOCAL_MOVE for it, or as a still in TEST."""
+    ready only by a local move chosen for it (``local_moves``: the Owner's LOCAL_MOVE, and
+    ``cap_moves``, the Director's past his renders cap, `renders_cap.cap_local_moves`), or as
+    a still in TEST."""
     narration = narration_readings(session, storyboard_id, scenes)
     spans = expected_shot_spans(
         scenes, {index: (said.seconds, said.source) for index, said in narration.items()}
     )
     least_spans = expected_shot_spans(
         scenes, {index: (said.least, said.source) for index, said in narration.items()}
+    )
+    # A film timed by its frozen pauses: a clip too short to be slowed into its span is still
+    # cut in when the pause after the row's words can give up the difference toward its floor,
+    # and only then, only the frames it needs, as the render does (`_clip_slowdowns`): the
+    # room goes to `clip_readiness`, never off every span. One readiness.
+    plans = film_length.frozen_rows(scenes)
+    rooms = (
+        {int(scene["scene_index"]): plan.room for scene, plan in zip(scenes, plans, strict=True)}
+        if plans is not None
+        else {}
     )
     readings: list[dict[str, Any]] = []
     for scene in scenes:
@@ -4800,6 +5781,7 @@ def assembly_readiness(
             from_prompt=from_prompt,
             least_span=least_spans[index] if least_spans[index] < spans[index] else None,
             estimated=source == NARRATION_ESTIMATED,
+            room=rooms.get(index, 0.0),
         )
         reading["span_source"] = source
         # The shortest the span can come out while the words are not measured yet (None once
@@ -4809,8 +5791,9 @@ def assembly_readiness(
             round(least_spans[index], 3) if least_spans[index] < spans[index] else None
         )
         if reading["ok"]:
+            given = float(reading.get("pause_given_seconds") or 0.0)
             reading["reason_ro"] = (
-                slowed_words(index, float(reading["clip_seconds"]), spans[index])
+                slowed_words(index, float(reading["clip_seconds"]), spans[index] - given)
                 if reading["how"] == "slowed"
                 else ""
             )
@@ -4818,7 +5801,15 @@ def assembly_readiness(
             reading.update(
                 ok=True,
                 how="local_move",
-                reason_ro=f"Scena {index}: imagine fixă animată local, aleasă de Proprietar.",
+                reason_ro=(
+                    cap_local_move_words(
+                        index,
+                        picture=renders_made(session, storyboard_id, index, "motion")
+                        < renders_per_layer(),
+                    )
+                    if index in (cap_moves or set())
+                    else f"Scena {index}: imagine fixă animată local, aleasă de Proprietar."
+                ),
             )
         elif environment != "PRODUCTION":
             reading.update(
@@ -5015,6 +6006,20 @@ def propose_clip_redos(
         plan: dict[str, Any] = {}
         outcome: dict[str, Any] = {"scene_index": index}
         try:
+            if _redo_past_cap(engine, storyboard_id, index, "motion", settings) is not None:
+                # Past the Owner's renders cap no longer clip is bought (2026-10-16): the
+                # Director shows the scene as its approved still moved locally, the closest
+                # it can be, and the film is assembled with it — nothing waits for him.
+                with Session(engine) as session, session.begin():
+                    lock_for_write(session)
+                    record_cap_local_move(session, storyboard_id, index, correlation_id)
+                    # The picture's cap, said so when the motion had fewer renders than it.
+                    picture = renders_made(
+                        session, storyboard_id, index, "motion"
+                    ) < renders_per_layer(settings)
+                raise SceneRedoRefused(
+                    RENDERS_CAP, cap_local_move_words(index, settings, picture=picture)
+                )
             plan = redo_plan(
                 engine,
                 storyboard_id,
@@ -5106,6 +6111,62 @@ def propose_clip_redos(
 CLIP_QC_EVENT = "media.clip_qc_checked"
 #: The failure code of a shot the studio's clip check, not the vendor, refused.
 CLIP_QC_FAILURE_CODE = "QC.CLIP"
+#: The verdict of a clip clip QC did not pass that stands as the scene's shot because the
+#: Owner's renders cap leaves nothing more to buy (`_keep_clip_under_cap`). It is not a pass:
+#: until 2026-10-16 such a clip was recorded PASSED, and the readers of a pass ranked it «QC
+#: passed first» and let it close the Director's motion items (the dishonest-code audit,
+#: STUB-003). Only `clip_kept` reads it as a clip the film may use; QC's own measurement stays
+#: on the record (``qc_verdict``, ``passed``).
+CAP_VERDICT = "ACCEPTED_UNDER_CAP"
+#: The clip-QC verdicts a film may cut in without the Owner's look: a pass, or a clip kept
+#: under his renders cap.
+CLIP_KEPT_VERDICTS = frozenset({"PASSED", CAP_VERDICT})
+
+
+def clip_kept(record: Mapping[str, Any] | None) -> bool:
+    """Whether a clip-QC record lets its clip into the film: it passed, or it is kept under
+    the Owner's renders cap. Never read as a pass by what measures quality (`_cap_shot_candidates`
+    ranks, `fix_check` closes items only on a real PASSED)."""
+    return (record or {}).get("verdict") in CLIP_KEPT_VERDICTS
+
+
+def is_legacy_cap_pass(record: Mapping[str, Any] | None) -> bool:
+    """Whether a clip-QC record is one the cap-keep wrote before 2026-10-16: ``verdict`` PASSED
+    and ``passed`` True for a clip clip QC had refused, kept by the cap (`CAP_APPROVER`,
+    ``accepted_under_cap``) with no QC verdict of its own. Four such records stand on the live
+    films (7c26a7ce scenes 1-2, 87c05891 scenes 4-5), each with its refusal in its blocks. A
+    record her second look passed afterwards (``accepted_by`` her look's) is hers, not one."""
+    said = record or {}
+    return (
+        bool(said.get("accepted_under_cap"))
+        and said.get("accepted_by") == CAP_APPROVER
+        and "qc_verdict" not in said
+        and said.get("verdict") == "PASSED"
+    )
+
+
+def read_clip_record(payload: Any) -> dict[str, Any] | None:
+    """A clip-QC event's payload as the record every reader reads (`clip_qc_of`, the hero gate,
+    the register): as written, except a record the old cap-keep wrote as a pass
+    (`is_legacy_cap_pass`), which is read as what it was — kept under the cap (`CAP_VERDICT`),
+    not passed — with QC's own verdict as its checks and blocks still show it: FAILED when a
+    blocking check failed or it carries a refusal, else UNCHECKED. The events stay as written
+    (the database is never rewritten for this); the review of the track-1 fix, STUB-003."""
+    if not isinstance(payload, Mapping):
+        return None
+    record = dict(payload)
+    if not is_legacy_cap_pass(record):
+        return record
+    checks = [check for check in record.get("checks") or [] if isinstance(check, Mapping)]
+    failed = any(check.get("blocking") and check.get("status") == "FAILED" for check in checks)
+    blocks = [str(text) for text in record.get("blocks_ro") or [] if str(text).strip()]
+    record.update(
+        verdict=CAP_VERDICT,
+        passed=False,
+        qc_verdict="FAILED" if failed or blocks else "UNCHECKED",
+        legacy_cap_pass=True,
+    )
+    return record
 
 
 def clip_report_record(report: Any) -> dict[str, Any]:
@@ -5141,6 +6202,350 @@ def clip_report_record(report: Any) -> dict[str, Any]:
         "unmeasured": list(report.unmeasured),
         "measured": json.loads(json.dumps(report.measured or {}, default=str)),
     }
+
+
+# The Owner's renders cap (`renders_cap`, `Settings.renders_per_layer`; 2026-10-16: the
+# first render and at most one more): a scene's still made as many times as the cap allows is
+# the scene's picture whatever the clip's look finds in it.
+
+
+def _still_at_renders_cap(engine: Engine, storyboard_id: str, scene_number: int) -> bool:
+    """Whether the scene's still has had its renders (every paid request among its takes, the
+    cap read now): a clip refused for the picture's fault cannot send it back for another."""
+    with Session(engine) as session:
+        return renders_made(session, storyboard_id, scene_number, "still") >= renders_per_layer()
+
+
+def motion_capped_reason(scene_index: int) -> str:
+    """Why nothing more of a scene's motion is bought: the Owner's renders cap, with its
+    number read now, and what stands instead (`settle_motion_under_cap`)."""
+    return (
+        f"Scena {scene_index}: mișcarea ei a avut deja {renders_ro()}, plafonul "
+        f"Proprietarului; nu se mai cumpără: {CAP_KEEPS_RO}."
+    )
+
+
+def _keep_clip_under_cap(
+    engine: Engine,
+    take_id: str,
+    record: dict[str, Any],
+    *,
+    choice: CapChoice,
+    storyboard_id: str,
+    scene_number: int,
+    seed: int | None,
+    attempt: int,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """A clip that stands as the scene's shot because the Owner's renders cap leaves nothing
+    more to buy for it (its motion had its renders, or its picture did and a new one could not
+    be bought): accepted under the cap (`CAP_APPROVER`), its refusal kept as the lesson in its
+    quality note and in the record (04:11Z, 7c26a7ce scenes 1-3: the stills kept under the cap
+    carried a window, every clip of them was sent back to a still that could not be bought
+    again, and the film stood still).
+
+    The record keeps what clip QC measured: PASSED only when the clip passed it, else
+    `CAP_VERDICT` with ``passed`` False and QC's own verdict in ``qc_verdict`` — never a pass
+    it did not earn (STUB-003). ``choice`` (`cap_choice.choose_under_cap`) says who chose this
+    clip among the scene's and how; it is recorded with the take (`record_cap_choice`) and said
+    in the note."""
+    measured = str(record.get("qc_verdict") or record.get("verdict") or "FAILED")
+    kept = {
+        **record,
+        "verdict": "PASSED" if measured == "PASSED" else CAP_VERDICT,
+        "qc_verdict": measured,
+        "passed": measured == "PASSED",
+        "accepted_by": CAP_APPROVER,
+        "accepted_under_cap": True,
+        "chosen_by": choice.chosen_by,
+        "cap_choice": choice.how,
+        "cap_note_ro": (
+            f"Acceptat sub plafonul Proprietarului ({renders_of_ro('imaginii sau ale mișcării')}"
+            f"): {choice.words_ro} Ce a rămas sub standard e lecție pentru filmul următor."
+        ),
+    }
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        row = session.get(SceneTake, take_id)
+        previous: dict[str, Any] | None = None
+        if row is not None:
+            previous = {
+                "status": row.status,
+                "approved_by": row.approved_by,
+                "failure_code": row.failure_code,
+                "failure_detail": row.failure_detail,
+            }
+            row.status = "PAID"
+            row.approved_by = CAP_APPROVER
+            row.failure_code = None
+            row.failure_detail = None
+            row.updated_at = utc_now()
+            sync_take_quality(
+                session,
+                row,
+                accepted=True,
+                reason=(kept["cap_note_ro"] + " " + "; ".join(record.get("blocks_ro") or []))[
+                    :4000
+                ],
+            )
+        append_event(
+            session,
+            CLIP_QC_EVENT,
+            "scene_take",
+            take_id,
+            1,
+            {
+                "storyboard_id": storyboard_id,
+                "scene_number": scene_number,
+                "take_id": take_id,
+                "seed": seed,
+                "attempt": attempt,
+                **kept,
+            },
+            correlation_id,
+        )
+        record_cap_choice(
+            session,
+            choice,
+            storyboard_id=storyboard_id,
+            scene_index=int(scene_number),
+            correlation_id=correlation_id,
+            previous=previous,
+        )
+    return kept
+
+
+def scene_approved_still(engine: Engine, storyboard_id: str, scene_index: int) -> SceneTake | None:
+    """The filmed scene's still approved for its words as they are now (as the sheet and the
+    assembly look for it: `still_options`), detached, or None."""
+    _title, scenes = _storyboard_scenes(engine, storyboard_id)
+    scene = next((item for item in scenes if int(item["scene_index"]) == int(scene_index)), None)
+    if scene is None or scene_kind_of(scene) != LIVE_KIND:
+        return None
+    with Session(engine) as session:
+        found = usable_take(
+            session,
+            storyboard_id,
+            int(scene_index),
+            "still",
+            still_options(engine, scene),
+            statuses=("APPROVED",),
+        )
+        if found is not None:
+            session.expunge(found)
+        return found
+
+
+def scene_readiness(
+    engine: Engine, storyboard_id: str, scene_index: int, *, environment: str | None = None
+) -> dict[str, Any] | None:
+    """The assembly's reading of one filmed scene as it stands (`assembly_readiness`, its
+    still looked for as the sheet looks for it, no local move counted), or None for a card or
+    a scene with no approved still (its picture is settled first)."""
+    from app.services import studio_environment  # noqa: PLC0415
+
+    _title, scenes = _storyboard_scenes(engine, storyboard_id)
+    scene = next((item for item in scenes if int(item["scene_index"]) == int(scene_index)), None)
+    if scene is None or scene_kind_of(scene) != LIVE_KIND:
+        return None
+    with Session(engine) as session:
+        stills: dict[int, str | None] = {}
+        for item in scenes:
+            if scene_kind_of(item) != LIVE_KIND:
+                continue
+            found = usable_take(
+                session,
+                storyboard_id,
+                int(item["scene_index"]),
+                "still",
+                still_options(engine, item),
+                statuses=("APPROVED",),
+            )
+            stills[int(item["scene_index"])] = found.sha256 if found is not None else None
+        if not stills.get(int(scene_index)):
+            return None
+        readings = assembly_readiness(
+            session,
+            storyboard_id,
+            scenes,
+            stills,
+            environment=environment or studio_environment(engine),
+            local_moves=set(),
+        )
+    return next((item for item in readings if int(item["scene_index"]) == int(scene_index)), None)
+
+
+def _cuts_a_clip(reading: dict[str, Any]) -> bool:
+    """Whether a scene's reading cuts a clip into the film (its shot, slowed, or at risk until
+    its words are measured): a still — TEST's or a local move — is not a clip."""
+    return bool(reading.get("ok")) and reading.get("how") in ("shot", "slowed", "at_risk")
+
+
+def _cap_shot_candidates(
+    session: Session, storyboard_id: str, scene_number: int
+) -> list[SceneTake]:
+    """The scene's paid shots that may stand under the Owner's renders cap, in the studio's
+    own order (`cap_choice.STUDIO_RULE_RO`: one clip QC really passed first — never one only
+    kept under the cap, `CAP_VERDICT` — then the newest, made on the most corrected words):
+    any words, any model, with the file on disk that was bought (its sha256). His own APPROVED
+    shots are his and are never re-marked here, and a shot he rejected himself
+    (`owner_rejected_takes`) is never one: it is not used in a film unless he chooses it again
+    (`decide_take`). Past the cap the Director chooses among them
+    (`cap_choice.choose_under_cap`)."""
+    rows = list(
+        session.scalars(
+            select(SceneTake)
+            .where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == int(scene_number),
+                SceneTake.kind.in_(SHOT_TAKE_KINDS),
+                SceneTake.status.in_(("PAID", "REJECTED")),
+            )
+            .order_by(SceneTake.created_at.desc())
+        )
+    )
+    his_no = owner_rejected_takes(session, rows)
+    usable = [
+        row
+        for row in rows
+        if row.id not in his_no
+        and row.path
+        and row.sha256
+        and Path(row.path).is_file()
+        and _file_sha256(Path(row.path)) == row.sha256
+    ]
+    return sorted(
+        usable,
+        key=lambda row: 0 if (clip_qc_of(session, row.id) or {}).get("verdict") == "PASSED" else 1,
+    )
+
+
+def _choose_shot_under_cap(
+    engine: Engine,
+    storyboard_id: str,
+    scene_index: int,
+    correlation_id: str,
+    *,
+    registry: Any | None = None,
+    ffmpeg_path: str | None = None,
+) -> tuple[CapChoice, dict[str, Any]] | None:
+    """The clip the scene keeps under the cap among its shots on disk (`_cap_shot_candidates`)
+    and its latest clip-QC record: the one it has, the one the Director chooses among several,
+    or the studio's own pick when she cannot choose (`cap_choice.choose_under_cap`). None when
+    no clip of it can stand."""
+    with Session(engine) as session:
+        ids = [str(row.id) for row in _cap_shot_candidates(session, storyboard_id, scene_index)]
+    choice = choose_under_cap(
+        engine,
+        registry,
+        storyboard_id=storyboard_id,
+        scene_index=int(scene_index),
+        layer="motion",
+        take_ids=ids,
+        correlation_id=correlation_id,
+        ffmpeg_path=ffmpeg_path,
+    )
+    if choice is None:
+        return None
+    with Session(engine) as session:
+        record = dict(clip_qc_of(session, choice.take_id) or {})
+        row = session.get(SceneTake, choice.take_id)
+        failure = str(row.failure_detail or "") if row is not None else ""
+    if not record.get("blocks_ro") and failure:
+        record["blocks_ro"] = [failure.removeprefix("Controlul clipului: ")]
+    return choice, record
+
+
+def settle_motion_under_cap(
+    engine: Engine,
+    storyboard_id: str,
+    scene_index: int,
+    correlation_id: str,
+    *,
+    environment: str | None = None,
+    act: bool = True,
+    registry: Any | None = None,
+    ffmpeg_path: str | None = None,
+) -> bool:
+    """A filmed scene whose motion has nothing left to buy (`renders_cap.motion_spent`: it had
+    its renders, or its picture had its renders and the picture kept cannot be animated again)
+    and that the film cannot cut in as it stands: what it has is kept, and the film goes on
+    (the Owner, 2026-10-15: «publicăm cu ce Directoarea alege ca fiind cel mai apropiat»;
+    2026-10-16: «maxim încă o randare»). First a clip it has on disk stands under the cap
+    (`_keep_clip_under_cap`): the one clip it has, or the one the Director chooses among
+    several by looking at their frames through ``registry``, or the studio's own pick when
+    she cannot, said as the studio's
+    (`_choose_shot_under_cap`); a clip already kept under the cap stays kept and is never
+    chosen again. When none stands, or the one kept is too short for its words even slowed
+    down (CLIP_SHORT), the scene is shown as its approved still moved locally
+    (`renders_cap.record_cap_local_move`, 0 credits). Nothing is bought, nothing waits for the
+    Owner. Returns True only when something changed (the walk is walked again on it), so a
+    walk never loops on it.
+
+    ``act=False`` writes nothing, calls no model, and says whether it would change something:
+    the walk's words read it before the ladder acts (`runbook.stages._held_words`)."""
+    with Session(engine) as session:
+        if not motion_spent(session, storyboard_id, scene_index):
+            return False
+        pending = session.scalar(
+            select(SceneTake.id).where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == int(scene_index),
+                SceneTake.kind.in_(SHOT_TAKE_KINDS),
+                SceneTake.status == "SUBMITTED",
+            )
+        )
+    if pending is not None:
+        # Its last render is still at the vendor: collected and checked first, never passed
+        # over for an older clip or a still.
+        return False
+    reading = scene_readiness(engine, storyboard_id, scene_index, environment=environment)
+    if reading is None or _cuts_a_clip(reading):
+        return False
+    changed = False
+    if reading.get("code") != CLIP_SHORT:
+        with Session(engine) as session:
+            already = _cap_kept_shot(session, storyboard_id, scene_index) is not None
+            candidates = bool(_cap_shot_candidates(session, storyboard_id, scene_index))
+        if candidates and not already:
+            if not act:
+                return True
+            chosen = _choose_shot_under_cap(
+                engine,
+                storyboard_id,
+                scene_index,
+                correlation_id,
+                registry=registry,
+                ffmpeg_path=ffmpeg_path,
+            )
+            if chosen is not None:
+                choice, record = chosen
+                _keep_clip_under_cap(
+                    engine,
+                    choice.take_id,
+                    {**record, "verdict": record.get("verdict") or "FAILED"},
+                    choice=choice,
+                    storyboard_id=storyboard_id,
+                    scene_number=int(scene_index),
+                    seed=record.get("seed"),
+                    attempt=int(record.get("attempt") or 1),
+                    correlation_id=correlation_id,
+                )
+                changed = True
+                reading = scene_readiness(
+                    engine, storyboard_id, scene_index, environment=environment
+                )
+    if reading is not None and not _cuts_a_clip(reading):
+        if not act:
+            # `record_cap_local_move` writes only a move that does not stand yet (its motion
+            # is at the cap, read above).
+            with Session(engine) as session:
+                return int(scene_index) not in cap_local_moves(session, storyboard_id)
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            moved = record_cap_local_move(session, storyboard_id, int(scene_index), correlation_id)
+        changed = moved or changed
+    return changed
 
 
 def _keep_clip_report(
@@ -5191,28 +6596,30 @@ def _keep_clip_report(
 
 
 def clip_qc_of(session: Session, take_id: str) -> dict[str, Any] | None:
-    """The latest clip-QC report kept on a take, or None when it was never checked."""
+    """The latest clip-QC report kept on a take, or None when it was never checked. A record
+    the old cap-keep wrote as a pass is read as kept, not passed (`read_clip_record`)."""
     event = session.scalars(
         select(DomainEvent)
         .where(DomainEvent.event_type == CLIP_QC_EVENT, DomainEvent.aggregate_id == take_id)
         .order_by(DomainEvent.sequence.desc())
         .limit(1)
     ).first()
-    return dict(event.payload) if event is not None and isinstance(event.payload, dict) else None
+    return read_clip_record(event.payload) if event is not None else None
 
 
 def clip_accepted(session: Session, take: SceneTake, environment: str) -> tuple[bool, str]:
     """Whether a usable shot take may be cut into the film, and the Owner's reason when not.
 
-    His APPROVED look accepts it; otherwise its clip QC must have passed. In TEST a paid shot
-    nobody could check is used (the rehearsal's takes predate clip QC); in PRODUCTION it
-    waits for his look on the sheet.
+    His APPROVED look accepts it; otherwise its clip QC must have passed, or the clip is kept
+    under his renders cap (`clip_kept`: `CAP_VERDICT`, past the cap the film is published with
+    what it has). In TEST a paid shot nobody could check is used (the rehearsal's takes
+    predate clip QC); in PRODUCTION it waits for his look on the sheet.
     """
     if take.status == "APPROVED":
         return True, ""
     record = clip_qc_of(session, take.id) or {}
     verdict = record.get("verdict")
-    if verdict == "PASSED":
+    if clip_kept(record):
         return True, ""
     if verdict != "FAILED" and environment != "PRODUCTION":
         return True, ""
@@ -5442,6 +6849,24 @@ def owner_take_decisions(
     return found
 
 
+def owner_rejected_takes(session: Session, rows: Sequence[SceneTake]) -> set[str]:
+    """Of ``rows``, the ids of the takes the Owner rejected himself and has not chosen again:
+    his newest decision on the take (`owner_take_decisions`) is REJECTED, or, with no decision
+    of his on the books, the take carries his `OWNER_REJECTED_CODE`. Such a take is not used
+    in a film unless he chooses it again (`decide_take`): nothing kept under his renders cap
+    is one of them (`_cap_shot_candidates`, `stills_stage._cap_candidates`)."""
+    decided = owner_take_decisions(session, [row.id for row in rows])
+    turned_down: set[str] = set()
+    for row in rows:
+        said = decided.get(str(row.id)) or []
+        if said:
+            if said[-1].get("decision") == "REJECTED":
+                turned_down.add(str(row.id))
+        elif row.failure_code == OWNER_REJECTED_CODE:
+            turned_down.add(str(row.id))
+    return turned_down
+
+
 def owner_clip_choice(
     session: Session, storyboard_id: str, scene_number: int, field_options: list[dict[str, Any]]
 ) -> SceneTake | None:
@@ -5587,6 +7012,12 @@ def clip_rejection_words(
         said.append(
             "Controlul clipului l-a respins: " + ("; ".join(blocks) or "fără motiv scris") + "."
         )
+    elif record.get("verdict") == CAP_VERDICT:
+        said.append(
+            "Controlul clipului l-a respins ("
+            + ("; ".join(blocks) or "fără motiv scris")
+            + "); a rămas sub plafonul tău de randări."
+        )
     elif record.get("verdict") == "UNCHECKED":
         said.append(
             "Controlul clipului nu l-a putut verifica"
@@ -5602,7 +7033,7 @@ def clip_rejection_words(
     code = str(take.failure_code or "")
     if (
         take.status == "REJECTED"
-        and code not in (CLIP_QC_FAILURE_CODE, "OWNER.REJECTED")
+        and code not in (CLIP_QC_FAILURE_CODE, OWNER_REJECTED_CODE)
         and take.failure_detail
     ):
         said.append(str(take.failure_detail).strip())
@@ -5837,6 +7268,7 @@ def film_mix(
         correlation_id=correlation,
         mood_text=_mood_text(engine, storyboard_id, title, scenes),
         seed=storyboard_id,
+        storyboard_id=storyboard_id,
     )
     plan = sound_design.plan_record(outcome, _scene_spans(scenes))
     record["plan"] = plan
@@ -6396,6 +7828,11 @@ def assemble_video_job(
         # Each scene carries its kind (scene_category, what the router is told and what the
         # outcome is recorded under) and its story purpose (what decides its tier).
         scenes_data: list[dict[str, Any]] = [scene_view(s) for s in scenes]
+        # A film frozen longer than its wall even at every pause's floor is refused before
+        # anything is bought or a job is opened: quality control would refuse it at the wall.
+        over_the_wall = film_length.wall_refusal(scenes_data)
+        if over_the_wall:
+            raise FilmOverTheWall(over_the_wall)
 
         job = VideoRenderJob(
             id=render_job_id,
@@ -6542,6 +7979,111 @@ def assemble_video_job(
     part_contexts = narration_context(
         [[str(part["text"] or "") for part in parts] for parts, _ in scene_parts]
     )
+    # «Pauza vocii» (the Owner, 2026-10-16): a film built under the pause rules is said one
+    # take per voice group — a writer's scene, a speaker's run inside a beat — the montage
+    # cutting the picture on the take's own word timing, and laid out by its frozen pauses
+    # (`_lay_out_voice`). A film built before them is voiced row by row below, as it was.
+    voicing: list[_VoiceTake] | None = None
+    voicing_rows: list[list[_VoiceUnit]] = []
+    take_contexts: list[dict[str, str | None]] = []
+    frozen_profile: dict[str, Any] = {}
+    frozen_knobs: dict[str, Any] = {}
+    #: The trim the film is cut by: the rule its pauses were frozen under (None: as the rules
+    #: say now), so a rule switched later never changes the silence a frozen pause pads to.
+    to_last_letter: bool | None = None
+    if all_real and ffmpeg_exe and frozen_film(scenes_data):
+        # The film's own voice groups, frozen with it: never the rules' switch as it is now.
+        voicing, voicing_rows = voice_takes(scenes_data, scene_parts, scene_voices, grouped=True)
+        take_contexts = [around[0] for around in narration_context([[t.text] for t in voicing])]
+        first_frozen = frozen_beat(scenes_data[0].get("prompt_json")) or {}
+        frozen_profile = dict(first_frozen.get("pause_profile") or {})
+        frozen_knobs = film_length.film_knobs(scenes_data) or {}
+        switches = frozen_profile.get("switches")
+        if isinstance(switches, Mapping) and isinstance(switches.get("trim_to_last_letter"), bool):
+            to_last_letter = bool(switches["trim_to_last_letter"])
+    # The film's frozen knobs (`film_length.film_knobs`), read only for a frozen film.
+    cut_in_pause = float(frozen_knobs.get("cut_in_pause") or 0.0)
+    slide_words = int(frozen_knobs.get("picture_slide_words") or 0)
+
+    def _say_take(k: int, part: int, parts_here: int) -> None:
+        """Take ``k`` of the voice track said (or a kept narration of the same words in the
+        same voice reused), trimmed, and its units placed on its own word timing."""
+        assert voicing is not None and ffmpeg_exe
+        take = voicing[k]
+        first = scenes_data[take.first_row]
+        number = int(first["scene_index"])
+        voice = take.voice
+        context = take_contexts[k]
+        key = narration_key(take.text, voice, context) if bought_voice(voice) else None
+        kept = reused_narration(engine, storyboard_id, number, key) if key else None
+        if kept is not None:
+            said, take.take_id = kept
+            take.reused = True
+        else:
+            with _at_work(engine, "VoiceArtist", "synthesize_voice", f"vocea scenei {number}"):
+                stitched = _context_fields(context) if stitches(voice) else None
+                # The lines' acting notes go with their words: the voice plays them.
+                direction = take.direction
+                extra_fields = {
+                    **(stitched or {}),
+                    **({"direction": direction} if direction else {}),
+                }
+                said = asyncio.run(
+                    voice.synthesize(take.text, extra=extra_fields)
+                    if extra_fields
+                    else voice.synthesize(take.text)
+                )
+            take.bought = len(take.text)
+            if key:
+                # Kept the moment it is bought: a later failure never buys it again. Filed
+                # under the first row it is said in; its identity is its words and voice,
+                # never a pause or a cut (`narration_key`).
+                take.take_id = keep_narration(
+                    engine,
+                    storyboard_id=storyboard_id,
+                    scene_number=number,
+                    key=key,
+                    voice=voice,
+                    said=said,
+                    folder=work_dir / NARRATION_FOLDER,
+                    scene_text=str(first.get("voiceover_segment") or ""),
+                    part=part,
+                    parts=parts_here,
+                    correlation_id=correlation_id,
+                    take_text=take.text,
+                    rows=list(
+                        dict.fromkeys(int(scenes_data[u.row]["scene_index"]) for u in take.units)
+                    ),
+                )
+        said, trim = _trimmed_take(
+            ffmpeg_exe,
+            said,
+            work_dir,
+            f"take_{number:02d}_{part + 1:02d}",
+            to_last_letter=to_last_letter,
+        )
+        take.said, take.trim = said, trim
+        cuts = pause_plan.take_cuts(
+            [unit.text for unit in take.units],
+            float(said.duration_seconds),
+            pause_plan.take_words(said.raw_response, said.word_timings),
+            cut_in_pause=cut_in_pause,
+            picture_slide_words=slide_words,
+        )
+        take.timed = cuts.timed
+        ends = [*cuts.offsets[1:], float(said.duration_seconds)]
+        for unit, start, end, words, gap in zip(
+            take.units, cuts.offsets, ends, cuts.words, cuts.gaps, strict=True
+        ):
+            unit.offset = float(start)
+            unit.seconds = max(0.0, float(end) - float(start))
+            unit.words = words
+            unit.gap_after = gap
+        segment = work_dir / f"voice_{number:02d}_{part + 1:02d}.{said.format}"
+        segment.write_bytes(said.audio_bytes)
+        voice_segments.append(segment)
+        voice_pads.append(0.0)
+
     try:
         for position, scene in enumerate(scenes_data):
             if position:
@@ -6599,6 +8141,93 @@ def assemble_video_job(
             real_voice = scene_voices[scene_position]
             parts, by_speaker = scene_parts[scene_position]
             voice_started = time.monotonic()
+            if voicing is not None:
+                opened = [k for k, take in enumerate(voicing) if take.first_row == scene_position]
+                for number, k in enumerate(opened):
+                    _say_take(k, number, len(opened))
+                units = voicing_rows[scene_position]
+                said_in = list(dict.fromkeys(unit.take for unit in units))
+                speaking = units[0].voice if units else real_voice
+                frozen_trims: list[dict[str, Any]] = [
+                    trim for trim in (voicing[k].trim for k in opened) if trim
+                ]
+                frozen_record: dict[str, Any] = {
+                    "scene_index": index,
+                    "voice_provider": getattr(
+                        speaking, "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER
+                    ),
+                    "model_id": getattr(speaking, "model", None) or None,
+                    "voice_id": getattr(speaking, "voice_id", None) or None,
+                    "voice_integration_ids": sorted(
+                        {
+                            str(getattr(unit.voice, "integration_id", None))
+                            for unit in units
+                            if getattr(unit.voice, "integration_id", None)
+                        }
+                    ),
+                    # The takes this row's words are said in (bought now or reused): a take
+                    # said over several rows is named on each, and paid on the first.
+                    "narration_takes": [
+                        str(voicing[k].take_id) for k in said_in if voicing[k].take_id
+                    ],
+                    "characters": sum(len(unit.text) for unit in units),
+                    "characters_bought": sum(voicing[k].bought for k in opened),
+                    "narration_reused": [
+                        str(voicing[k].take_id)
+                        for k in opened
+                        if voicing[k].reused and voicing[k].take_id
+                    ],
+                    "audio_seconds": None,
+                    "synthesis_ms": round((time.monotonic() - voice_started) * 1000, 1),
+                    "attempts": 1,
+                    "image": image_attempts[-1] if image_attempts else None,
+                    "scene_kind": scene_kind_of(scene),
+                    "story_purpose": scene.get("story_purpose"),
+                    "still_take": still_take,
+                    # Which take of the voice track each part of the row is said in, and
+                    # where that take was filed (`pause_plan`).
+                    "voice_takes": [
+                        {
+                            "take": k,
+                            "take_id": voicing[k].take_id,
+                            "filed_under": int(scenes_data[voicing[k].first_row]["scene_index"]),
+                            "units": len(voicing[k].units),
+                            "cuts_timed": voicing[k].timed,
+                        }
+                        for k in said_in
+                    ],
+                }
+                if frozen_trims:
+                    frozen_record["trimmed_silence"] = {
+                        "lead_seconds": frozen_trims[0]["lead_seconds"],
+                        "trail_seconds": frozen_trims[-1]["trail_seconds"],
+                        "takes": frozen_trims,
+                    }
+                if by_speaker:
+                    frozen_record["segments"] = [
+                        {
+                            "speaker": unit.part.get("speaker"),
+                            "character_id": unit.part.get("character_id"),
+                            "voice_provider": getattr(
+                                unit.voice, "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER
+                            ),
+                            "model_id": getattr(unit.voice, "model", None) or None,
+                            "voice_id": getattr(unit.voice, "voice_id", None) or None,
+                            "voice_source": (
+                                unit.part.get("voice_source")
+                                if unit.part.get("adapter")
+                                else "scene_voice"
+                            ),
+                            "characters": len(unit.text),
+                            "audio_seconds": None,
+                        }
+                        for unit in units
+                    ]
+                production["scenes"].append(frozen_record)
+                production.setdefault("image_attempts", []).append(
+                    {"scene_index": index, "attempts": image_attempts}
+                )
+                continue
             takes: list[tuple[dict[str, Any], TTSProvider, Any]] = []
             #: Characters this render paid a voice for; a reused narration take costs 0.
             characters_bought = 0
@@ -6630,9 +8259,16 @@ def assemble_video_job(
                         f"vocea scenei {index}",
                     ):
                         stitched = _context_fields(context) if stitches(take_voice) else None
+                        # The line's acting note goes with its words: the voice plays it
+                        # (the Owner, 2026-10-15: «să avem intonație, surprindere, emoție»).
+                        direction = " ".join(str(part.get("direction") or "").split())
+                        extra_fields = {
+                            **(stitched or {}),
+                            **({"direction": direction} if direction else {}),
+                        }
                         said = asyncio.run(
-                            take_voice.synthesize(str(part["text"]), extra=stitched)
-                            if stitched
+                            take_voice.synthesize(str(part["text"]), extra=extra_fields)
+                            if extra_fields
                             else take_voice.synthesize(str(part["text"]))
                         )
                     if all_real:
@@ -6801,7 +8437,87 @@ def assemble_video_job(
     # so the Nepal film carried seconds of silence under still pictures. Without real
     # narration the plan stands, on whole frames.
     planned_lengths = [float(scene["duration_seconds"] or 0.0) for scene in scenes_data]
-    if all_real:
+    timing: _FrozenTiming | None = None
+    #: Where the take pads start in `voice_pads` (1 when a silence opens the track).
+    pad_base = 0
+    if voicing is not None:
+        # The film's frozen pauses lay its voice out (`_lay_out_voice`): the pad after a take
+        # is the frozen pause less the silence its trim kept, a cut inside a take adds nothing,
+        # and every cut is on a frame of the cumulative timeline.
+        # The wall's compression stages are the rules' formulas, read whether or not they are
+        # in use now: the film was frozen under them (without a readable file the frozen
+        # pauses stand as built).
+        with Session(engine) as session:
+            board = session.get(Storyboard, storyboard_id)
+            readable = pause_rules.active_rules() or pause_rules.readable_rules()
+            wall = (
+                pause_plan.board_wall(session, board, readable)
+                if board is not None and readable is not None
+                else None
+            )
+        timing = _lay_out_voice(
+            scenes_data,
+            voicing,
+            voicing_rows,
+            cut_in_pause=cut_in_pause,
+            wall=wall,
+            rules=readable,
+        )
+        for row, scene in enumerate(scenes_data):
+            scene["duration_seconds"] = timing.layout.spans[row]
+            scene["audio_seconds"] = timing.audio[row]
+            row_record = production["scenes"][row]
+            row_record["audio_seconds"] = timing.audio[row]
+            # What a later estimate of the row reads (`_rendered_narration`): its span less
+            # its share of the frozen pauses, which that estimate adds back.
+            row_record["reading_seconds"] = timing.readings[row]
+            pieces = timing.pieces[row]
+            for segment_record, piece in zip(
+                row_record.get("segments") or [], pieces, strict=False
+            ):
+                segment_record["audio_seconds"] = round(piece["seconds"], 3)
+            if not pieces:
+                continue
+            if scene_parts[row][1]:
+                scene["voice_segments"] = [dict(piece) for piece in pieces]
+            else:
+                (piece,) = pieces[:1]
+                words = piece.get("words")
+                scene["word_timings"] = (
+                    [
+                        {
+                            **word,
+                            "start": round(float(word["start"]) + piece["offset"], 4),
+                            "end": round(float(word["end"]) + piece["offset"], 4),
+                        }
+                        for word in words
+                    ]
+                    if isinstance(words, list)
+                    else None
+                )
+        voice_pads[:] = list(timing.layout.pads)
+        if wall is not None and timing.over_seconds > 0:
+            # The measured voice is longer than the wall even with every pause at its floor:
+            # quality control would refuse the film there. Nothing more is bought for it (the
+            # motion pass comes next), and the words must be shortened.
+            over_words = film_length.over_the_wall_words(
+                round(sum(timing.layout.spans), 3), wall, timing.over_seconds, measured=True
+            )
+            production["over_the_wall"] = {
+                "wall": wall,
+                "seconds": round(sum(timing.layout.spans), 3),
+                "over_seconds": timing.over_seconds,
+            }
+            _fail_job(over_words, over_words)
+            raise FilmOverTheWall(over_words)
+        if timing.layout.lead > 0:
+            # The film opens on a silent card: the voice track opens with its silence.
+            voice_segments.insert(
+                0, _silence_wav(work_dir / "voice_00_lead.wav", timing.layout.lead)
+            )
+            voice_pads.insert(0, 0.0)
+            pad_base = 1
+    elif all_real:
         spoken_lengths = [float(scene.get("audio_seconds") or 0.0) for scene in scenes_data]
         for scene, span, pad_at, words_for in zip(
             scenes_data,
@@ -6857,6 +8573,11 @@ def assemble_video_job(
             # shot it fills is the scene plus the dissolve into the next one, if any.
             wanted = float(scene["duration_seconds"]) + TRANSITION_SECONDS
             needed = lengths[position]
+            # A kept clip a little short of its span is still used when the pause after the
+            # scene's words can give up the difference toward its floor (`_clip_slowdowns`),
+            # and only then (`clip_readiness` with the row's ``room``).
+            room_here = timing.room[position] if timing is not None else 0.0
+            fit_span = needed - room_here
             tier = scene_tier(scene, len(scenes_data))
             # A shot already paid for with this package, from this still, long enough for
             # its shot once slowed down by at most SLOWDOWN_ALLOWANCE, is used as it is: the
@@ -6880,6 +8601,7 @@ def assemble_video_job(
                         span=needed,
                         environment=environment,
                         from_prompt=motion_from_prompt,
+                        room=room_here,
                     )
                     found_take = (
                         session.get(SceneTake, reading["take_id"]) if reading["take_id"] else None
@@ -6891,7 +8613,7 @@ def assemble_video_job(
                     not_accepted, found_take = (str(reading["why_ro"] or "") or None), None
             else:
                 found_take = _usable_motion_take(
-                    engine, storyboard_id, scene, fields, min_clip_seconds(needed)
+                    engine, storyboard_id, scene, fields, min_clip_seconds(fit_span)
                 )
                 if found_take is not None:
                     with Session(engine) as session:
@@ -7147,11 +8869,47 @@ def assemble_video_job(
         run_kind=run_kind,
         credit_price=credit_price,
     )
+
     # Each clip is measured against the shot it fills. A clip that covers its shot is cut; one
     # short of it by at most SLOWDOWN_ALLOWANCE is slowed down locally to fill it (0 USD,
     # recorded on the scene); one shorter still is not cut in at all: never a frozen frame
     # (the Owner, 2026-10-09). Held last frames remain only in the shots of older films.
-    slows = _clip_slowdowns(ffmpeg_exe, scenes_data, motion_clips, card_clips, lengths, production)
+    def _shrink_pause(position: int, have: float) -> float:
+        """The pause after scene ``position``'s words shortened, in whole frames toward its
+        floor, until a clip of ``have`` seconds fills the scene: the scene, its shot and the
+        voice's pad after it all lose the same seconds. Returns them (0.0: none)."""
+        if timing is None or timing.room[position] <= 0 or timing.pad_take[position] is None:
+            return 0.0
+        frames = pause_plan.shrink_frames(
+            have, lengths[position], timing.room[position], TIMELINE_FPS, clip_fits
+        )
+        if frames <= 0:
+            return 0.0
+        seconds = frames / TIMELINE_FPS
+        scene = scenes_data[position]
+        scene["duration_seconds"] = round(float(scene["duration_seconds"]) - seconds, 6)
+        lengths[position] = round(lengths[position] - seconds, 6)
+        at = pad_base + int(timing.pad_take[position] or 0)
+        voice_pads[at] = round(max(0.0, voice_pads[at] - seconds), 4)
+        timing.room[position] = max(0.0, timing.room[position] - seconds)
+        record = timing.pauses[position]
+        record["pad"] = round(max(0.0, float(record["pad"]) - seconds), 4)
+        record["heard"] = round(float(record["heard"]) - seconds, 4)
+        record["shrunk_for_clip"] = round(float(record.get("shrunk_for_clip") or 0.0) + seconds, 4)
+        return seconds
+
+    slows = _clip_slowdowns(
+        ffmpeg_exe,
+        scenes_data,
+        motion_clips,
+        card_clips,
+        lengths,
+        production,
+        shrink=_shrink_pause if timing is not None else None,
+    )
+    if timing is not None:
+        # A pause given up for a clip shortened the film: its length is read again.
+        total_duration = sum(s["duration_seconds"] for s in scenes_data)
     interpolate = slowdown_filter(ffmpeg_exe) or "framerate"
     holds = [0.0] * len(scenes_data)
     # A scene the model was asked for and did not deliver — refused, failed, or priced past
@@ -7352,6 +9110,16 @@ def assemble_video_job(
         dither=dither,
         framings=framings,
         slows=slows,
+        pauses=_placed_pauses(timing, scenes_data) if timing is not None else None,
+        pause_profile=(
+            {
+                **frozen_profile,
+                "render_wall": timing.wall,
+                "render_wall_factors": timing.wall_factors,
+            }
+            if timing is not None
+            else None
+        ),
     )
     lut_name: str | None = None
     if real_stills and frame_files:
@@ -7528,12 +9296,15 @@ def assemble_video_job(
             str(output_mp4),
         ]
     try:
-        res = run_encoder(
+        res, encode = encode_to_floor(
+            ffmpeg_exe,
             command_args,
             work_dir,
+            output_mp4,
             carry=((CAPTIONS_ASS_NAME, CAPTION_FONTS_DIR) if captions else ())
             + ((lut_name,) if lut_name else ()),
         )
+        production["encode"] = encode
         log_output = f"FFmpeg exit={res.returncode}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
     except Exception as exc:  # noqa: BLE001
         log_output = f"FFmpeg execution failed: {exc}"
@@ -7821,6 +9592,7 @@ def _replan_sound(
         seed=storyboard_id,
         previous=previous,
         refusal=refusal,
+        storyboard_id=storyboard_id,
     )
     # The scenes' places in the film are the film's: read from the plan it was mixed with.
     spans = {
@@ -8111,6 +9883,9 @@ HERO_ACCEPTED_BY = "clip_qc"
 #: Who may approve or reject a take: the Owner, on the sheet. Nobody else.
 TAKE_DECIDER = "owner"
 TAKE_DECISIONS: tuple[str, ...] = ("APPROVED", "REJECTED")
+#: The failure code of a take the Owner rejected himself (`decide_take`): it is not used in a
+#: film unless he chooses it again (`owner_rejected_takes`).
+OWNER_REJECTED_CODE = "OWNER.REJECTED"
 #: His approval marked final (2026-10-11): ``final`` on his decision, or a note that says so
 #: («finală», «definitiv»). Only a final approval stands against the Director's confirmed
 #: repair (`_retire_takes` ``director_repair``); any other approval of his is still his
@@ -8121,6 +9896,10 @@ FINAL_APPROVAL_WORDS = re.compile(r"\b(?:final[aăe]?|definitiv[aăe]?)\b", re.I
 def final_approval_words(note: str | None) -> bool:
     """Whether the Owner's note on his look marks the approval final."""
     return bool(note) and FINAL_APPROVAL_WORDS.search(str(note)) is not None
+
+
+#: The motion step's status for a film frozen longer than its wall (`film_length.wall_refusal`).
+OVER_THE_WALL = "OVER_THE_WALL"
 
 
 class MotionStepRefused(RuntimeError):
@@ -8275,6 +10054,20 @@ class SpendMeter:
 
     committed: float = 0.0
     attempts: int = 0
+
+
+def budget_cut(summary: dict[str, Any], budget_words: Callable[[], str | None]) -> None:
+    """A round `gpu_batch.run_rounds` cut, or left unsent, for want of room says the budget's
+    words when the step's budget hold (`shooting_sheet.StepHold`), not its cap, was the bound:
+    the day then reads the step as waiting on his budget, never on the cap he approved."""
+    if not summary.get("cap_stop"):
+        return
+    words = budget_words()
+    if not words:
+        return
+    if summary.get("stopped") == summary["cap_stop"]:
+        summary["stopped"] = words
+    summary["cap_stop"] = words
 
 
 #: The failure code of a request that left and got no answer: it may have been served and
@@ -8486,6 +10279,7 @@ STUDIO_DEFECT_RELEASED_EVENT = "media.studio_defect_hold_released"
 #: was queued, or on the Owner's own card (`media.runpod_unsent`). Same payload keys as
 #: `STUDIO_DEFECT_RELEASED_EVENT` (``released_event_id`` first); `scene_memory` skips it too.
 RUNPOD_UNSENT_RELEASED_EVENT = "media.runpod_unsent_hold_released"
+DELIVERY_RETRY_EVENT = "media.delivery_retry_authorized"
 #: The key under which a hold left by an unanswered RunPod /run names what it rests on (since
 #: 2026-10-09): {"job_row_ids": [...], "take_ids": [...]}, the journal rows with no job id and
 #: their REFUSED takes. `media.runpod_unsent` finds them by it even after a redo sent the same
@@ -8510,6 +10304,7 @@ def runpod_hold_items(refused: dict[str, str] | None) -> dict[str, Any]:
 HOLD_RELEASED_EVENTS: tuple[str, ...] = (
     STUDIO_DEFECT_RELEASED_EVENT,
     RUNPOD_UNSENT_RELEASED_EVENT,
+    DELIVERY_RETRY_EVENT,
 )
 #: The failure kinds a REFUSED take may carry as its code when the vendor named none.
 _KIND_CODES: tuple[str, ...] = (
@@ -8607,6 +10402,8 @@ def take_failure(row: SceneTake) -> FailureRecord | None:
         return None
     if code == UNANSWERED_FAILURE_CODE:
         kind = "UNKNOWN"
+    elif code == "RUNPOD.EXPIRED_UNDELIVERED":
+        kind = "BAD_OUTPUT"
     elif code in _KIND_CODES:
         kind = code
     elif code == "VENDOR.NO_OUTPUT":
@@ -8764,11 +10561,17 @@ def scene_memory(
                     decided.setdefault(scene_of[event.aggregate_id], []).append(stamp)
         said: dict[int, list[tuple[datetime | None, dict[str, Any]]]] = {}
         released = _released_holds(session, storyboard_id)
+        delivery_retries: set[str] = set()
         for event in session.scalars(
             select(DomainEvent)
             .where(
                 DomainEvent.event_type.in_(
-                    (hold_event, SCENE_MODEL_SET_EVENT, SCENE_PROMPTS_REWRITTEN_EVENT)
+                    (
+                        hold_event,
+                        SCENE_MODEL_SET_EVENT,
+                        SCENE_PROMPTS_REWRITTEN_EVENT,
+                        DELIVERY_RETRY_EVENT,
+                    )
                 ),
                 DomainEvent.aggregate_id == storyboard_id,
             )
@@ -8777,6 +10580,10 @@ def scene_memory(
             if event.event_id in released:
                 continue  # a hold our own malformed request left, released on the books
             payload = event.payload if isinstance(event.payload, dict) else {}
+            if event.event_type == DELIVERY_RETRY_EVENT:
+                if payload.get("decided_by") == DIRECTOR_REWRITE and payload.get("take_id"):
+                    delivery_retries.add(str(payload["take_id"]))
+                continue  # a delivery decision releases its hold, never the paid-attempt count
             stamp = _stamp(event.timestamp)
             if event.event_type == SCENE_MODEL_SET_EVENT:
                 index = payload.get("scene_index")
@@ -8845,6 +10652,21 @@ def scene_memory(
                     "cumpără din nou până nu decide Proprietarul pe foaia de filmare."
                 )
         if hold is None:
+            for row in reversed(mine):
+                if row.status in ("PAID", "APPROVED", "SUBMITTED"):
+                    break
+                if take_failure(row) is None:
+                    continue
+                if (
+                    row.failure_code == "RUNPOD.EXPIRED_UNDELIVERED"
+                    and row.id not in delivery_retries
+                ):
+                    hold = (
+                        f"Scena {index}: furnizorul nu a livrat fișierul; Directoarea verifică "
+                        "livrarea înainte de o nouă cumpărare."
+                    )
+                break
+        if hold is None:
             # Quality control's refusal, with no hold event of the step (the step stopped
             # between the refusal and its retry): the Director's rewrite comes before any
             # new purchase, the same as when the step itself held the scene.
@@ -8880,6 +10702,8 @@ def _released_holds(session: Session, storyboard_id: str | None = None) -> set[s
     for payload in session.scalars(query):
         if isinstance(payload, dict) and payload.get("released_event_id"):
             found.add(str(payload["released_event_id"]))
+        if isinstance(payload, dict) and payload.get("decided_by") == "director":
+            found.update(str(value) for value in payload.get("released_event_ids") or [])
     return found
 
 
@@ -9142,13 +10966,37 @@ def _bought_shots(
             # (`propose_clip_redos`), since nothing unasked retires what he approved, and only
             # his yes to it or his own «Refă mișcarea» replaces it. Planning a purchase here
             # instead would buy a clip that his choice keeps out of the film, at every step.
-            shot = owner_clip_choice(session, storyboard_id, index, [fields]) or _shot_take(
-                session, storyboard_id, index, fields, motion_seconds(scene)
+            shot = (
+                owner_clip_choice(session, storyboard_id, index, [fields])
+                or _shot_take(session, storyboard_id, index, fields, motion_seconds(scene))
+                # The clip the Director kept under the Owner's renders cap, whatever its length:
+                # the scene's shot, never bought over; too short for its words, the assembly
+                # reads it CLIP_SHORT and she moves the scene locally (`settle_motion_under_cap`).
+                or _cap_kept_shot(session, storyboard_id, index)
             )
             if shot is not None:
                 session.expunge(shot)
                 shots[index] = shot
     return stills, shots, fields_of, holds
+
+
+def _cap_kept_shot(session: Session, storyboard_id: str, scene_number: int) -> SceneTake | None:
+    """The scene's newest shot kept under the Owner's renders cap (`_keep_clip_under_cap`,
+    `CAP_APPROVER`) that is still on disk, or None."""
+    for row in session.scalars(
+        select(SceneTake)
+        .where(
+            SceneTake.storyboard_id == storyboard_id,
+            SceneTake.scene_number == int(scene_number),
+            SceneTake.kind.in_(SHOT_TAKE_KINDS),
+            SceneTake.status.in_(("PAID", "APPROVED")),
+            SceneTake.approved_by == CAP_APPROVER,
+        )
+        .order_by(SceneTake.created_at.desc())
+    ):
+        if row.path and row.sha256 and Path(row.path).is_file():
+            return row
+    return None
 
 
 def _in_flight_shots(
@@ -9197,7 +11045,7 @@ def _motion_state(
 
     With ``redo`` (a scene the Owner is having redone) that scene's shot is planned again and
     a third step, ``scene_redo``, buys it alone."""
-    from app.media.prompt_agent import motion_prompt_for  # noqa: PLC0415
+    from app.media.prompt_agent import incomplete_plan_fields, motion_prompt_for  # noqa: PLC0415
     from app.media.shooting_sheet import price_table_for  # noqa: PLC0415 - it imports us
 
     # The table the sheet prices with — the local selection's models at 0 credits and the
@@ -9232,6 +11080,34 @@ def _motion_state(
     for index, memory in remembered.items():
         if memory.hold_ro:
             holds[index] = memory.hold_ro
+    # The Owner's renders cap (`renders_cap`; 2026-10-16: «maxim încă o randare»): a scene
+    # whose motion has had its renders and has no usable shot is never planned, on any route —
+    # the day's steps, the Director's repair, his own press of a redo (``redo``) — so no step
+    # buys it again. Past the cap the Director keeps what is closest (`settle_motion_under_cap`,
+    # on the walk's ladder): a clip it has, under the cap, else its still moved locally; a
+    # scene she moved locally is LOCAL here, as his LOCAL_MOVE is, and waits for nobody.
+    with Session(engine) as session:
+        motion_made = renders_by_scene(session, storyboard_id, "motion")
+        cap_moves = cap_local_moves(session, storyboard_id)
+    renders_cap = renders_per_layer()
+    moved = {index for index in cap_moves if index in fields_of and index not in shots}
+    if moved:
+        from app.media.production_policy import LOCAL_MOVE  # noqa: PLC0415
+
+        overrides = {**(overrides or {}), **{index: LOCAL_MOVE for index in moved}}
+        for index in moved:
+            holds.pop(index, None)
+    with Session(engine) as session:
+        for index in fields_of:
+            if index in shots or index in in_flight or index in moved:
+                continue
+            if motion_made.get(index, 0) >= renders_cap:
+                holds.setdefault(index, motion_capped_reason(index))
+            elif motion_spent(session, storyboard_id, index, still_take_id=stills[index].id):
+                # Its picture had its renders and the picture kept cannot be animated again:
+                # the motion has nothing left to buy either (`renders_cap.motion_spent`).
+                holds.setdefault(index, motion_spent_words(index))
+    retries = clip_retries()
     # Who accepted each bought test shot: the Owner (APPROVED) or its clip QC under his rule
     # (HERO_ACCEPTED_EVENT). Part of the plan, and so of its hash.
     with Session(engine) as session:
@@ -9268,6 +11144,15 @@ def _motion_state(
         table=prices,
     )
     chosen = {int(entry["scene_index"]): entry for entry in policy["scenes"]}
+    for index in moved:
+        # Hers, past his cap, not his: said so on the sheet.
+        if chosen.get(index, {}).get("status") == "LOCAL":
+            chosen[index].update(
+                decided_by=CAP_LOCAL_MOVE_BY,
+                reason_ro=cap_local_move_words(
+                    index, picture=motion_made.get(index, 0) < renders_cap
+                ),
+            )
 
     view: list[dict[str, Any]] = []
     lint_scenes: list[LintScene] = []
@@ -9311,6 +11196,22 @@ def _motion_state(
                 still_prompt=still_text,
                 motion_prompt=motion_text,
                 model_id=model_id,
+                contract={
+                    "still_model_id": str(still.model_id)
+                    if still is not None
+                    else prices.stills_model
+                },
+                # The still's words were judged when the still was bought: with one APPROVED
+                # (`still`), only a new still would need them right, and this step buys
+                # motion from the picture that exists. 2026-10-14/15 (f06808c9): scene 4's
+                # new still was approved, the Accountant agreed to its motion redo, and the
+                # redo was refused LINT_BLOCKED thirteen walks running on the still prompt's
+                # wardrobe clause — a block on a picture nobody was going to buy again.
+                composition_issues=(
+                    tuple(incomplete_plan_fields(package, layers=("still",)))
+                    if still is None
+                    else ()
+                ),
             )
         )
         view.append(
@@ -9348,7 +11249,9 @@ def _motion_state(
         )
     findings = lint_film(lint_scenes, bible=bible)
     raw_hero = policy.get("hero_scene")
-    held = sorted(index for index, memory in remembered.items() if memory.hold_ro)
+    held = sorted(
+        index for index, memory in remembered.items() if memory.hold_ro and index not in moved
+    )
     bought_hero = next((index for index, take in shots.items() if take.kind == "test_shot"), None)
     if bought_hero is not None:
         # A bought test shot stays the film's test shot: a scene released after it (film
@@ -9364,18 +11267,25 @@ def _motion_state(
 
     def step(to_buy: list[int], waiting: list[int]) -> dict[str, Any]:
         each = [by_index[index]["credits"] for index in to_buy]
+        # A shot's clip-QC retry is held for only while the Owner's renders cap leaves its
+        # motion a render after this one (`renders_cap`): never money for a render past it.
+        again = [
+            by_index[index]["credits"]
+            for index in to_buy
+            if retries and motion_made.get(index, 0) + 1 + retries <= renders_cap
+        ]
         cost = sum(each)
-        cap = cost + max(each, default=0)
+        cap = cost + max(again, default=0)
         overhead = max(
             (prices.round_overhead("video", by_index[index]["model_id"]) for index in to_buy),
             default=0,
         )
         if overhead:
             # RunPod Serverless: the step is one batch round (one GPU start: cold start + idle
-            # tail) and, at worst, a second round with every shot's clip-QC retry. The Owner's
-            # yes and the kernel's cost cover both rounds and both starts.
+            # tail) and, at worst, a second round with every shot's clip-QC retry the cap
+            # allows. The Owner's yes and the kernel's cost cover both rounds and both starts.
             cost += overhead
-            cap = 2 * sum(each) + 2 * overhead
+            cap = sum(each) + sum(again) + (2 if again else 1) * overhead
         return {
             "to_buy": to_buy,
             "cost_credits": cost,
@@ -9576,12 +11486,16 @@ def _send_still_back_for_clip(
     still_take_id: str | None,
     reason: str,
     correlation_id: str,
+    *,
+    cause: str = "CLIP_QC",
 ) -> bool:
     """Clip QC found the fault in the picture the clip was made from (``back_to_still``: faces
     in its frames, panels, another subject): the still goes back to the stills gate, REJECTED
     with the gate's code, so the scene's next still is a new one and nobody animates this one
     again. Returns whether it was sent back. A still the Owner approved himself stays as it is:
-    his look is his (the scene then waits for him).
+    his look is his (the scene then waits for him). A still whose picture had its renders
+    (`renders_cap`) stays too: no new picture can be bought, so it is the picture kept under
+    the cap, and its motion has nothing left to buy (`renders_cap.record_motion_spent`).
 
     2026-10-12, the cyclotron's scene 1: the new still approved by the gate at 10:43 showed two
     people facing the camera; its clip failed clip QC at 12:56 («greșeala e în imaginea din care
@@ -9621,6 +11535,26 @@ def _send_still_back_for_clip(
         if str(row.approved_by or "").lower() == "owner":
             logger.info(
                 "still_not_sent_back", extra={"take_id": still_take_id, "why": "his approval"}
+            )
+            return False
+        if renders_made(session, row.storyboard_id, row.scene_number, "still") >= (
+            renders_per_layer()
+        ):
+            # The picture had its renders (2026-10-16, 87c05891 scene 1): no new one can be
+            # bought, and sent back it only re-opened the cap's choice, which kept it again,
+            # every walk. It stays the scene's picture; its motion has nothing left to buy
+            # (`renders_cap.motion_spent`) and settles under the cap with what it has.
+            record_motion_spent(
+                session,
+                row.storyboard_id,
+                row.scene_number,
+                row.id,
+                correlation_id,
+                cause=cause,
+                reason_ro=reason,
+            )
+            logger.info(
+                "still_not_sent_back", extra={"take_id": row.id, "why": "picture at the cap"}
             )
             return False
         row.status = "REJECTED"
@@ -9778,7 +11712,7 @@ def decide_take(
         sync_take_quality(session, row, accepted=decision == "APPROVED", reason=note)
         row.approved_by = TAKE_DECIDER if decision == "APPROVED" else None
         if decision == "REJECTED":
-            row.failure_code = "OWNER.REJECTED"
+            row.failure_code = OWNER_REJECTED_CODE
             row.failure_detail = (note or "Respinsă de Proprietar.")[:TAKE_DETAIL_MAX]
         row.updated_at = utc_now()
         append_event(
@@ -10004,7 +11938,8 @@ def hero_gate(
         )
         return view
     report = _clip_report_event(session, take.id) if take is not None else None
-    record = dict(report.payload) if report is not None and isinstance(report.payload, dict) else {}
+    # Read as every reader reads it: an old cap-keep's «pass» is a clip kept (STUB-003).
+    record = (read_clip_record(report.payload) if report is not None else None) or {}
     clip_verdict = record.get("verdict") if take is not None and take.status == "PAID" else None
     if take is not None and take.status != "PAID":
         clip_verdict = "FAILED"
@@ -10016,7 +11951,15 @@ def hero_gate(
         "și așteaptă privirea Proprietarului: restul mișcării nu se cumpără până nu este "
         "aprobat pe foaia de filmare"
     )
-    if clip_verdict != "PASSED":
+    # A hero clip QC refused that stands under the Owner's renders cap (`CAP_VERDICT`) lets
+    # the rest of the motion go on as a passing one does; the words say it was kept, not
+    # passed (STUB-003).
+    passed_words = (
+        "a rămas sub plafonul tău de randări (controlul clipului l-a refuzat)"
+        if clip_verdict == CAP_VERDICT
+        else "a trecut controlul clipului"
+    )
+    if clip_verdict not in CLIP_KEPT_VERDICTS:
         if clip_verdict == "FAILED":
             blocks = "; ".join(str(text) for text in record.get("blocks_ro") or [])
             said = "a picat controlul clipului" + (f" ({blocks})" if blocks else "")
@@ -10038,9 +11981,7 @@ def hero_gate(
         why = _hero_rule_words(verdict, rule, threshold, cap_usd)
         view.update(
             status="WAITING",
-            reason_ro=(
-                f"Cadrul de probă (scena {hero}) a trecut controlul clipului {looks} ({why})."
-            ),
+            reason_ro=(f"Cadrul de probă (scena {hero}) {passed_words} {looks} ({why})."),
         )
         return view
     accepted = hero_acceptances(session, [take.id]) if take is not None else {}
@@ -10049,15 +11990,20 @@ def hero_gate(
             status="ACCEPTED",
             accepted_by=HERO_ACCEPTED_BY,
             reason_ro=(
-                f"Cadrul de probă (scena {hero}) a fost acceptat de controlul clipului, cum "
-                "permite regula ta pentru pașii plătiți."
+                f"Cadrul de probă (scena {hero}) a fost acceptat "
+                + (
+                    "sub plafonul tău de randări (controlul clipului l-a refuzat)"
+                    if clip_verdict == CAP_VERDICT
+                    else "de controlul clipului"
+                )
+                + ", cum permite regula ta pentru pașii plătiți."
             ),
         )
         return view
     view.update(
         status="ACCEPTS",
         reason_ro=(
-            f"Cadrul de probă (scena {hero}) a trecut controlul clipului; regula ta pentru "
+            f"Cadrul de probă (scena {hero}) {passed_words}; regula ta pentru "
             "pașii plătiți îl acceptă fără să te aștepte, iar restul mișcării se cumpără în "
             "același pas."
         ),
@@ -10156,6 +12102,11 @@ def _refuse_before_buying(
     For the motion step, last: the hero gate (`hero_gate`). Returns clip QC's acceptance of the
     hero when this call recorded it, else None."""
     plan = state["plan"]
+    # A film frozen longer than its wall even at every pause's floor: no clip is bought for
+    # a film quality control would refuse at the wall («pauza vocii», 2026-10-16).
+    over_the_wall = film_length.wall_refusal(state["scenes"])
+    if over_the_wall:
+        raise MotionStepRefused(OVER_THE_WALL, over_the_wall, plan=plan)
     if current is None:
         current = plan_hash_of(engine, storyboard_id) if plan_hash_of else plan["plan_hash"]
     if not plan_hash or plan_hash != current:
@@ -10216,6 +12167,7 @@ def _clip_plan(
     a factual film and the composed beat for the serial (`stills_stage._scene_picture`), never
     the compiled still prompt that ``visual_prompt`` holds."""
     from app.media import stills_stage as stills  # noqa: PLC0415 - stills_stage imports us
+    from app.media.markings import planned_markings  # noqa: PLC0415
     from app.media.prompt_lint import bible_face_rule  # noqa: PLC0415
     from app.media.still_gate import StillPlan  # noqa: PLC0415
 
@@ -10225,6 +12177,7 @@ def _clip_plan(
     asked = intent.get("camera_move") if isinstance(intent, dict) else None
     look = str(package.get("look_block") or "")
     words = " ".join(str(package.get("still_prompt") or scene.get("visual_prompt") or "").split())
+    picture = stills._scene_picture(package, str(scene.get("visual_prompt") or ""), words)
     return StillPlan(
         scene=int(scene["scene_index"]),
         still_prompt=words,
@@ -10233,12 +12186,15 @@ def _clip_plan(
         bible_rules=stills._bible_rules(bible),
         look_block=look,
         palette_words=stills._palette_words(look),
-        scene_picture=stills._scene_picture(package, str(scene.get("visual_prompt") or ""), words),
+        scene_picture=picture,
         narration=" ".join(
             str(scene.get("voiceover_segment") or scene.get("narration") or "").split()
         ),
         purpose=str(scene.get("story_purpose") or ""),
         must_fix=tuple(must_fix),
+        # A thermometer's scale is not writing: the look is told, and her look may overturn
+        # a writing refusal of such a clip (`qc.look_may_overturn`, 2026-10-13).
+        expected_markings=planned_markings(words, picture),
     )
 
 
@@ -10276,6 +12232,11 @@ def _check_shot(
     the Owner's look; NEEDS_OWNER: every shot measured wrong), the surviving ``take_id``, the
     Owner's ``reason``, the scene's ``clip_qc`` record and ``cap_stop`` (STOPPED_AT_CAP when
     the retry was not bought because of the cap).
+
+    The Owner's renders cap (`renders_cap`, 2026-10-16) binds first: a refused clip whose
+    motion has had its renders buys no retry (its refusal names the cap, never the money, and
+    sets no ``cap_stop``), and the clip stands under the cap (`_keep_clip_under_cap`, PAID):
+    past it the Director keeps the closest and the film goes on.
 
     2026-10-12, late evening: the clip is also checked for what the scene's movement was
     rewritten to fix (`fix_check.open_findings`, motion layer); before the retry is bought the
@@ -10332,6 +12293,7 @@ def _check_shot(
             face_counter=face_counter,
             judge=judge,
             **({"must_fix": plan.must_fix} if plan.must_fix else {}),
+            **({"expected_markings": plan.expected_markings} if plan.expected_markings else {}),
         )
 
     checked_takes: list[str] = [take_id]
@@ -10357,6 +12319,12 @@ def _check_shot(
             ffmpeg_path=ffmpeg_exe,
         )
 
+    # The Owner's renders cap, counted with this clip (already on its take): a refused clip
+    # whose motion has had its renders buys no retry, and the refusal says the cap stopped it
+    # before the money is read (`qc.clip_retry_decision`; 2026-10-16: «maxim încă o randare»).
+    with Session(engine) as session:
+        motion_left = renders_left(renders_made(session, storyboard_id, index, "motion"))
+    retry_allowed = motion_left > 0 and clip_retries() > 0
     outcome = clip_qc.qc_clip_with_retry(
         clip,
         check=check,
@@ -10369,6 +12337,7 @@ def _check_shot(
         committed_credits=float(committed),
         cap_credits=float(cap),
         look=look,
+        renders_left=motion_left,
     )
     kept_by_her = outcome.status == clip_qc.ACCEPTED_BY_LOOK
     records: list[dict[str, Any]] = []
@@ -10400,7 +12369,71 @@ def _check_shot(
         records.append({**record, "take_id": checked, "seed": used_seed})
     surviving = [record for record in records if record["verdict"] != "FAILED"]
     final = surviving[-1] if surviving else None
-    kept = final is not None and final["verdict"] == "PASSED"
+    motion_spent = False
+    if final is None and records:
+        with Session(engine) as session:
+            made = renders_made(session, storyboard_id, index, "motion")
+        motion_spent = made >= renders_per_layer()
+    if (
+        final is None
+        and records
+        and (
+            motion_spent
+            or (
+                outcome.status == "BACK_TO_STILL"
+                and _still_at_renders_cap(engine, storyboard_id, index)
+            )
+        )
+    ):
+        # The motion has had its renders, or the picture is at fault and has had its own
+        # (`renders_cap`): nothing more can be bought for the scene's clip (a new picture
+        # could not be animated either), so a clip of the scene stands under the Owner's cap
+        # and the film goes on to its QC: the one it has, the one the Director chooses among
+        # its clips on disk (this check's and earlier ones'), or the studio's own pick when
+        # she cannot choose (`_choose_shot_under_cap`). Nothing waits for the Owner.
+        chosen = _choose_shot_under_cap(
+            engine,
+            storyboard_id,
+            index,
+            correlation_id,
+            registry=registry,
+            ffmpeg_path=ffmpeg_exe,
+        )
+        if chosen is not None:
+            choice, earlier = chosen
+            position = next(
+                (at for at, item in enumerate(records) if item["take_id"] == choice.take_id),
+                None,
+            )
+            base = (
+                records[position]
+                if position is not None
+                else {**earlier, "take_id": choice.take_id}
+            )
+            final = {
+                **_keep_clip_under_cap(
+                    engine,
+                    choice.take_id,
+                    base,
+                    choice=choice,
+                    storyboard_id=storyboard_id,
+                    scene_number=index,
+                    seed=base.get("seed"),
+                    attempt=(
+                        position + 1 if position is not None else int(base.get("attempt") or 1)
+                    ),
+                    correlation_id=correlation_id,
+                ),
+                "take_id": choice.take_id,
+                "seed": base.get("seed"),
+            }
+            if position is not None:
+                records[position] = final
+    # A clip kept under the cap is not one clip QC passed: it confirms no lesson and closes
+    # none of the Director's motion items (`fix_check.clip_settled`; STUB-003).
+    kept = (
+        final is not None and final["verdict"] == "PASSED" and not final.get("accepted_under_cap")
+    )
     if outcome.reports and not (retry_deferred is not None and retry_deferred()):
         with Session(engine) as session, session.begin():
             lock_for_write(session)  # the open items are read before the note and lessons
@@ -10419,6 +12452,7 @@ def _check_shot(
     clip_record: dict[str, Any] = {
         "status": outcome.status,
         "verdict": final["verdict"] if final is not None else "FAILED",
+        "accepted_under_cap": bool(final is not None and final.get("accepted_under_cap")),
         "attempts": outcome.attempts,
         "seeds": list(outcome.seeds),
         "retry_credits": outcome.retry_credits,
@@ -10440,11 +12474,14 @@ def _check_shot(
     cap_stop: str | None = None
     if (
         final is None
+        and retry_allowed
         and outcome.attempts == 1
         and records
         and records[0]["verdict"] == "FAILED"
         and committed + price > cap
     ):
+        # Only a retry the renders cap allowed is stopped by the money: a retry the cap
+        # refused was never the step's to buy, and stops nothing (its hold never held it).
         cap_stop = (
             f"STOPPED_AT_CAP: reluarea cadrului scenei {index} ({price:.0f} credite) ar depăși "
             f"plafonul aprobat de {cap:.0f} credite (deja {committed:.0f})."
@@ -11051,6 +13088,10 @@ class _ShotRounds:
         attempts_reason: Callable[[int], str],
         sent: dict[int, int],
         scene_dicts: dict[int, dict[str, Any]],
+        room: Callable[..., float] | None = None,
+        budget_words: Callable[[], str | None] | None = None,
+        over_renders: Callable[[int], bool] | None = None,
+        renders_reason: Callable[[int], str] | None = None,
     ) -> None:
         self.engine = engine
         self.storyboard_id = storyboard_id
@@ -11074,8 +13115,28 @@ class _ShotRounds:
         self.attempts_reason = attempts_reason
         self.sent = sent
         self.scene_dicts = scene_dicts
+        # The step's budget hold (`shooting_sheet.StepHold`): what may still be committed,
+        # grown for a round before it is fitted; None, the cap alone binds.
+        self.room = room
+        self.budget_words = budget_words or (lambda: None)
+        # The Owner's renders cap, read before every send (`renders_cap`): a scene whose motion
+        # has had its renders is sent nothing more, its first send or a retry.
+        self.over_renders = over_renders or (lambda _index: False)
+        self.renders_reason = renders_reason or (lambda index: motion_capped_reason(index))
         self.states: dict[int, _ShotRound] = {}
         self.stop: str | None = None
+
+    def _left(self) -> float:
+        """What the step may still commit: the cap's rest, or what its budget hold covers."""
+        if self.room is not None:
+            return float(self.room(0.0))
+        return float(self.cap) - self.meter.committed
+
+    def _round_room(self, price: float) -> None:
+        """Before a round is fitted: the hold grows to it, or by what the budgets have left
+        (the round is then cut to what is held, `gpu_batch.run_rounds`)."""
+        if self.room is not None:
+            self.room(price, partial=True)
 
     # ------------------------------------------------------------------ requests
 
@@ -11104,12 +13165,83 @@ class _ShotRounds:
         )
 
     def _send(self, state: _ShotRound, *, seed: int, prompt: str) -> list[Any]:
+        if self.over_renders(state.index):
+            if state.first_qc is None:
+                # Nothing of this step's own: not bought, nothing held for the Owner. A refused
+                # clip's retry not bought keeps the clip's verdict (the run's end says so).
+                state.outcome = {"status": "NOT_BOUGHT", "reason": self.renders_reason(state.index)}
+            return []
         if self.over_attempts(state.index):
             state.outcome = {"status": "NEEDS_OWNER", "reason": self.attempts_reason(state.index)}
             return []
+        from app.media.input_guard import (  # noqa: PLC0415
+            REFUSAL_CODE,
+            identity_of_request,
+            record_refusal,
+            refused_before,
+        )
+
+        request = self._request(state, seed=seed, prompt=prompt)
+        identity = identity_of_request(request)
+        with Session(self.engine) as session, session.begin():
+            lock_for_write(session)
+            refusal = refused_before(session, identity)
+            if refusal is not None:
+                record_refusal(session, identity, refusal, correlation_id=self.correlation_id)
+        if refusal is not None:
+            state.outcome = {
+                "status": "NEEDS_STILL" if refusal.layer == "still" else "NEEDS_OWNER",
+                "failure_code": REFUSAL_CODE,
+                "rewrite": refusal.layer is not None,
+                "layer": refusal.layer,
+                "reason": refusal.reason_ro,
+            }
+            if refusal.layer == "still":
+                _send_still_back_for_clip(
+                    self.engine,
+                    self.storyboard_id,
+                    state.index,
+                    state.still.id,
+                    refusal.reason_ro,
+                    self.correlation_id,
+                    cause=REFUSAL_CODE,
+                )
+                with Session(self.engine) as session:
+                    spent = motion_spent(
+                        session, self.storyboard_id, state.index, still_take_id=state.still.id
+                    )
+                if spent:
+                    # The picture had its renders and stays (2026-10-16, 87c05891 scene 1):
+                    # no new picture, no clip from this one, so the motion has nothing left
+                    # to buy, as at its own cap. What the scene has stands now, nothing is
+                    # bought and nobody waits: its clip kept under the cap, else her local
+                    # move of the still (`settle_motion_under_cap`, 0 credits).
+                    try:
+                        settle_motion_under_cap(
+                            self.engine,
+                            self.storyboard_id,
+                            state.index,
+                            self.correlation_id,
+                            environment=self.environment,
+                            registry=self.registry,
+                            ffmpeg_path=self.ffmpeg_exe,
+                        )
+                    except Exception:  # noqa: BLE001 - the walk's ladder settles it instead
+                        logger.exception(
+                            "motion_not_settled_under_cap",
+                            extra={"storyboard_id": self.storyboard_id, "scene": state.index},
+                        )
+                    state.outcome = {
+                        "status": "NOT_BOUGHT",
+                        "failure_code": REFUSAL_CODE,
+                        "rewrite": False,
+                        "layer": refusal.layer,
+                        "reason": f"{motion_spent_words(state.index)} {refusal.reason_ro}",
+                    }
+            return []
         state.attempts += 1
         self.sent[state.index] = self.sent.get(state.index, 0) + 1
-        return [self._request(state, seed=seed, prompt=prompt)]
+        return [request]
 
     def price(self, requests: list[Any]) -> float:
         """A round's credits: each shot's price and one GPU start (cold start + idle tail)."""
@@ -11357,6 +13489,7 @@ class _ShotRounds:
 
     # ----------------------------------------------------------------------- run
 
+    @purchase_flow
     def run(
         self,
         shots: list[_ShotRound],
@@ -11364,9 +13497,9 @@ class _ShotRounds:
         permit: Any,
         guard: Any,
         stopped: Callable[[], str | None],
-    ) -> dict[str, Any]:
-        from app.media.gpu_batch import run_rounds  # noqa: PLC0415 - gpu_batch reads runpod
+    ) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
         from app.providers.runpod.batch import UNCERTAIN  # noqa: PLC0415
+        from app.workflows.director_upkeep import director_wait_work  # noqa: PLC0415
 
         first: list[Any] = []
         for state in shots:
@@ -11374,15 +13507,16 @@ class _ShotRounds:
             first += self._send(state, seed=state.seed, prompt=state.prompt)
         summary: dict[str, Any] = {"rounds": 0, "stopped": None, "cap_stop": None}
         if first:
-            summary = run_rounds(
-                self.engine,
-                shots[0].adapter,
+            summary = yield RoundWork(
+                engine=self.engine,
+                adapter=shots[0].adapter,
                 permit=permit,
                 purpose="video",
                 first_round=first,
                 next_round=self.next_round,
                 price_credits=self.price,
-                cap_left=lambda: float(self.cap) - self.meter.committed,
+                cap_left=self._left,
+                make_room=self._round_room if self.room is not None else None,
                 guard=guard,
                 stopped=stopped,
                 on_submitted=self.submitted,
@@ -11392,7 +13526,9 @@ class _ShotRounds:
                     shots[0].adapter, credit_usd=self.credit_usd
                 ),
                 on_unsent=self.unsent,
+                on_wait=director_wait_work(self.engine, self.registry),
             )
+        budget_cut(summary, self.budget_words)
         if summary.get("stopped") and summary.get("stopped") != UNCERTAIN:
             self.stop = self.stop or summary["stopped"]
         for state in shots:
@@ -11456,6 +13592,7 @@ def _gpu_precheck(
         raise MotionStepRefused(str(exc.code), exc.reason_ro, plan=plan) from exc
 
 
+@purchase_flow
 def run_motion_step(
     engine: Engine,
     storyboard_id: str,
@@ -11489,7 +13626,8 @@ def run_motion_step(
     timezone: str | None = None,
     proposal: bool = False,
     director_repair: bool = False,
-) -> dict[str, Any]:
+    budget_hold: Any = None,
+) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
     """One step of the motion staircase (``test_shot`` or ``motion``), bought only under the
     Owner's yes for this plan and this cap.
 
@@ -11539,6 +13677,10 @@ def run_motion_step(
     outright, and stopped before any later shot or retry when the Owner's mode or rule no
     longer lets it buy (`mode_guard`, spec 51). False is his own press, which goes on through
     BLOCKED_MODE and NEEDS_APPROVAL. ``timezone`` is his clock, for the stop's sentence.
+
+    ``budget_hold`` is the sheet step's hold on the budgets (`shooting_sheet.StepHold`): it
+    holds the step's first round, and is grown before every later shot, retry or round; what
+    it cannot hold is not bought, and the step ends on the budget's words.
     """
     from app.economy.credits import record_measured_prices  # noqa: PLC0415
     from app.media.mode_guard import PurchaseGuard, unasked_refusal  # noqa: PLC0415
@@ -11630,6 +13772,31 @@ def run_motion_step(
     to_buy = [int(index) for index in step_plan["to_buy"]]
     cap = int(cap_credits) if cap_credits is not None else int(step_plan["cap_credits"])
     cap_usd = round(cap * prices.credit_usd, 6)
+
+    def room(wanted: float = 0.0, *, partial: bool = False) -> float:
+        """The credits the step may still commit: the cap's rest and, with the sheet's budget
+        hold, no more than it covers once grown for ``wanted`` more (`StepHold.room`; a round
+        of shots may grow it by what is left, ``partial``, and is cut to it)."""
+        rest = float(cap) - meter.committed
+        if budget_hold is None:
+            return rest
+        return min(rest, float(budget_hold.room(meter.committed, wanted, partial=partial)))
+
+    def budget_words(wanted: float | None = None) -> str | None:
+        """The budget's words when the hold, not the cap, stopped the next purchase
+        (``wanted`` credits, when known)."""
+        if budget_hold is None:
+            return None
+        if wanted is None:
+            return budget_hold.budget_words()
+        return budget_hold.budget_words(meter.committed, wanted)
+
+    def hold_spent() -> None:
+        """What the step committed is held at once (`StepHold.hold_spent`): a vendor's quote
+        above the price is committed whole, and no other step reads it as free meanwhile."""
+        if budget_hold is not None:
+            budget_hold.hold_spent(meter.committed)
+
     take_kind = MOTION_STEP_TAKE_KINDS.get(step, "motion")
     source = account
     before: float | None = None
@@ -11786,6 +13953,16 @@ def run_motion_step(
     # is his own act and is not counted against it.
     limit = max_paid_attempts_per_scene()
     sent: dict[int, int] = {}
+    # The Owner's renders cap (`renders_cap`; 2026-10-16: «maxim încă o randare»), read now
+    # and counted again before every purchase: no shot of a scene is bought past it, its
+    # first, its clip-QC retry or its technical retry, on any route — his own press of a scene
+    # redo included (the plan he answers says the cap is reached and is not buyable).
+    renders_cap = renders_per_layer(settings)
+
+    def over_renders(scene_index: int) -> bool:
+        with Session(engine) as session:
+            return renders_made(session, storyboard_id, scene_index, "motion") >= renders_cap
+
     # Every shot take the scenes to buy had when the plan was read: one that appears later and
     # is not this step's was bought by someone else, and the scene is not bought again.
     known_shots = _shot_take_ids(engine, storyboard_id, to_buy)
@@ -11905,7 +14082,7 @@ def run_motion_step(
             if lowered is not None:
                 stopped = lowered
                 return None, None
-            if over_attempts(_index):
+            if over_renders(_index) or over_attempts(_index):
                 return None, None
             _read, balance, problem = _account_balance(source)
             if problem is not None:
@@ -11967,6 +14144,7 @@ def run_motion_step(
                 # later; nothing more is bought in this step.
                 open_spend = max(float(_price), float(_quoted_credits(_adapter) or 0.0))
                 meter.committed += open_spend
+                hold_spent()
                 if intents and intents[-1]:
                     charged.append(
                         {
@@ -11986,6 +14164,7 @@ def run_motion_step(
                     # answer, may be charged like a success: counted, never sent again here.
                     lost = max(float(_price), float(_quoted_credits(_adapter) or 0.0))
                     meter.committed += lost
+                    hold_spent()
                 if unanswered:
                     stopped = UNANSWERED_REASON.format(scene=_index)
                 lost_take = record_take(
@@ -12013,6 +14192,7 @@ def run_motion_step(
                 return None, None
             paid = max(float(_price), float(_quoted_credits(_adapter) or 0.0))
             meter.committed += paid
+            hold_spent()
             retry_clip = work_dir / f"{take_kind}_{_index:02d}_{uuid4().hex[:8]}.mp4"
             retry_clip.write_bytes(retry_bytes)
             retry_take = record_take(
@@ -12048,11 +14228,16 @@ def run_motion_step(
                 stopped = lowered
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
                 break
+            if over_renders(index):
+                # Not bought, nothing held for the Owner: what the scene has stands under his
+                # cap (her ladder keeps its newest refused shot).
+                outcome = {"status": "NOT_BOUGHT", "reason": motion_capped_reason(index)}
+                break
             if over_attempts(index):
                 outcome = {"status": "NEEDS_OWNER", "reason": attempts_reason(index)}
                 break
-            if meter.committed + price > cap:
-                stopped = (
+            if price > room(price) + 1e-9:
+                stopped = budget_words(float(price)) or (
                     f"STOPPED_AT_CAP: cadrul scenei {index} ({price} credite) ar depăși "
                     f"plafonul aprobat de {cap} credite (deja {meter.committed:.0f})."
                 )
@@ -12153,6 +14338,7 @@ def run_motion_step(
                 # sold anything more today.
                 in_flight_spend = max(float(price), float(_quoted_credits(adapter) or 0.0))
                 meter.committed += in_flight_spend
+                hold_spent()
                 take_id = intents[-1] if intents else None
                 if take_id is None:
                     take_id = _record_intent(
@@ -12197,6 +14383,7 @@ def run_motion_step(
                     # A task the vendor accepted may be charged like a success.
                     spend = max(float(price), float(_quoted_credits(adapter) or 0.0))
                     meter.committed += spend
+                    hold_spent()
                 code = failure_code_of(exc) or (
                     UNANSWERED_FAILURE_CODE if unanswered else failure.kind
                 )
@@ -12286,6 +14473,7 @@ def run_motion_step(
             previous_kind = None
             spend = max(float(price), float(_quoted_credits(adapter) or 0.0))
             meter.committed += spend
+            hold_spent()
             clip = work_dir / f"{take_kind}_{index:02d}_{uuid4().hex[:8]}.mp4"
             clip.write_bytes(clip_bytes)
             take_id = record_take(
@@ -12326,7 +14514,9 @@ def run_motion_step(
                 adapter=adapter,
                 price=float(price),
                 committed=meter.committed,
-                cap=float(cap),
+                # Its one retry, inside the cap and what the budget hold covers once grown for
+                # it (`StepHold`): a retry the budget cannot hold is not bought.
+                cap=meter.committed + room(float(price)),
                 environment=environment,
                 bible=state["bible"],
                 ffmpeg_exe=ffmpeg_exe,
@@ -12355,7 +14545,7 @@ def run_motion_step(
             if checked["status"] != "PAID" and index in bought_now:
                 bought_now.remove(index)
             if checked["cap_stop"] and stopped is None:
-                stopped = checked["cap_stop"]
+                stopped = budget_words(float(price)) or checked["cap_stop"]
         entry.update(outcome)
         entry["attempts"] = attempts
         if outcome["status"] in ("NEEDS_OWNER", "NEEDS_STILL"):
@@ -12411,9 +14601,13 @@ def run_motion_step(
             attempts_reason=attempts_reason,
             sent=sent,
             scene_dicts=scene_dicts,
+            room=room if budget_hold is not None else None,
+            budget_words=budget_words,
+            over_renders=over_renders,
         )
         try:
-            gpu = rounds.run(
+            gpu = yield from flow_call(
+                rounds.run,
                 deferred_shots,
                 permit=StepPermit.from_guard(
                     guard,
@@ -12871,7 +15065,7 @@ def sweep_failed_intermediates(
 #   to this redo's own plan_hash and cap (`run_motion_step` with ``step='scene_redo'``); the
 #   scene's old shot is retired in the transaction that spends the yes, and once the new shot
 #   lands the film is rejoined with only that shot rebuilt;
-# - ``still``: one pair of candidates for that scene (at most two re-rolls inside the cap),
+# - ``still``: one pair of candidates for that scene (re-rolls inside the renders cap),
 #   under the same kind of yes; the old still and every shot filmed from it are retired, since
 #   a shot never outlives the picture it started from. The new still waits for a motion redo.
 #
@@ -12932,6 +15126,55 @@ class SceneRedoRefused(RuntimeError):
             "cap_credits": plan.get("cap_credits"),
             "findings": [f.as_dict() if hasattr(f, "as_dict") else f for f in self.findings[:20]],
         }
+
+
+#: A redo refused by the Owner's renders cap (`_redo_past_cap`), on any route: a 409.
+RENDERS_CAP = "RENDERS_CAP"
+
+
+def _redo_past_cap(
+    engine: Engine, storyboard_id: str, scene_index: int, kind: str, settings: Any = None
+) -> str | None:
+    """Why a redo would buy a layer past the Owner's renders cap (`renders_cap`; 2026-10-16:
+    «maxim încă o randare»), or None: on every route — the Director's repair, the studio's own
+    proposal of a longer clip, and his own press on the sheet, whose plan says so and is not
+    buyable (`redo_plan`); only his setting (STUDIO_RENDERS_PER_LAYER) moves the number. A new
+    picture is past the cap too when the scene's motion has had its renders: no clip could be
+    made from it, and the clip it would retire is what the film has."""
+    if kind not in ("still", "motion"):
+        return None
+    cap = renders_per_layer(settings)
+    with Session(engine) as session:
+        made = renders_made(session, storyboard_id, scene_index, kind)
+        motion = (
+            made
+            if kind == "motion"
+            else renders_made(session, storyboard_id, scene_index, "motion")
+        )
+    if made >= cap:
+        layer = "imaginea" if kind == "still" else "mișcarea"
+        return (
+            f"Scena {scene_index}: {layer} ei a avut deja {renders_ro(made)}, iar plafonul "
+            f"Proprietarului este de {renders_ro(cap)} (STUDIO_RENDERS_PER_LAYER); nu se mai "
+            f"cumpără, pe nicio cale: {CAP_KEEPS_RO}."
+        )
+    if kind == "still" and motion >= cap:
+        return (
+            f"Scena {scene_index}: mișcarea ei a avut deja {renders_ro(motion)} (plafonul "
+            "Proprietarului, STUDIO_RENDERS_PER_LAYER), deci o imagine nouă nu mai poate fi "
+            "animată; nu se cumpără, iar scena rămâne cu cadrul pe care îl are."
+        )
+    if kind == "motion":
+        # Its picture had its renders and the picture kept cannot be animated again: the
+        # motion is past the cap as if it had its own (`renders_cap.motion_spent`).
+        with Session(engine) as session:
+            spent = motion_spent(session, storyboard_id, scene_index, settings)
+        if spent:
+            return (
+                f"{motion_spent_words(scene_index, settings)} Numărul îl schimbă doar setarea "
+                "lui, STUDIO_RENDERS_PER_LAYER."
+            )
+    return None
 
 
 def _scene_shot_takes(session: Session, storyboard_id: str, scene_index: int) -> list[str]:
@@ -13713,7 +15956,9 @@ def give_back_retired_takes(
             elif not item["matches"]:
                 outcome["unmatched"].append(row.id)
         if outcome["restored"] and package is not None and rewrite_id is not None:
-            scene_row.prompt_json = dict(package)
+            # A restored package brings back a picture's words, never another timing: the
+            # film's frozen pauses stay on the row (`montage.keep_frozen`).
+            scene_row.prompt_json = keep_frozen(dict(package), scene_row.prompt_json)
             scene_row.visual_prompt = visual
             append_event(
                 session,
@@ -14097,7 +16342,8 @@ def _rewrite_scene_prompts(
             "planul refacerii: nu se cumpără nimic. Deschideți refacerea din nou.",
             plan=plan,
         )
-    row.prompt_json = dict(rewrite["package"])
+    # The film's frozen pauses stay on the row: a redo changes a picture's words only.
+    row.prompt_json = keep_frozen(dict(rewrite["package"]), row.prompt_json)
     row.visual_prompt = str(rewrite["visual_prompt"])
     append_event(
         session,
@@ -14131,10 +16377,12 @@ def _still_redo_plan(
     prices: PriceTable,
     stills_model: str | None,
 ) -> dict[str, Any]:
-    from app.media.still_gate import MAX_REROLLS  # noqa: PLC0415 - still_gate reaches qc
-
     index = int(scene["scene_index"])
-    model_id = stills_model or STILLS_MODEL
+    from app.media.factory import reference_model_for_storyboard  # noqa: PLC0415
+
+    model_id = (
+        reference_model_for_storyboard(engine, plan["storyboard_id"], stills_model) or STILLS_MODEL
+    )
     try:
         per_request = price_still(model_id, STILLS_RESOLUTION, STILL_CANDIDATES, table=prices)
         row = prices.row(model_id, STILLS_RESOLUTION)
@@ -14145,7 +16393,18 @@ def _still_redo_plan(
     # step prices it. 0 for a per-image vendor, so its plan (and its hash) is unchanged.
     overhead = int(prices.round_overhead("image", model_id))
     per_round = per_request + overhead
-    cap = per_round * (1 + MAX_REROLLS)
+    # Its rounds: the purchase and its re-rolls, no more than the Owner's renders cap still
+    # leaves the scene's picture (`renders_cap`). None left — or a motion that has had its own
+    # renders, which could not animate a new picture — and the plan is not buyable, on any
+    # route, his press included (`_redo_past_cap`): it says so instead of pricing a render.
+    rerolls = max_rerolls()
+    with Session(engine) as session:
+        made = renders_made(session, plan["storyboard_id"], index, "still")
+    past_cap = _redo_past_cap(engine, plan["storyboard_id"], index, "still")
+    rounds = max(0, min(1 + rerolls, renders_left(made)))
+    if past_cap is not None:
+        rounds = 0
+    cap = per_round * rounds
     first_live = next((s for s in scenes if not is_composed(s)), None)
     figure_one: str | None = None
     with Session(engine) as session:
@@ -14177,6 +16436,13 @@ def _still_redo_plan(
         # plan shows them, its hash binds the Owner's yes to them, and the purchase sends them.
         rewrite = _scene_prompt_rewrite(session, plan["storyboard_id"], index, model_id)
     package = scene.get("prompt_json") or {}
+    from app.media.prompt_agent import incomplete_plan_fields  # noqa: PLC0415
+
+    incomplete = incomplete_plan_fields(
+        rewrite["package"] if rewrite is not None else package, layers=("still",)
+    )
+    if incomplete:
+        raise SceneRedoRefused("LINT_BLOCKED", "; ".join(incomplete), plan=plan)
     words = " ".join(str(package.get("still_prompt") or scene.get("visual_prompt") or "").split())
     pictured = scene
     shown: dict[str, Any] | None = None
@@ -14197,7 +16463,7 @@ def _still_redo_plan(
         cap_usd=round(cap * prices.credit_usd, 6),
         price_source=source_label(row),
         candidates=STILL_CANDIDATES,
-        max_rerolls=MAX_REROLLS,
+        max_rerolls=max(0, rounds - 1),
         still_prompt=words,
         figure_one_sha256=figure_one,
         replaces=replaces,
@@ -14208,9 +16474,15 @@ def _still_redo_plan(
     if overhead:
         plan.update(credits_per_request=per_request, round_overhead_credits=overhead)
     gpu_start = f" și pornirea GPU-ului ({overhead} credite pe rundă)" if overhead else ""
+    again_ro = (
+        f"cu cel mult {count_ro(rounds - 1, 'reluare', 'reluări')}"
+        if rounds > 1
+        else "fără reluări"
+    )
     reason = (
         f"Imaginea scenei {index}: {STILL_CANDIDATES} variante la 2K pe {model_id}{gpu_start}, "
-        f"{per_round} credite (plafon {cap}, cu cel mult {MAX_REROLLS} reluări). "
+        f"{per_round} credite (plafon {cap}, {again_ro}: plafonul de {renders_ro()} al "
+        "imaginii). "
         "Imaginea veche și cadrul filmat din ea se retrag abia după aprobare; mișcarea scenei "
         "se reface apoi separat. Celelalte scene nu se ating."
     )
@@ -14223,13 +16495,16 @@ def _still_redo_plan(
             "le-a predat încă. Se ridică fără plată, după numărul sarcinii, și apar pe foaia de "
             "filmare; până atunci scena nu se cumpără din nou."
         )
+    elif past_cap is not None:
+        plan.update(buyable=False, renders_capped=True)
+        reason = past_cap
     return _seal(
         plan,
         {
             "model_id": model_id,
             "resolution": STILLS_RESOLUTION,
             "candidates": STILL_CANDIDATES,
-            "max_rerolls": MAX_REROLLS,
+            "max_rerolls": max(0, rounds - 1),
             "credits": per_round,
             "cap_credits": cap,
             **({"round_overhead_credits": overhead} if overhead else {}),
@@ -14240,6 +16515,7 @@ def _still_redo_plan(
             "replaces": replaces,
             "invalidates": invalidates,
             **({"in_flight": in_flight} if in_flight else {}),
+            **({"renders_capped": True} if past_cap is not None else {}),
             # Only a rewritten plan says so: a plan with current words keeps its hash.
             **({"prompt_rewrite": shown} if shown is not None else {}),
         },
@@ -14308,6 +16584,7 @@ def _motion_redo_plan(
         lint_blocked=state["plan"]["lint_blocked"],
         replaces=replaces,
     )
+    past_cap = None if buyable else _redo_past_cap(engine, plan["storyboard_id"], index, "motion")
     if buyable:
         reason = (
             f"Mișcarea scenei {index}: un singur cadru pe {item['model_id']}, "
@@ -14315,6 +16592,10 @@ def _motion_redo_plan(
             f"{step['cap_credits']}). Cadrul vechi se retrage abia după aprobare; celelalte "
             "scene nu se ating."
         )
+    elif past_cap is not None:
+        # The Owner's renders cap, on his press too: the plan says it, never a price.
+        plan.update(renders_capped=True)
+        reason = past_cap
     else:
         reason = f"Scena {index} nu are ce cumpăra: {item['reason_ro'] or item['status']}."
     return _seal(
@@ -14662,6 +16943,12 @@ def _rebuild_film(
     from (its recorded sha256), or nothing is built. The film's own sound is copied in. The
     film it came from is left untouched; the result is a new asset with its own render record,
     whose manifest says what it was remade from and what it cost.
+
+    The rejoin is the film's final encode, and is held to quality control's bitrate floor the
+    way the render's is (`encode_to_floor`): a dark, nearly still film the render had to
+    tighten (7c26a7ce «Speed of Light», 4.4 Mbps at CRF 17) came out under the floor again
+    from a plain CRF 17 rejoin, right after its redo was bought. The manifest's ``encode`` is
+    the redo's own reading, never the film's it was copied from.
     """
     film = _latest_film(engine, storyboard_id)
     if film is None:
@@ -14837,11 +17124,17 @@ def _rebuild_film(
         grain=int(graded.get("grain") or 0),
         lut=lut,
     )
-    joined = _run_ffmpeg(
-        command,
-        folder,
-        carry=((srt.name, CAPTION_FONTS_DIR) if captions else ()) + ((lut,) if lut else ()),
-    )
+    try:
+        joined, encode = encode_to_floor(
+            ffmpeg_exe,
+            command,
+            folder,
+            output,
+            carry=((srt.name, CAPTION_FONTS_DIR) if captions else ()) + ((lut,) if lut else ()),
+        )
+    except RenderEngineUnavailable as exc:
+        output.unlink(missing_ok=True)
+        raise SceneRedoRefused("ENCODE_FAILED", str(exc)) from exc
     total = sum(float(item["duration_seconds"]) for item in timeline)
     picture = _video_stream_seconds(ffmpeg_exe, output) if output.is_file() else None
     if joined.returncode != 0 or picture is None or picture + 1.0 < total:
@@ -14870,6 +17163,7 @@ def _rebuild_film(
         card_record=card_record,
         motion_record=motion_record,
     )
+    production["encode"] = encode
     loudness = (production.get("audio") or {}).get("loudness")
     if isinstance(loudness, dict):
         loudness["output"] = _loudness_readings(measure_loudness(ffmpeg_exe, output))
@@ -15024,6 +17318,7 @@ def _record_redone_film(
     }
 
 
+@purchase_flow
 def redo_scene(
     engine: Engine,
     storyboard_id: str,
@@ -15057,7 +17352,7 @@ def redo_scene(
     unasked: bool = False,
     proposal: bool = False,
     director_repair: bool = False,
-) -> dict[str, Any]:
+) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
     """Redo one scene (``still`` | ``motion`` | ``card``) or the film's sound (``audio``).
 
     ``director_repair`` (with ``unasked``): the Director's repair of a defect quality control
@@ -15129,6 +17424,11 @@ def redo_scene(
             requester=requester,
         )
         return _redo_done(engine, correlation_id, plan, free, {}, (0.0, None))
+    if scene_index is not None:
+        # The Owner's renders cap binds every redo, his own press too («maxim încă o randare»).
+        capped = _redo_past_cap(engine, storyboard_id, int(scene_index), kind, settings)
+        if capped is not None:
+            raise SceneRedoRefused(RENDERS_CAP, capped, plan=plan)
     if unasked and not (proposal and kind == "motion"):
         # 2026-10-10 (babcf272): the day's QC repair retired the Owner's own approved takes of
         # scenes 1 and 2 under his OVER_USD rule. A redo nobody pressed never retires what he
@@ -15181,6 +17481,9 @@ def redo_scene(
     no_room = disk_refusal(storage_root, settings)
     if no_room:
         raise SceneRedoRefused(LOW_DISK, no_room, plan=plan)
+    from app.media.factory import reference_image_adapter  # noqa: PLC0415
+
+    image_adapter = reference_image_adapter(engine, storyboard_id, image_adapter)
     from app.media.shooting_sheet import (  # noqa: PLC0415 - it imports us
         FilmBusy,
         PurchaseGateRefused,
@@ -15260,16 +17563,19 @@ def redo_scene(
             except PurchaseGateRefused as exc:
                 raise SceneRedoRefused(exc.status, exc.reason_ro, plan=plan) from exc
             try:
-                return _paid_redo(
-                    engine,
-                    storyboard_id,
-                    correlation_id,
-                    plan,
-                    kind=kind,
-                    plan_hash=str(plan_hash),
-                    current=current,
-                    reservation_id=reservation_id,
-                    **kwargs,
+                return (
+                    yield from flow_call(
+                        _paid_redo,
+                        engine,
+                        storyboard_id,
+                        correlation_id,
+                        plan,
+                        kind=kind,
+                        plan_hash=str(plan_hash),
+                        current=current,
+                        reservation_id=reservation_id,
+                        **kwargs,
+                    )
                 )
             except SceneRedoRefused:
                 release_step_hold(engine, reservation_id, "refacerea refuzată", correlation_id)
@@ -15279,6 +17585,7 @@ def redo_scene(
         raise SceneRedoRefused(exc.status, exc.reason_ro, plan=plan) from exc
 
 
+@purchase_flow
 def _paid_redo(
     engine: Engine,
     storyboard_id: str,
@@ -15313,7 +17620,7 @@ def _paid_redo(
     unasked: bool = False,
     proposal: bool = False,
     director_repair: bool = False,
-) -> dict[str, Any]:
+) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
     """The paid part of `redo_scene`, under the film's lease and the step's budget hold: the
     hold is settled once the redo is in the books and let go when nothing was bought.
 
@@ -15342,7 +17649,8 @@ def _paid_redo(
                     "Niciun model video conectat și verificat; mișcarea nu se poate cumpăra.",
                     plan=plan,
                 )
-            summary = run_motion_step(
+            summary = yield from flow_call(
+                run_motion_step,
                 engine,
                 storyboard_id,
                 correlation_id,
@@ -15378,7 +17686,8 @@ def _paid_redo(
             detail["motion"] = summary
             spent = (float(summary["spent_credits_quoted"]), summary["spent_credits_measured"])
         else:
-            outcome = _redo_still(
+            outcome = yield from flow_call(
+                _redo_still,
                 engine,
                 storyboard_id,
                 correlation_id,
@@ -15816,7 +18125,7 @@ def _film_after_motion(
     if entry.get("status") != "PAID" or plan["base_asset_id"] is None:
         return None
     verdict = (entry.get("clip_qc") or {}).get("verdict")
-    if verdict == "FAILED" or (verdict != "PASSED" and environment == "PRODUCTION"):
+    if verdict == "FAILED" or (verdict not in CLIP_KEPT_VERDICTS and environment == "PRODUCTION"):
         return None
     ffmpeg_exe = resolve_ffmpeg_path(ffmpeg_path)
     with Session(engine) as session:
@@ -15906,6 +18215,7 @@ def _redo_next_step(
     return "Nimic de reasamblat."
 
 
+@purchase_flow
 def _redo_still(
     engine: Engine,
     storyboard_id: str,
@@ -15929,9 +18239,9 @@ def _redo_still(
     meter: SpendMeter | None = None,
     unasked: bool = False,
     director_repair: bool = False,
-) -> dict[str, Any]:
-    """One scene's still bought again: one pair of candidates (at most two re-rolls within the
-    cap), judged as the stills step judges them, under the Owner's yes for this redo.
+) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
+    """One scene's still bought again: one pair of candidates (re-rolls only while the Owner's
+    renders cap leaves room), judged as the stills step judges them, under his yes for this redo.
 
     Bought on the words today's compiler writes for the scene (`_scene_prompt_rewrite`), the
     words his plan showed; when they are not the stored ones, the scene's package is rewritten
@@ -15985,6 +18295,9 @@ def _redo_still(
         scene.identity = still_fields(str(rewrite["visual_prompt"]), scene.reference)
         scene.look_block = str(rewrite["package"].get("look_block") or "")
         scene.camera_move = str(rewrite["package"].get("camera_move") or "")
+        from app.media.prompt_agent import incomplete_plan_fields  # noqa: PLC0415
+
+        scene.prompt_issues = tuple(incomplete_plan_fields(rewrite["package"], layers=("still",)))
     if environment == "PRODUCTION" and scene.source not in shot_plan_sources(engine, storyboard_id):
         raise SceneRedoRefused(
             "NEEDS_SHOT_PLAN",
@@ -16018,7 +18331,16 @@ def _redo_still(
             plan=plan,
         )
     findings = lint_film(
-        [LintScene(scene=index, kind=LIVE_KIND, still_prompt=scene.words)], bible=bible
+        [
+            LintScene(
+                scene=index,
+                kind=LIVE_KIND,
+                still_prompt=scene.words,
+                contract={"still_model_id": model_id},
+                composition_issues=scene.prompt_issues,
+            )
+        ],
+        bible=bible,
     )
     if has_block(findings):
         blocks = [f for f in findings if f.severity == "BLOCK"]
@@ -16160,7 +18482,8 @@ def _redo_still(
     if first is not None and first.index != index and first.reuse is not None and first.reuse.path:
         figure_one = Path(str(first.reuse.path)).read_bytes()
     if batching:
-        rounds = _redo_still_rounds(
+        rounds = yield from flow_call(
+            _redo_still_rounds,
             engine,
             storyboard_id,
             correlation_id,
@@ -16252,6 +18575,7 @@ def _redo_still(
     }
 
 
+@purchase_flow
 def _redo_still_rounds(
     engine: Engine,
     storyboard_id: str,
@@ -16277,10 +18601,12 @@ def _redo_still_rounds(
     requester: str,
     meter: SpendMeter | None,
     unasked: bool,
-) -> dict[str, Any]:
+) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
     """One scene's still redo on RunPod Serverless (2026-10-09): the stills step's own rounds
     (`stills_stage._StillRounds`, `gpu_batch.run_rounds`) for this one scene, under the yes
-    `_redo_still` has just spent. One GPU session switched on for the redo (the Policy Kernel's
+    `_redo_still` has just spent. The synchronous call opens one session; the Director's
+    prepared flow combines compatible ready redos while retaining this purchase's own guard,
+    cap and budget hold. The session is authorised by every participating permit (the kernel's
     ``infra.gpu_on`` for ``media.scene_redo``, this plan, this approval) and off right after its
     last result; each round (the pair, then a re-roll) is one batch job, priced with its GPU
     start and cut to what is left of the redo's cap; his mode and the autonomy stop are read
@@ -16329,7 +18655,8 @@ def _redo_still_rounds(
     )
     entry: dict[str, Any] = {"scene_index": index, "scene_kind": LIVE_KIND}
     try:
-        gpu = rounds.run(
+        gpu = yield from flow_call(
+            rounds.run,
             [(scene, entry)],
             permit=StepPermit.from_guard(
                 guard,
@@ -16378,7 +18705,8 @@ def _redo_still_rounds(
 class _StillRedoBuyer:
     """The purchase loop of one scene's still redo, the stills step's rules for one scene:
     the cap and the balance before every request, the local checks before the vision model,
-    at most two re-rolls with the violations as positive words, then the Owner."""
+    re-rolls with the violations as positive words while the renders cap leaves room, then
+    the Owner."""
 
     def __init__(self, **context: Any) -> None:
         #: What the redo has sent and committed, read by `redo_scene` whatever happens.
@@ -16424,6 +18752,17 @@ class _StillRedoBuyer:
             if lowered is not None:
                 # His mode or rule changed while the redo ran: no further re-roll is bought.
                 outcome = {"status": "NOT_BOUGHT", "reason": lowered}
+                break
+            if stills._at_renders_cap(engine, c["storyboard_id"], index):
+                # The Owner's renders cap, counted before every request of the redo (a charged
+                # vendor failure is a render too): nothing past it, the retry included; the
+                # scene keeps the picture it has (retired only after a new one is approved).
+                outcome = {
+                    "status": "NOT_BOUGHT",
+                    "reason": f"Scena {index}: imaginea ei a avut deja {renders_ro()}, plafonul "
+                    "Proprietarului; nu se mai cumpără, iar scena rămâne cu imaginea pe care o "
+                    "are.",
+                }
                 break
             if self.committed + per_request > c["cap"]:
                 outcome = {
@@ -16615,7 +18954,9 @@ class _StillRedoBuyer:
                 c["correlation_id"],
                 rerolls=self.rerolls,
             )
-            if end.report is not None:
+            if end.take_id is not None:
+                # Approved: a candidate of this redo, or past the cap a still of the scene's
+                # kept from any round (`stills._RoundEnd`: it may have no report here).
                 outcome = end.approved()
                 break
             if end.again:

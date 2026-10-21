@@ -473,6 +473,41 @@ def test_verify_re_reads_the_channel_and_records_a_revoked_grant(engine, vault, 
     assert services.get_connection(engine, connection["id"])["status"] == "ERROR"
 
 
+def test_a_routine_check_of_the_same_channel_writes_no_event(engine, vault, google, connection):
+    """The Owner, 2026-10-16: «Vreau să rămână verificarea dar să nu apară aici». The check
+    still runs and stamps the row; only a check that changed something is an event."""
+    from app.models import DomainEvent
+    from sqlalchemy import func, select
+    from sqlalchemy.orm import Session
+
+    def verified_events() -> int:
+        with Session(engine) as session:
+            return int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(DomainEvent)
+                    .where(DomainEvent.event_type == "youtube.verified")
+                )
+                or 0
+            )
+
+    connect(engine, vault, connection["id"])
+    before = verified_events()
+    first = services.verify_connection(engine, vault, connection["id"], correlation_id=str(uuid4()))
+    after_first = verified_events()
+    second = services.verify_connection(
+        engine, vault, connection["id"], correlation_id=str(uuid4())
+    )
+    assert verified_events() == after_first  # the same channel again: checked, not told
+    assert second["last_checked_at"] >= first["last_checked_at"]
+    assert second["status"] == "CONNECTED"
+
+    google.channel = channel_payload("UC_alpha_test", "NEXUS CURIOSITY renamed")
+    services.verify_connection(engine, vault, connection["id"], correlation_id=str(uuid4()))
+    assert verified_events() == after_first + 1  # renamed: told once
+    assert after_first >= before
+
+
 # ------------------------------------------------------------------- several channels --
 
 

@@ -81,6 +81,23 @@ def draft_with_agent(
         summary=f"Scriu scenariul pentru «{topic.title}» din {len(evidence)} afirmații.",
         max_tokens=9000,
         emit_message=False,
+        subject={"topic_id": topic_id},
+    )
+    from app.factual.agent_pipeline import answered_with_object  # noqa: PLC0415
+
+    result = answered_with_object(
+        engine,
+        registry,
+        writer_id,
+        "write_script",
+        prompt,
+        "v1",
+        correlation_id,
+        result,
+        summary=f"Scriu scenariul pentru «{topic.title}»",
+        max_tokens=9000,
+        temperature=None,
+        subject={"topic_id": topic_id},
     )
     if result["status"] != "SUCCEEDED" or not result.get("output_text"):
         raise ValueError("Agentul nu a generat un scenariu utilizabil; verifică starea și modelul")

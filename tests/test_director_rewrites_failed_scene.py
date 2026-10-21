@@ -1,6 +1,28 @@
-"""Offline regression tests for test director rewrites failed scene.
+"""The Director reads a refused scene's prompt and has it rewritten (the Owner, 2026-10-11).
 
-Providers are faked; all data is synthetic."""
+The cyclotron film (aa170155) stopped with «scenele 4, 5 așteaptă decizia Proprietarului»: clip
+QC refused scene 4 twice (faces the bible forbids) and scene 5 once (the wrong object). The
+Owner: a film is redone until QC passes, only money stops it, and not blindly — «directoarea
+citește promptul și după îl cere la rescriere cu informații clare, ce să evite ca să treacă la
+QC!». What is held here, every provider faked, 0 credits:
+
+- a scene clip QC refused is read by the Director (its prompts, the refusals' reasons) and her
+  brief is a letter to the Video Editor; his rewrite changes that scene's motion only, the
+  picture's words stay, his answer is a letter back, both settled;
+- her rewrite lifts the hold the refusal left: the shot is bought again, on the new words, and
+  passes; no other scene is touched;
+- after a motion rewrite that failed again on the same picture, only the picture may be
+  rewritten (a still the gate approved, never one the Owner approved); a still rewrite gives a
+  new still prompt and the scene needs a new still;
+- an answer that names a layer not open, or no Director at all, rewrites nothing: the scene
+  waits as before;
+- the day's staircase does it by itself: a walk stopped on a refused scene gets her rewrite and
+  walks the film again;
+- before anything is stored she reviews his words against the findings (2026-10-12, the Owner on
+  film 1c038a99's scene 5 redone five times: «tratează problema? Promptul trebuie revizuit»): a
+  rewrite that misses a finding is not stored, the hold stays, the record and his letter say why;
+  a rewrite nobody could review is not stored either.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +36,7 @@ from app.agents.models import Agent, AgentMessage, ModelRecord, Role
 from app.agents.services import seed_initial_workforce
 from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT, motion_plan
 from app.media.models import SceneTake, StoryboardScene
+from app.media.prompt_agent import motion_prompt_for
 from app.media.scene_rewrite import (
     BRIEF_EVENT,
     MOTION,
@@ -27,6 +50,7 @@ from app.media.toolchain import find_ffmpeg
 from app.models import OwnerPolicy
 from app.providers.base import GenerateResult, HealthResult
 from app.providers.registry import ProviderRegistry
+from final_rewrite_actor import final_answer, final_review
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_clip_qc_wiring import ScriptedCheck, events, shots
@@ -141,11 +165,33 @@ class Agents:
             return GenerateResult(json.dumps(self.brief), 10, 40, None)
         if '"scene-rewrite"' in prompt:
             self.rewrites.append(prompt)
-            return GenerateResult(json.dumps(self.shot), 10, 40, None)
+            return GenerateResult(json.dumps(final_answer(prompt, self.shot)), 10, 40, None)
+        if '"prompt-audit"' in prompt:
+            # The staircase has an independent pre-purchase Director audit after
+            # the rewrite review. The deterministic test actor must handle it
+            # instead of returning "{}" (which is correctly held as unreviewed).
+            scene_ids = sorted({int(n) for n in re.findall(r'"scene_index":\s*(\d+)', prompt)})
+            return GenerateResult(
+                json.dumps(
+                    {
+                        "scenes": [
+                            {
+                                "scene_index": index,
+                                "approved": True,
+                                "reason": "The corrected prompt describes the intended movement.",
+                            }
+                            for index in scene_ids
+                        ]
+                    }
+                ),
+                10,
+                40,
+                None,
+            )
         if '"rewrite-review"' in prompt:
             self.reviews.append(prompt)
             said = (
-                json.dumps(answer_each(prompt, self.review))
+                json.dumps(final_review(answer_each(prompt, self.review)))
                 if isinstance(self.review, dict)
                 else str(self.review)
             )
@@ -246,8 +292,8 @@ def test_her_brief_rewrites_the_motion_and_the_shot_is_bought_again_and_passes(
     assert after.prompt_json["subject"] == PLAN["subject"]
     # The movement is new.
     assert after.prompt_json["camera_move"] == "slow pan right"
-    assert after.prompt_json["motion_intent"] != before.prompt_json["motion_intent"]
-    assert "a frozen, almost still frame" in after.prompt_json["avoid"]
+    assert after.prompt_json["motion_intent"] is None
+    assert after.prompt_json["prompt_format"] == "editor_final_v1"
     # She reviewed his words against the finding before anything was stored: the refusal's
     # words, his new sentence and the difference were put before her.
     (review,) = agents.reviews
@@ -290,7 +336,11 @@ def test_her_brief_rewrites_the_motion_and_the_shot_is_bought_again_and_passes(
         clip_check=ScriptedCheck("PASSED"),
     )
     assert models.posts() == posted + 1
-    assert spy.asked[-1]["prompt"] != spy.asked[0]["prompt"]
+    # The words sent are the rewritten package as rendered, not merely other words
+    # (2026-10-13): a retry's firmer prompt or a stale intent would also differ.
+    expected, _negative = motion_prompt_for(after.prompt_json, "seedance2_5", None)
+    assert spy.asked[-1]["prompt"] == expected
+    assert "from left to right" in expected and "from left to right" not in spy.asked[0]["prompt"]
     (entry,) = summary["scenes"]
     assert entry["status"] == "PAID"
 

@@ -1,6 +1,27 @@
-"""Offline regression tests for test approved stays approved.
+"""Approved stays approved: a scene that passed is not judged again while its picture is the same.
 
-Providers are faked; all data is synthetic."""
+2026-10-12, film aa170155 («Why Ernest Lawrence's First Cyclotron Barely Fit on a Desk»): scene 1
+was cut from the same still (7a0be480) and the same clip (843617b8) in four films. The one-frame
+look passed it at 14:45 and 15:03 (10-11) and at 08:15 UTC, and failed it at 10:35 UTC, unchanged;
+the Director's REPAIR then bought a new still and clip for it. Scene 3 the same at 08:15 UTC (18
+credits for a new still). That day 19.50 USD of RunPod went out, 11.05 on redos, and the Owner
+stopped the studio: «Nu putem permite loopuri pe bani și picarea QC dacă deja a fost aprobată».
+
+What is asserted: the film's one-frame look (`picture_qc.evaluate_pictures`) and its span look
+(`qc.span_picture_qc`) do not show the model a scene whose picture is exactly that of an earlier
+film of the storyboard whose same check passed it: its entry passes with the report it came from
+and «trecută la controlul din …, aceleași preluări»; a scene with a new clip, or one the earlier
+check refused, is judged as before.
+
+The review of that change (the same evening) is asserted too: the carry key is the takes AND the
+check's version, the bible and look, and the scene's span and speed (`picture_qc.carry_keys`), so
+a verdict of another version or another cut is not carried; only the model's look is carried,
+while YuNet still counts faces in a carried scene's frames; the vision model owns the
+panel verdict (`one_picture`), not the removed pixel-band detector; what the Director judged FALSE
+or accepted as minor on the same takes is not looked at again (`earlier_acceptances`); and a look
+that numbered its frames by position is read back to the scenes it was shown, or fails. Every
+model is faked.
+"""
 
 from __future__ import annotations
 
@@ -43,9 +64,9 @@ def frames(monkeypatch):
     """The encoder, faked: one frame per scene of the film, counted."""
     asked: list[list[float]] = []
 
-    def frames_for(path, ffmpeg_path, duration, scene_seconds=None):
+    def frames_for(path, ffmpeg_path, duration, scene_seconds=None, picks=None):
         asked.append(list(scene_seconds or []))
-        return list(FRAMES)
+        return list(FRAMES) if picks is None else [FRAMES[p] for p in picks if p < len(FRAMES)]
 
     monkeypatch.setattr("app.media.picture_qc.frames_for", frames_for)
     return asked
@@ -583,10 +604,10 @@ def test_a_shown_scene_the_look_left_out_is_asked_again_and_judged(engine, frame
 
 
 @requires_ffmpeg
-def test_the_span_look_keeps_its_verdict_and_still_reads_faces_and_the_band(engine, tmp_path):
-    """No judge is asked for a scene whose picture passed before; its three frames are still
-    cut, YuNet still counts their faces and the band still reads them (the review of 2026-10-12:
-    both free detectors were skipped on a carried scene)."""
+def test_the_span_look_keeps_its_verdict_and_still_reads_faces(engine, tmp_path):
+    """A previously approved scene keeps its vision verdict without another model call.
+    Its three frames are still cut and checked by YuNet; the removed geometric panel
+    detector is NOT_APPLICABLE, because the prior vision `one_picture` check is carried."""
     from app.media.qc import span_picture_qc
 
     staff(engine)
@@ -609,7 +630,8 @@ def test_the_span_look_keeps_its_verdict_and_still_reads_faces_and_the_band(engi
         assert scenes[index]["status"] == "PASSED" and scenes[index]["passed"] is True
         assert scenes[index]["carried_from"]["report_id"] == earlier["report"]
         assert scenes[index]["picture"]["status"] == CARRIED_STATUS
-        assert scenes[index]["panels"]["status"] == "PASSED"
+        assert scenes[index]["panels"]["status"] == "NOT_APPLICABLE"
+        assert scenes[index]["panels"]["method"] == "vision_only"
         assert scenes[index]["faces"]["status"] == "PASSED"
         assert scenes[index]["carry_key"]["clip"] == f"clip-{index}"
     assert scenes[3]["status"] == "NOT_APPLICABLE"

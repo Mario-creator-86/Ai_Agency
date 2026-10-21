@@ -331,6 +331,32 @@ export function withoutEcho(headline, detail) {
   return a === b || a.endsWith(b) ? '' : tail;
 }
 
+/** Who closes an ask the studio's sweep expires (backend `agents.messages.EXPIRED_BY`). */
+const EXPIRED_BY = 'Studioul (cereri expirate)';
+
+/**
+ * The studio's own bookkeeping, which stays in the record and draws no row in the register.
+ *
+ * The sweep of stale asks (backend `agents.inbox.expire_stale_asks`) closes each one with two
+ * events, always together: `agent.message_answered` carrying `expired` (or, before 2026-10-16,
+ * only its closer `EXPIRED_BY`) and `agent.ask_expired` saying why. On the Owner's register of
+ * 2026-10-17 00:50:56 they were two rows for one act, one of them the raw «ask expired», and
+ * since the restart 120 such pairs — 240 rows of the studio tidying its own mail. The Owner's
+ * rule for the studio's routine (2026-10-16, on the YouTube checks: «Vreau să rămână verificarea
+ * dar să nu apară aici»): it is recorded, and the letter's own view still says «închis fără
+ * răspuns», but the register, the replay's live prompt and the replay's interruption skip it.
+ * A real answer (no `expired`, another closer) is an act and keeps its row.
+ *
+ * @param {{event_type?: string, payload?: any}|null|undefined} event
+ */
+export function isBookkeeping(event) {
+  const type = String((event && event.event_type) || '');
+  if (type === 'agent.ask_expired') return true;
+  if (type !== 'agent.message_answered') return false;
+  const payload = event && event.payload && typeof event.payload === 'object' ? event.payload : {};
+  return payload.expired === true || payload.resolved_by === EXPIRED_BY;
+}
+
 /**
  * Describe one event for the Owner.
  *
@@ -395,8 +421,29 @@ export function describeEvent(event, names = {}) {
         excerpt: withoutEcho(payload.subject, payload.excerpt),
       };
     case 'agent.message_answered':
-      label = 'a răspuns la un mesaj';
+      // An ask the studio's sweep closed with nobody's answer is stored ANSWERED (the sheet
+      // repair may still resolve it), and its event is this one: the row says it was closed
+      // unanswered, never «a răspuns» (2026-10-16). `expired` is on the event since then; an
+      // older event says it only by its closer (`messages.EXPIRED_BY`).
+      if (payload.expired === true || payload.resolved_by === EXPIRED_BY) {
+        who = 'Studioul';
+        label = 'a închis fără răspuns o cerere';
+      } else {
+        label = 'a răspuns la un mesaj';
+      }
       text = payload.subject || '';
+      kind = 'speech';
+      break;
+    case 'agent.ask_expired':
+      // The sweep's own reason (`agents.inbox`), said by the backend by reason with the ask's
+      // subject (events_feed); never the event's name. Bookkeeping: no row draws it.
+      who = 'Studioul';
+      if (said) {
+        text = withoutName(said, who, actor);
+      } else {
+        label = 'a închis o cerere';
+        text = '';
+      }
       kind = 'speech';
       break;
     case 'agent.message_resolved':
@@ -791,7 +838,13 @@ export function describeEvent(event, names = {}) {
       text = bits.join(' · ');
     }
   }
-  const item = routine ? { who, label, text: short(text), kind, routine } : { who, label, text: short(text), kind };
+  // The studio's own bookkeeping (isBookkeeping): said in words for any place that lists it, and
+  // flagged so the register's and the replay's rows skip it.
+  const item = routine
+    ? { who, label, text: short(text), kind, routine }
+    : isBookkeeping(event)
+      ? { who, label, text: short(text), kind, bookkeeping: true }
+      : { who, label, text: short(text), kind };
   // The employee the backend named, for the portrait beside the row.
   if (actor && actor.agent_id) return { ...item, portrait: String(actor.agent_id) };
   return item;
@@ -1064,7 +1117,10 @@ export class Ledger {
       for (const old of sorted.slice(LEDGER_CAPACITY)) this.events.delete(old.event_id);
     }
     if (fresh.length) {
-      for (const id of arrivingIds(fresh, this.openedAt, Date.now())) this.arrived.add(id);
+      // Only what draws a row is lit: a bookkeeping arrival marked as news would redraw a
+      // register whose rows did not change («stă nemișcat», 2026-10-15).
+      const drawn = fresh.filter((event) => !isBookkeeping(event));
+      for (const id of arrivingIds(drawn, this.openedAt, Date.now())) this.arrived.add(id);
       this.render();
       if (this.onEvents) this.onEvents(fresh);
     }
@@ -1168,6 +1224,10 @@ export class Ledger {
     let lastDay = '';
     for (const event of events) {
       const item = describeEvent(event, this.names);
+      // The studio's own bookkeeping (isBookkeeping) draws nothing and touches nothing: it is
+      // skipped before any row, day heading, fold or act is counted, so the rows on either side
+      // fold as if it were not there, and a routine stretch is not broken by it.
+      if (item.bookkeeping) continue;
       if (this.kind !== 'all' && item.kind !== this.kind) continue;
       const time = new Date(event.timestamp || Date.now()).toLocaleTimeString('ro-RO', {
         hour: '2-digit',
@@ -1237,7 +1297,7 @@ export class Ledger {
       actSince = true;
       if (rows.length >= 150) break;
     }
-    replaceActivityHtml(this.list, rows.length
+    const html = rows.length
       ? rows
           .map((row) => {
             if (row.day !== undefined) return `<li class="ledger-day">${this.escape(row.day)}</li>`;
@@ -1263,7 +1323,14 @@ export class Ledger {
             );
           })
           .join('')
-      : '<li class="ledger-empty">Nimic înregistrat pentru acest filtru.</li>');
+      : '<li class="ledger-empty">Nimic înregistrat pentru acest filtru.</li>';
+    // The register stands still when nothing changed (the Owner, 2026-10-15 19:40Z: «trebuie
+    // să stea nemișcat, nu să flicare dacă nu apare ceva nou»): every state poll re-read the
+    // names and the portraits and drew the same rows again, and the list jumped. The same
+    // words are not drawn twice; a row that just arrived is always drawn, for its highlight.
+    if (html === this.lastHtml && !this.arrived.size) return;
+    this.lastHtml = html;
+    replaceActivityHtml(this.list, html);
     // The highlight plays once. A later render — a filter change, the office
     // layout arriving with its names — must not replay it on the same rows.
     this.arrived.clear();

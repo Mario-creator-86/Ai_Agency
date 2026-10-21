@@ -119,6 +119,17 @@ export class Drawers {
    * @param {{glide?: boolean}} [options]
    */
   layout(options = {}) {
+    if (document.body.classList.contains('studio-dashboard')) {
+      this.framed = false;
+      this._placeRooms();
+      delete this.root.dataset.register;
+      delete this.root.dataset.side;
+      for (const panel of [this.register, this.governance, this.modules, this.readout]) if (panel) panel.inert = false;
+      if (this.registerRail) this.registerRail.hidden = true;
+      if (this.sideRail) this.sideRail.hidden = true;
+      this.onInsets({ left: 0, right: 0, top: 0, bottom: 0 }, { glide: false });
+      return;
+    }
     this.framed = this.isFramed();
     this._placeRooms();
     if (!this.framed) {
@@ -233,6 +244,12 @@ export class Drawers {
 
   /** The rooms: the masthead's menu in the frame, the console's second tier otherwise. */
   _placeRooms() {
+    const dashboardNav = byId('dashboard-nav-rooms');
+    if (dashboardNav && this.rooms) {
+      if (this.rooms.parentElement !== dashboardNav) dashboardNav.append(this.rooms);
+      if (this.roomsTop) this.roomsTop.hidden = true;
+      return;
+    }
     if (!this.rooms || !this.roomsHome || !this.roomsTop) return;
     const home = this.framed ? this.roomsTop : this.roomsHome;
     if (this.rooms.parentElement !== home) home.append(this.rooms);

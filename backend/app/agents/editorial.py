@@ -30,6 +30,7 @@ import base64
 import json
 import logging
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -54,6 +55,7 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.montage import beat_of
 from app.media.prompt_agent import (
     SCOPE_FACTUAL,
     SCOPE_SERIAL,
@@ -68,11 +70,13 @@ from app.wording import viewing_verdict
 logger = logging.getLogger("studio.editorial")
 
 EDITORIAL_TASK = "editorial_review"
-TEMPLATE_VERSION = "editorial-v1"
+#: v2 (2026-10-16, the montage): the frames are spread over the whole film (`frame_picks`) and
+#: the note says which scenes they come from.
+TEMPLATE_VERSION = "editorial-v2"
 #: Under this many spoken words there is no story to tell, whatever the pictures.
 MIN_WORDS = 40
 FRAMES = 3
-#: One frame per scene, up to this many.
+#: One frame per writer's scene, up to this many, spread over the whole film (`frame_picks`).
 MAX_FRAMES = 8
 FRAME_WIDTH = 480
 
@@ -143,9 +147,13 @@ _INSTRUCTIONS = (
     "You are the Director, and this is the last look before a film leaves the studio. Below "
     "is everything the film is, as data: the topic, {script_note}, each scene's picture and "
     "narration, what quality control measured{frames_note}. Judge it as the audience will: "
-    "{judgement}; do the pictures show the story rather than decorate it — one frame from "
-    "every scene is attached, and a blank field, stripes, noise or garbled writing in any of "
-    "them means REJECT, however good the rest is; is it worth their time. {nature} Return "
+    "{judgement}; do the pictures show the story rather than decorate it — the frames are "
+    "spread over the whole film, one from each scene named with them, and a blank field, "
+    "stripes, noise or garbled writing in any of "
+    "them means REJECT, however good the rest is (the studio burns its own captions — the "
+    "narration's words, a few at a time — into the bottom of every frame: they are the "
+    "film's subtitles, never writing in the picture and never a reason); is it worth their "
+    "time. {nature} Return "
     'only JSON: {{"verdict": "APPROVE" | "REJECT", "story": "one sentence: {story_note}", '
     '"reasons": ["..."], "notes_for": {{"ScriptWriter": "...", "VideoEditor": "...", '
     '"VoiceArtist": "...", "Publisher": "..."}}, "lesson": "one general rule about how the '
@@ -256,9 +264,7 @@ def gather_facts(session: Session, media_asset_id: str, language: str) -> dict[s
     # file some other way. A factual film it could not measure is not waved through either.
     grounding = script_grounding(session, script) if script and not serial else None
     if grounding is not None and not grounding["passed"] and claims:
-        hard.append(
-            "narațiunea nu spune ce spun afirmațiile ei: " + " ".join(grounding["reasons"][:2])
-        )
+        hard.append("narațiunea nu spune ce spun afirmațiile ei: " + " ".join(grounding["reasons"]))
     qc = session.scalar(
         select(QualityControlReport)
         .where(QualityControlReport.media_asset_id == media_asset_id)
@@ -291,6 +297,9 @@ def gather_facts(session: Session, media_asset_id: str, language: str) -> dict[s
         "scenes": [
             {
                 "index": s.scene_index,
+                # The writer's scene this shot was cut from (the montage, `montage.beat_of`);
+                # None for a scene the montage did not cut.
+                "writer_scene": beat_of(s.prompt_json).get("scene_number"),
                 "seconds": s.duration_seconds,
                 "narration": s.voiceover_segment,
                 "picture": s.visual_prompt,
@@ -342,36 +351,96 @@ def model_can_see(session: Session, agent_id: str) -> bool:
     )
 
 
+def frame_picks(beats: Sequence[Any], limit: int = MAX_FRAMES) -> list[int]:
+    """Which storyboard rows a look of ``limit`` frames is shown, as positions in film order.
+
+    ``beats`` holds each row's writer scene (``prompt_json.beat.scene_number``,
+    `montage.beat_of`), None for a row the montage did not cut. Every row when they all fit;
+    else one row per writer's scene — the middle shot of its beat, and the film's last row for
+    the last beat, so the payoff is always seen — sampled evenly over the film when there are
+    more writer's scenes than frames, and the frames left over spread evenly over the rows
+    between.
+
+    The montage (2026-10-16) cut each writer's scene into 2-3 rows, and the first eight rows
+    were the first 25-35 s of a 160 s film: the Director's viewing and the film's picture look
+    never saw its ending, the very failure (the ATLAS payoff approved unseen) one frame per
+    scene was written against.
+    """
+    count = len(beats)
+    if limit <= 0 or count == 0:
+        return []
+    if count <= limit:
+        return list(range(count))
+    groups: list[list[int]] = []
+    for position, beat in enumerate(beats):
+        if groups and beat is not None and beats[groups[-1][-1]] == beat:
+            groups[-1].append(position)
+        else:
+            groups.append([position])
+    chosen = groups
+    if len(groups) > limit:
+        # Evenly over the film, its first and its last writer's scene included.
+        chosen = (
+            [groups[round(i * (len(groups) - 1) / (limit - 1))] for i in range(limit)]
+            if limit > 1
+            else [groups[-1]]
+        )
+    picks = [group[(len(group) - 1) // 2] for group in chosen[:-1]] + [chosen[-1][-1]]
+    taken = set(picks)
+    rest = [position for position in range(count) if position not in taken]
+    spare = limit - len(picks)
+    if spare > 0 and rest:
+        picks += [rest[(2 * i + 1) * len(rest) // (2 * spare)] for i in range(spare)]
+    return sorted(picks)
+
+
 def frames_for(
     path: str,
     ffmpeg_path: str | None,
     duration: float | None,
     scene_seconds: list[float | None] | None = None,
-) -> list[str]:
-    """One frame from the middle of every scene, as base64 JPEG, for a model that can see.
+    picks: Sequence[int] | None = None,
+) -> list[str | None]:
+    """One frame from the middle of each picked scene, as base64 JPEG, for a model that can
+    see: ``picks`` are positions in ``scene_seconds`` (`frame_picks`); without them, rows
+    spread over the whole film, its last one included.
 
     It used to be three frames at 20, 50 and 80 per cent of the film. A five-scene film showed
     the Director three of its scenes, and the payoff of the ATLAS film — eleven seconds of
     stripes — was approved on that. The planned scene lengths are scaled to the film's real
-    length, because a scene lasts as long as its narration was recorded.
+    length, because a scene lasts as long as its narration was recorded. Every scene's length
+    places the picked ones on the timeline, so a frame is cut where its own scene plays.
+
+    One entry per picked moment, in the order asked: a cut that failed is None in its own
+    place. A failed cut used to be skipped, and every frame after it was then read as the
+    scene before its own — the Director told «the middle of scenes 1, 2, 3» about the frames
+    of 1, 3 and the next one, and the picture look judging a character against another
+    scene's frame (the audit of 2026-10-16, SAFE-001). Empty when nothing can be cut at all.
     """
     ffmpeg = find_ffmpeg(ffmpeg_path)
     file = Path(path)
     if not ffmpeg or not file.is_file() or not duration or duration <= 0:
         return []
-    planned = [float(seconds) for seconds in (scene_seconds or []) if seconds]
-    moments: list[float] = []
-    if planned:
-        scale = duration / sum(planned)
-        start = 0.0
-        for seconds in planned[:MAX_FRAMES]:
-            moments.append(start + seconds * scale / 2)
-            start += seconds * scale
+    lengths = [float(seconds) if seconds else 0.0 for seconds in (scene_seconds or [])]
+    moments: list[float | None] = []
+    if sum(lengths) > 0:
+        scale = duration / sum(lengths)
+        starts = [sum(lengths[:position]) for position in range(len(lengths))]
+        chosen = frame_picks([None] * len(lengths)) if picks is None else list(picks)
+        for position in chosen:
+            moments.append(
+                (starts[position] + lengths[position] / 2) * scale
+                if 0 <= position < len(lengths)
+                else None
+            )
     else:
         moments = [duration * fraction for fraction in (0.2, 0.5, 0.8)[:FRAMES]]
-    frames: list[str] = []
-    for moment in moments:
-        moment = max(0.0, moment)
+    frames: list[str | None] = []
+    for number, wanted in enumerate(moments):
+        if wanted is None:
+            frames.append(None)
+            continue
+        moment = max(0.0, wanted)
         try:
             result = subprocess.run(  # noqa: S603 - argument list, no shell
                 [
@@ -400,11 +469,57 @@ def frames_for(
                 timeout=60,
                 check=False,
             )
-        except (OSError, subprocess.SubprocessError):
-            return frames
+        except (OSError, subprocess.SubprocessError) as error:
+            # The encoder itself is gone or hung: the moments left are not tried, and each
+            # keeps its place as a missing frame.
+            logger.warning(
+                "frame_cut_failed",
+                extra={
+                    "path": str(file),
+                    "at_seconds": round(moment, 2),
+                    "error_class": type(error).__name__,
+                },
+            )
+            return frames + [None] * (len(moments) - number)
         if result.returncode == 0 and result.stdout:
             frames.append(base64.b64encode(result.stdout).decode("ascii"))
+        else:
+            logger.warning(
+                "frame_cut_failed",
+                extra={
+                    "path": str(file),
+                    "at_seconds": round(moment, 2),
+                    "returncode": result.returncode,
+                },
+            )
+            frames.append(None)
     return frames
+
+
+def accepted_under_cap(session: Session, media_asset_id: str) -> dict[str, Any] | None:
+    """The Director's newest QC decision on this film when it ACCEPTED the film — under the
+    Owner's renders cap (`media.renders_cap`) or on her own judgement of the
+    findings — else None: such a film is published as it stands, and her viewing writes
+    notes, not a veto. 2026-10-15 12:20Z, the Owner: «orice iese, chiar dacă pică, Directorul
+    se uită peste ce avem, și publică!»; 17:36Z, a4ecf40a: she accepted the film after QC
+    (nine minor findings, nothing bought), her viewing then refused it for its story — a
+    story the drafts cap had shipped — and the day's episode stood unpublished with its
+    money spent. The story's lessons belong to the next script, not to this film."""
+    from app.media.director_qc import DECISION_EVENT  # noqa: PLC0415 - media imports agents
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(DomainEvent.event_type == DECISION_EVENT)
+        .order_by(DomainEvent.sequence.desc())
+    ):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if str(payload.get("media_asset_id") or "") != media_asset_id:
+            continue
+        if payload.get("outcome") == "ACCEPTED":
+            return dict(payload)
+        return None
+    return None
 
 
 def latest_editorial(session: Session, media_asset_id: str) -> EditorialReview | None:
@@ -413,6 +528,33 @@ def latest_editorial(session: Session, media_asset_id: str) -> EditorialReview |
         .where(EditorialReview.media_asset_id == media_asset_id)
         .order_by(EditorialReview.created_at.desc())
     )
+
+
+def _frames_note(
+    can_see: bool, frames: Sequence[str], framed: Sequence[Any], unseen: Sequence[Any]
+) -> str:
+    """What the Director's brief says about the frames: how many are attached, which scenes
+    they are, and which picked scene has none because its cut failed (SAFE-001). A model that
+    can see but was handed no frame is told that, not that it has no vision."""
+    blind = (
+        " — so judge it from what is written here and say so if the pictures are what you "
+        "would need to decide"
+    )
+    if not frames:
+        if can_see:
+            return ". No frame could be cut from the film's file, so you cannot see it" + blind
+        return ". You cannot see the film itself — your model has no vision" + blind
+    note = f", and {len(frames)} frames from the file itself are attached"
+    if framed and len(framed) == len(frames):
+        note += f" (the middle of scenes {', '.join(map(str, framed))}, in that order)"
+    if unseen:
+        many = len(unseen) > 1
+        note += (
+            f"; no frame could be cut for scene{'s' if many else ''} "
+            f"{', '.join(map(str, unseen))}, so you have not seen "
+            f"{'their pictures' if many else 'its picture'}"
+        )
+    return note
 
 
 def editorial_review(
@@ -447,29 +589,42 @@ def editorial_review(
 
         with Session(engine) as session:
             can_see = model_can_see(session, director_id)
+        listed = list(facts.get("scenes") or [])
+        # One frame per writer's scene, spread over the whole film, its last row included.
+        picks = frame_picks([scene.get("writer_scene") for scene in listed])
+        cut: list[str | None] = []
         if can_see:
-            frames = frames_for(
+            cut = frames_for(
                 facts["path"],
                 ffmpeg_path,
                 facts["duration_seconds"],
-                scene_seconds=[scene.get("seconds") for scene in facts.get("scenes") or []],
+                scene_seconds=[scene.get("seconds") for scene in listed],
+                picks=picks,
             )
+        frames = [frame for frame in cut if frame]
+        # Which scenes the frames are, in order: no longer simply the first ones (a film whose
+        # scenes have no lengths is cut at fixed fractions, and names none). Each pick keeps
+        # its own frame: a cut that failed takes its scene's name with it, and that scene is
+        # named as unseen, never given the next scene's frame (SAFE-001).
+        named = any(scene.get("seconds") for scene in listed)
+        framed = (
+            [listed[p].get("index") for p, frame in zip(picks, cut, strict=False) if frame]
+            if named
+            else []
+        )
+        unseen = (
+            [listed[p].get("index") for p, frame in zip(picks, cut, strict=False) if not frame]
+            if named
+            else []
+        )
         shown = {k: v for k, v in facts.items() if k not in ("path", "hard_rejects")}
         prompt = (
             audience_language_line(language)
             + instructions_for(
                 bool(facts.get("serial")),
-                frames_note=(
-                    f", and {len(frames)} frames from the file itself are attached"
-                    if frames
-                    else (
-                        ". You cannot see the film itself — your model has no vision — so "
-                        "judge it from what is written here and say so if the pictures are "
-                        "what you would need to decide"
-                    )
-                ),
+                frames_note=_frames_note(can_see, frames, framed, unseen),
             )
-            + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:14000], "the-film")
+            + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False), "the-film")
         )
         parsed, first, second = structured_run(
             engine,
@@ -500,6 +655,23 @@ def editorial_review(
     else:
         raise EditorialError("Niciun model de limbaj: Directorul nu poate viziona materialul")
 
+    # The Owner, 2026-10-15: a film accepted under his cap is published as it stands. Her
+    # viewing still says what it saw — the reasons stay on the record, the lesson is kept —
+    # but it is not a veto: the verdict is APPROVE under the cap, no department is told to
+    # remake anything, and a storyboard a viewing refused earlier stands RENDERED again.
+    with Session(engine) as session:
+        under_cap = accepted_under_cap(session, media_asset_id)
+    if verdict.verdict == "REJECT" and under_cap is not None:
+        verdict = EditorialVerdict(
+            verdict="APPROVE",
+            story=verdict.story,
+            reasons=verdict.reasons,
+            notes_for=verdict.notes_for,
+            lesson=verdict.lesson,
+        )
+    else:
+        under_cap = None
+
     with Session(engine) as session, session.begin():
         review_id = str(uuid4())
         event = append_event(
@@ -511,9 +683,10 @@ def editorial_review(
             {
                 "verdict": verdict.verdict,
                 "story": verdict.story[:200],
-                "reasons": verdict.reasons[:4],
+                "reasons": verdict.reasons,
                 "frames_seen": len(frames),
-                "title": facts["title"][:120],
+                "title": facts["title"],
+                "under_cap": under_cap is not None,
             },
             correlation,
         )
@@ -538,6 +711,12 @@ def editorial_review(
             board = session.get(Storyboard, facts["storyboard_id"])
             if board is not None:
                 board.status = "REJECTED"
+        elif under_cap is not None and facts["storyboard_id"]:
+            board = session.get(Storyboard, facts["storyboard_id"])
+            if board is not None and board.status == "REJECTED":
+                # Refused by an earlier viewing of the same film, never closed: a film
+                # with a finished render that goes out under the cap.
+                board.status = "RENDERED"
         roles = {
             role.name: agent
             for agent, role in session.execute(
@@ -546,7 +725,7 @@ def editorial_review(
                 .where(Agent.lifecycle == "ACTIVE")
             ).all()
         }
-        subject = f"Vizionare: {viewing_verdict(verdict.verdict)} — {facts['title'][:120]}"
+        subject = f"Vizionare: {viewing_verdict(verdict.verdict)} — {facts['title']}"
         summary_text = (
             f"{'Aprobat' if verdict.verdict == 'APPROVE' else 'Respins'}: {facts['title']}. "
             + (f"Despre: {verdict.story} " if verdict.story else "")
@@ -555,9 +734,9 @@ def editorial_review(
         post_message(
             session,
             intent="STATUS" if verdict.verdict == "APPROVE" else "ESCALATE",
-            subject=subject[:200],
+            subject=subject,
             body={"media_asset_id": media_asset_id, "verdict": verdict.verdict},
-            body_text=summary_text[:4000] + f" — {director_name}",
+            body_text=summary_text + f" — {director_name}",
             from_agent_id=director_id,
             to_agent_id=None,
             run_id=run_id,
@@ -579,7 +758,7 @@ def editorial_review(
                 storyboard_id=facts.get("storyboard_id"),
             )
         sent = 0
-        if verdict.verdict == "REJECT":
+        if verdict.verdict == "REJECT" and under_cap is None:
             for role_name, note in verdict.notes_for.items():
                 target = roles.get(DEPARTMENTS.get(role_name, role_name))
                 if target is None or not str(note).strip():
@@ -587,7 +766,7 @@ def editorial_review(
                 post_message(
                     session,
                     intent="HANDOFF",
-                    subject=f"Refăcut: {facts['title'][:110]}"[:200],
+                    subject=f"Refăcut: {facts['title']}",
                     body={
                         "media_asset_id": media_asset_id,
                         "storyboard_id": facts["storyboard_id"],
@@ -602,7 +781,7 @@ def editorial_review(
         remember(
             session,
             memory_class="AGENT_OPINION",
-            content=summary_text[:600],
+            content=summary_text,
             source_type="run" if run_id else "system",
             source_id=run_id or review_id,
             agent_id=director_id,

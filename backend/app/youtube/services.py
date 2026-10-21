@@ -710,8 +710,21 @@ def verify_connection(
         row = session.get(YouTubeConnection, connection_id)
         if row is None:
             raise YouTubeConnectionError("Conexiunea nu există.")
-        row.remote_channel_id = channel.get("id")
-        row.remote_channel_title = (channel.get("snippet") or {}).get("title")
+        channel_id = channel.get("id")
+        channel_title = (channel.get("snippet") or {}).get("title")
+        # The Owner, 2026-10-16: «Alertele acestea nu le vreau. Vreau să rămână verificarea dar
+        # să nu apară aici». The check still runs and is kept on the row (`last_checked_at`);
+        # an event is written only when the check changed something he would want to know:
+        # the connection was not connected, had an error, or the channel is another one or
+        # renamed. A routine "still the same channel" every few minutes is not a fact.
+        changed = (
+            row.status != STATUS_CONNECTED
+            or bool(row.last_error)
+            or row.remote_channel_id != channel_id
+            or row.remote_channel_title != channel_title
+        )
+        row.remote_channel_id = channel_id
+        row.remote_channel_title = channel_title
         row.channel_snapshot = _channel_snapshot(channel)
         row.status = STATUS_CONNECTED
         row.last_checked_at = utc_now()
@@ -719,15 +732,16 @@ def verify_connection(
         from app.decisions.sources import youtube_reconnected  # noqa: PLC0415
 
         youtube_reconnected(session, connection_id)
-        append_event(
-            session,
-            "youtube.verified",
-            "youtube_connection",
-            connection_id,
-            8,
-            {"channel_id": row.remote_channel_id, "channel_title": row.remote_channel_title},
-            correlation_id,
-        )
+        if changed:
+            append_event(
+                session,
+                "youtube.verified",
+                "youtube_connection",
+                connection_id,
+                8,
+                {"channel_id": channel_id, "channel_title": channel_title},
+                correlation_id,
+            )
         session.flush()
         return connection_view(row)
 

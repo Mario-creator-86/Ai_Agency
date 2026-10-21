@@ -47,6 +47,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.factual.models import FactualClaim, ScriptDraft
+from app.media import film_length
 from app.media.assembler import (
     LIVE_KIND,
     TAKES_VISUAL_SOURCE,
@@ -643,10 +644,20 @@ def foreseen_spans(
     scene asks for (assembler.shot_spans), which is what the render requires a reused clip to
     cover. It used to be max(plan, words) + 0.4 s, the timeline from before 2026-10-01, so the
     sheet could call a paid clip too short that the render would use.
+
+    A film timed by its frozen pauses («pauza vocii», 2026-10-16): each scene's words hold its
+    share of them (`film_length.frozen_rows`), every cut on a frame of the cumulative
+    timeline, as the render lays it; a film built before them keeps the legacy breath.
     """
     planned = [float(view.get("duration_seconds") or 0.0) for view in views]
     if views and all(isinstance(seconds, int | float) for seconds in spoken):
-        lengths = scene_spans(planned, spoken, kinds=[scene_kind_of(dict(view)) for view in views])
+        plans = film_length.frozen_rows(views)
+        lengths = scene_spans(
+            planned,
+            spoken,
+            kinds=[scene_kind_of(dict(view)) for view in views],
+            pauses=[plan.share for plan in plans] if plans is not None else None,
+        )
     else:
         lengths = [whole_frames(plan) for plan in planned]
     scenes = [

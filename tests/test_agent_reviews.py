@@ -33,7 +33,6 @@ from app.agents.reviews import (
 from app.agents.services import seed_initial_workforce
 from app.factual.models import ScriptDraft, TopicIdea
 from app.media.cost_plan import (
-    STILL_CANDIDATES,
     STILLS_MODEL,
     STILLS_RESOLUTION,
     price_shot,
@@ -54,11 +53,11 @@ from app.services import append_event, utc_now
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-FIXTURE = Path(__file__).parent / "fixtures" / "factual_sample" / "qc_report.json"
+FIXTURE = Path(__file__).parent / "fixtures" / "nepal_1d530880" / "qc_report.json"
 
 #: The Video Editor's letter of 2026-09-26, as the model wrote it (abridged).
 NEPAL_CLAIM = (
-    "Am re-randat pista audio pentru 00000163: true peak normalizat la -1.2 dBTP, acum sub "
+    "Am re-randat pista audio pentru ac3322e4: true peak normalizat la -1.2 dBTP, acum sub "
     "plafonul de -1 dBTP. Scene 5: promptul rescris — 'two vertical bars, right bar 30% "
     "shorter' — trimis către Runway Gen-4. Kael"
 )
@@ -177,7 +176,7 @@ def test_the_same_claim_with_a_matching_media_event_is_not_labelled(engine, staf
             "media_asset",
             str(uuid4()),
             1,
-            {"storyboard_id": "0000003f"},
+            {"storyboard_id": "1d530880"},
             str(uuid4()),
         )
         append_event(
@@ -379,7 +378,10 @@ def test_a_failed_render_becomes_priced_redo_proposals_never_render_again(engine
     assert set(by) == {(None, "audio"), (3, "still"), (3, "motion"), (5, "card"), (6, "card")}
     assert by[(None, "audio")]["credits"] == 0
     assert by[(5, "card")]["credits"] == 0 and by[(6, "card")]["credits"] == 0
-    still = price_still(STILLS_MODEL, STILLS_RESOLUTION, STILL_CANDIDATES)
+    from app.media import cost_plan
+
+    # The suite buys two candidates (conftest); read the value the module holds now.
+    still = price_still(STILLS_MODEL, STILLS_RESOLUTION, cost_plan.STILL_CANDIDATES)
     shot = price_shot("seedance2", "1080p", 4.0)
     assert by[(3, "still")]["credits"] == still
     assert by[(3, "motion")]["credits"] == shot
@@ -404,7 +406,7 @@ def test_a_failed_render_becomes_priced_redo_proposals_never_render_again(engine
         assert message.body_json["redo_credits"] == still + shot
         assert message.body_json["retry_recommended"] is False
         # The Owner's report goes with it, from measured credits.
-        assert "123 de credite" in (message.body_text or "")
+        assert "966 de credite" in (message.body_text or "")
         assert "−0,93 dBTP" in (message.body_text or "")
 
 

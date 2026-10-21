@@ -79,7 +79,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_director_decides_qc import PANELS, failed_film
 
-FIXTURES = Path(__file__).parent / "fixtures" / "factual_sample"
+FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
 #: A still, already prepared as the seeing model is sent it (base64), so no encoder is needed.
 PICTURE = base64.b64encode((FIXTURES / "scene_01.jpg").read_bytes()).decode("ascii")
 FACE = "YuNet a găsit 1 față în imagine; biblia vizuală interzice fețele"
@@ -480,12 +480,14 @@ def test_the_verdict_and_severity_are_read_whatever_their_case():
         (FACE, False, []),
         (PANELS, False, ["panels"]),
         ("Imaginea nu e o singură fotografie: o bandă plată pe toată lățimea", False, ["panels"]),
+        # Writing is hers since 2026-10-15 (the Owner: the scene's own writing stays; only
+        # text laid over the picture or a logo is serious, and she says which): no hard limit.
         (
             "privit la 1080 px: apare text sau un logo («no faces, but faint lettering»)",
             True,
-            ["writing"],
+            [],
         ),
-        ("garbled on-picture text ('Dut youn't est allivie s cogterd?')", False, ["writing"]),
+        ("garbled on-picture text ('Dut youn't est allivie s cogterd?')", False, []),
         ("Imaginea nu arată ce cere planul scenei «two women facing each other»", True, []),
         ("Imaginea nu arată ce cere scena (imaginea ei scrisă și narațiunea)", False, []),
     ],

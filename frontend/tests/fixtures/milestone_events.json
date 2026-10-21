@@ -3,10 +3,10 @@
   "sequence": 5001,
   "event_id": "m1",
   "event_type": "story.episode_drafted",
-  "aggregate_id": "00000000-0000-4000-8000-0000000001b4",
+  "aggregate_id": "d9787125-2894-4a63-8c30-3de1d785480a",
   "timestamp": "2026-09-12T08:44:06.723786+00:00",
   "payload": {
-   "log_id": "00000000-0000-4000-8000-0000000001ad",
+   "log_id": "d5b085a4-24c4-4efe-97a0-92c029c3695e",
    "grounded_events": 1,
    "episode_number": 1,
    "rewrite_of": null
@@ -16,10 +16,10 @@
   "sequence": 5002,
   "event_id": "m2",
   "event_type": "story.episode_approved",
-  "aggregate_id": "00000000-0000-4000-8000-0000000001b4",
+  "aggregate_id": "d9787125-2894-4a63-8c30-3de1d785480a",
   "timestamp": "2026-09-12T09:00:00+00:00",
   "payload": {
-   "log_id": "00000000-0000-4000-8000-0000000001ad",
+   "log_id": "d5b085a4-24c4-4efe-97a0-92c029c3695e",
    "reviewed_by": "owner"
   }
  },
@@ -27,10 +27,10 @@
   "sequence": 5003,
   "event_id": "m3",
   "event_type": "media.video_rendered",
-  "aggregate_id": "00000000-0000-4000-8000-000000000121",
+  "aggregate_id": "8fb13a2f-bef4-4841-bb9e-306cc19ef5f6",
   "timestamp": "2026-09-12T12:58:46.559443+00:00",
   "payload": {
-   "storyboard_id": "00000000-0000-4000-8000-0000000001bc",
+   "storyboard_id": "dbb3fd3a-ff26-41c0-9a46-251b146dd1af",
    "render_engine": "FFMPEG",
    "duration_seconds": 45.28
   }
@@ -39,7 +39,7 @@
   "sequence": 5004,
   "event_id": "m4",
   "event_type": "publishing.video_published",
-  "aggregate_id": "00000000-0000-4000-8000-000000000164",
+  "aggregate_id": "ac7e6b07-815f-4adf-89a8-c88f32b2b7ef",
   "timestamp": "2026-09-12T18:01:21.748211+00:00",
   "payload": {
    "title": "The Universe's Missing Pieces: Why the LHC Upgrade Matters",

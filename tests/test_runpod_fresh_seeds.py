@@ -1,6 +1,14 @@
-"""Offline regression tests for test runpod fresh seeds.
+"""The last door before RunPod never sends a seed that already drew a picture for its scene.
 
-Providers are faked; all data is synthetic."""
+The Owner, 2026-10-12 22:00: «Cum este permis să facă 9 încercări… și el să facă același
+video?». The cyclotron film aa170155 bought its scene-4 and scene-5 stills again in four rounds
+on the SAME two seeds (2509052738/2571181196, 596097424/719292034): the journal moved each
+redo to the next attempt and kept the seed. The serial f06808c9 drew its scene-4 index-1 and
+index-2 seeds a third time at 11:33 and 11:47 UTC. `batch.reserve_item` now replaces such a
+seed with `batch.fresh_item_seed` and journals the asked one as ``seed_asked``; a resend of the
+SAME row (a crash before /run, an unanswered /run, a /run proven never queued) keeps its key and
+its fresh seed. Every RunPod, bucket and GPU call is faked; nothing is bought.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +35,7 @@ from sqlalchemy.orm import Session
 from test_runpod_batch import Cloud, Session_, adapter, request, serverless
 
 #: The two films of the incident, with the seeds the live journal shows they reused.
-CYCLOTRON = "00000000-0000-4000-8000-000000000160"
+CYCLOTRON = "aa170155-56c7-4e29-9616-e1e917fb243e"
 SERIAL = "f06808c9-40d4-4f40-a980-84b6a5540348"
 
 

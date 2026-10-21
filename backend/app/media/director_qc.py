@@ -1,6 +1,79 @@
-"""Director qc: existing local-first media checks.
+"""The Director decides a film that failed quality control (2026-10-10).
 
-Private production traces omitted; implementation unchanged."""
+Film babcf272 («The Particle That Shouldn't Exist (But Does)»), 2026-10-10: the studio
+assembled it at 11:04 UTC from takes the Owner had approved (scenes 1-4, scene 2 his approved
+test shot) and scene 5, a still that came out as three stacked panels, animated locally by his
+LOCAL_MOVE choice. Its QC report d4ea68d2 failed on scene 5's panels (real), on every scene for
+«text or a logo» (the film-level look read the studio's own burned-in subtitles: false) and on
+scenes 2 and 3 for the bible's near-black void (takes he had approved: his choice). The Video
+Editor's diagnosis was filed and ignored; the mechanical repair redid scenes 1 and 2 unasked,
+retired his approved still, motion and test shot (REDO.OWNER, REDO.STILL_REPLACED), rewrote the
+two scenes' prompts and opened RunPod sessions; nothing was delivered, and he stopped the studio.
+His direction the same day: the agents check one another, the Director supervises, and she
+decides alone («BA DA! POATE DECIDE SINGURĂ!»), with two things not hers: his paid-media rule
+(OVER_USD 5: the Policy Kernel's may_act asks him above it) and facts about his accounts. And
+nobody ever retires a still or clip he approved himself.
+
+This module is her desk for one failed QC report; the walk itself (review, then what she
+decided, then QC again) is `app.runbook.stages.director_decides_failed_film`:
+
+- `film_qc_context` is what she reads, as data: every finding of the report, numbered, with its
+  check, its scene and whether it is hers to judge at all (`not_yours`: rights, his music
+  library's licences, factual claims, placeholder visuals, how the film was made, a file that
+  does not match its record); the checks; per scene its kind,
+  its words, which takes are in the film and who approved them (the Owner on the sheet, or the
+  studio's gate), his own choices on the sheet and what a redo would retire of his; the visual
+  bible; whether the studio burned its subtitles into the film; the Video Editor's diagnosis; her
+  earlier reviews of the film; the paid redos his limits still allow.
+- `protected_redos` and `repair_list`: a redo that would retire a take he approved is never
+  carried out (skipped, and said), whoever lists it; a new still brings new motion with it, or,
+  for a scene he chose to animate locally (LOCAL_MOVE), the film rejoined from its takes for
+  free (`REJOIN`); a motion is never bought against that choice.
+- `decision_state`: a REPAIR waiting on something outside her (`PENDING_OUTCOMES`: his answer,
+  a take bought for it waiting for his look or the vendor, a film to rejoin with an approved
+  take bought for it) stands, is carried on without asking her again once that came
+  (``ready``), and is hers again once it lapsed (his no, an expired question, his look
+  rejecting what was bought, nothing delivered, `BOUGHT_WAIT_DAYS` waited in vain). A take
+  given back after a redo that delivered nothing is never read as the new one
+  (`new_approved_take`).
+- `look_entries`, `record_look`, `look_letter`: the candidates bought for her REPAIR that the
+  stills gate or the clip QC refused wait for her own look, not for his (the Owner, 20:06 local
+  the same day: «El ar trebui să hotărască dacă poza este bună sau nu»). She is shown them with
+  the gate's reasons and chooses one (approved by her, `DIRECTOR_APPROVER`, never in his name)
+  or rejects them all (the report is hers again at once); he gets a STATUS letter.
+- `accept_film` writes the PASSED report her ACCEPT stands on: the original checks kept, a
+  ``director_qc`` check listing every verdict, her overrules among them, so the publishing QC gate
+  lets the film through (the rights and factual gates still run on their own). `close_film`
+  closes it through the Director's own retirement path (`runbook.stages.close_film_books`) and
+  withdraws the paid questions about it. `record_decision` writes `media.director_qc_decision`;
+  `director_letter` the Owner's Romanian STATUS letter (never a question);
+  `wait_for_director` the note in her inbox when she could not decide (no model, an answer that
+  did not validate twice): nothing is redone then, and the watchdog asks her again later
+  (`app.workflows.passes.director_qc_review`).
+
+- 2026-10-12 (19.50 USD of RunPod that day, 11.05 on redos, and all three films still failing;
+  the Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI! DAR TREBUIE SĂ ÎNȚELEAGĂ DE CE APAR DEFECTELE
+  ȘI LA VIITOARELE PROMPTURI SĂ SE ASIGURE CĂ NU MAI SUNT!»): every REAL or ACCEPTED verdict
+  names its severity (a minor defect is ACCEPTED and the film published), its cause and a
+  lesson, and `learn_from_decision` stores each new lesson for the prompt writers once her
+  decision is recorded. A scene that passed an earlier film's picture checks with the same
+  takes is ``passed_before_unchanged`` in her context (`film_qc_context`): never REAL, never
+  redone; the film QC itself no longer judges it again (`picture_qc.earlier_passes`).
+- The review of that change, the same evening (the studio stopped until it was merged): what
+  quality control measured as serious (`reviews.measured_serious`) is never ACCEPTED, and with
+  only his cap in the way her REPAIR goes to his card; «Controlul «X» a picat» is REAL only with
+  its scenes' findings (``check_level``); a scene is named by its own index or scene words,
+  never a bare digit; what passed, or what she judged FALSE or accepted as minor, on the same
+  picture is settled check by check (``passed_before``, ``accepted_before``, ``failing_now``);
+  her lessons go to `prompt_agent.record_prompt_lesson` (source: her decision's run, scope: the
+  film's kind, provisional) only where a picture or motion prompt can act on them
+  (`teachable_lessons`), and are confirmed once a later QC passes their scenes
+  (`confirm_lessons`); a REPAIR carried on after a wait is read again under these rules
+  (`resume_repairs`).
+
+Nothing here buys, calls a vendor or answers in the Owner's name: a REPAIR is bought by
+`runbook.stages._apply_repairs`, through `assembler.redo_scene` (unasked, under his rule).
+"""
 
 from __future__ import annotations
 
@@ -1057,10 +1130,11 @@ def film_qc_context(
                     "accepted_before_unchanged": bool(accepted),
                 }
             )
-        earlier = (
-            _earlier(session, decisions_of_film(session, storyboard_id)) if storyboard_id else []
-        )
-        looks = looks_of_film(session, storyboard_id) if storyboard_id else []
+        decided = decisions_of_film(session, storyboard_id) if storyboard_id else []
+        looked = _look_events(session, storyboard_id) if storyboard_id else []
+        earlier = _earlier(session, decided)
+        looks = looks_of_film(session, storyboard_id, looked) if storyboard_id else []
+        her_runs = her_runs_on_film(decided, looked)
         found = dict(diagnosis) if diagnosis else _diagnosis_of(session, report_id)
     captions = production.get("captions") if isinstance(production.get("captions"), dict) else {}
     burned = (captions or {}).get("burned_in")
@@ -1113,6 +1187,10 @@ def film_qc_context(
         # The code's own bookkeeping, never shown to her (`reviews._director_payload`): each
         # scene's carry key per family, recorded on her verdicts (`annotate_verdicts`).
         "_settle_keys": settle_keys,
+        # And the runs of her earlier reviews and looks on the film, named as her review's
+        # subject (`review_film_qc`): her records of them reach her even when the payload
+        # omits earlier_reviews and your_looks.
+        "_her_run_ids": her_runs,
     }
 
 
@@ -1128,7 +1206,8 @@ def annotate_verdicts(
     from app.media.picture_qc import settle_family  # noqa: PLC0415 - shared render evidence
 
     findings = {int(item["id"]): item for item in context.get("findings") or []}
-    keys = context.get("_settle_keys") if isinstance(context.get("_settle_keys"), Mapping) else {}
+    raw_keys = context.get("_settle_keys")
+    keys = raw_keys if isinstance(raw_keys, Mapping) else {}
     owner_scenes: set[int] = set()
     for scene in context.get("scenes") or []:
         in_film = scene.get("in_film") or {}
@@ -1327,6 +1406,28 @@ def _older_than(moment: Any, days: float) -> bool:
     return now - then > timedelta(days=days)
 
 
+def current_approved_still(session: Session, storyboard_id: str, scene: int) -> SceneTake | None:
+    """A reusable picture must match today's words/reference and its verified file."""
+    from app.media.assembler import still_options, usable_take  # noqa: PLC0415
+
+    row = session.scalar(
+        select(StoryboardScene).where(
+            StoryboardScene.storyboard_id == storyboard_id, StoryboardScene.scene_index == scene
+        )
+    )
+    if row is None:
+        return None
+    view = {"visual_prompt": row.visual_prompt, "character_ids": list(row.character_ids_json or [])}
+    return usable_take(
+        session,
+        storyboard_id,
+        scene,
+        "still",
+        still_options(session.get_bind().engine, view),
+        statuses=("APPROVED",),
+    )
+
+
 def bought_not_in_film(session: Session, storyboard_id: str) -> list[dict[str, Any]]:
     """The approved takes bought for her earlier REPAIRs of this film that none of its films
     holds yet, one per (scene, kind), with the moment that REPAIR began ({scene_index, kind,
@@ -1359,6 +1460,10 @@ def bought_not_in_film(session: Session, storyboard_id: str) -> list[dict[str, A
             if (scene, kind) in found:
                 continue
             take = new_approved_take(session, storyboard_id, scene, kind, since)
+            if kind == "still" and take is not None:
+                current = current_approved_still(session, storyboard_id, scene)
+                if current is None or current.id != take:
+                    continue
             if take is not None and take not in in_films:
                 found[(scene, kind)] = {
                     "scene_index": scene,
@@ -2172,6 +2277,39 @@ ACCEPTED_BY_LOOKS_RO = (
 )
 
 
+def accepted_by_cap(decided: Mapping[str, Any], ship: Mapping[str, Any]) -> dict[str, Any]:
+    """Her REPAIR made her ACCEPT by the Owner's cap (2026-10-15: «Randările odată făcute, de
+    maxim 3x pentru fiecare imagine sau mișcare … publicăm cu ce Directoarea alege ca fiind cel
+    mai apropiat»): nothing of her list could be bought under the cap (``ship``, from
+    `runbook.stages._apply_repairs`), so the film ships as it stands. Her verdicts are kept
+    as they are — a REAL finding stays REAL and is the lesson for the next film — and the
+    decision says it was accepted under the cap (``accepted_under_cap``)."""
+    limited = [
+        int(item["scene_index"])
+        for item in ship.get("limited") or []
+        if isinstance(item, Mapping) and isinstance(item.get("scene_index"), int)
+    ]
+    summary = " ".join(str(decided.get("summary") or "").split())
+    # A REPAIR nothing of which can be made at all, no cap reached (`runbook.stages.
+    # repair_stopped_by_caps`' «impossible»), is not said to be the cap's.
+    heading = (
+        "Acceptat sub plafonul Proprietarului (2026-10-15)"
+        if limited
+        else "Acceptat cu ce are: nimic din refacerea hotărâtă nu se poate face"
+    )
+    words = (
+        f"{heading}: {ship.get('reason_ro') or ''} "
+        + (f"Scenele oprite de plafon: {', '.join(str(s) for s in limited)}. " if limited else "")
+        + "Filmul se publică așa cum este; ce a rămas sub standard este lecție pentru următorul."
+    )
+    return {
+        **dict(decided),
+        "decision": "ACCEPT",
+        "summary": f"{summary} {words}".strip(),
+        "accepted_under_cap": {"limited": limited, "reason_ro": ship.get("reason_ro")},
+    }
+
+
 def accepted_by_looks(
     decided: Mapping[str, Any], overturned: Iterable[Mapping[str, Any]]
 ) -> dict[str, Any] | None:
@@ -2423,17 +2561,42 @@ def _closing(
 # Now she looks at them herself (`runbook.stages._director_looks`); his look still wins.
 
 
-def looks_of_film(session: Session, storyboard_id: str) -> list[dict[str, Any]]:
-    """Her newest looks at the pictures bought for this film, as she reads them again."""
-    out: list[dict[str, Any]] = []
+def _look_events(session: Session, storyboard_id: str) -> list[tuple[DomainEvent, dict[str, Any]]]:
+    """Her looks at the pictures bought for this film (`LOOK_EVENT`), oldest first."""
+    out: list[tuple[DomainEvent, dict[str, Any]]] = []
     for event in session.scalars(
         select(DomainEvent)
         .where(DomainEvent.event_type == LOOK_EVENT)
         .order_by(DomainEvent.sequence)
     ):
         payload = _payload(event)
-        if str(payload.get("storyboard_id") or "") != storyboard_id:
-            continue
+        if str(payload.get("storyboard_id") or "") == storyboard_id:
+            out.append((event, payload))
+    return out
+
+
+def her_runs_on_film(
+    decisions: Iterable[Mapping[str, Any]], looks: Iterable[tuple[DomainEvent, Mapping[str, Any]]]
+) -> list[str]:
+    """The runs of her reviews (``decisions``, `decisions_of_film`) and of her looks
+    (``looks``, `_look_events`) on one film, each once: each wrote her own record of what she
+    concluded (`agents.reviews`, «Film QC …», «Pictures refused by the gate …»), with the run as
+    its source. Her next review of the film names them as its subject, so those records come
+    back to her whole when the payload leaves them out (`reviews._director_payload`), the ones
+    written before a run recorded its subject too."""
+    runs = [str(item.get("run_id") or "") for item in decisions]
+    runs += [str(payload.get("run_id") or "") for _event, payload in looks]
+    return list(dict.fromkeys(run for run in runs if run))
+
+
+def looks_of_film(
+    session: Session,
+    storyboard_id: str,
+    events: list[tuple[DomainEvent, dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """Her newest looks at the pictures bought for this film, as she reads them again."""
+    out: list[dict[str, Any]] = []
+    for event, payload in _look_events(session, storyboard_id) if events is None else events:
         out.append(
             {
                 "report_id": payload.get("report_id"),
@@ -2496,6 +2659,35 @@ def _file_sha256(path: Path) -> str | None:
     return digest.hexdigest()
 
 
+def scene_look_view(row: StoryboardScene | None, scene: int, kind: str) -> dict[str, Any]:
+    """What she is told of a scene when she looks at its takes: its narration, its intent,
+    its picture prompt, the film's look, the camera move, the characters and what is in frame,
+    the shot plan, and for a shot its motion prompt. Shared by her look at the candidates her
+    repair bought (`look_entries`) and her choice past the renders cap (`cap_choice`)."""
+    package = row.prompt_json if row is not None and isinstance(row.prompt_json, dict) else {}
+    visual = row.visual_prompt if row is not None else ""
+    view: dict[str, Any] = {
+        "scene_index": scene,
+        "narration": _short(row.voiceover_segment if row is not None else "", 300),
+        "intent": _short(visual, 400),
+        "picture_prompt": _short(package.get("still_prompt") or visual, 800),
+        "look": _short(package.get("look_block"), 400) or None,
+        "camera_move": package.get("camera_move"),
+        # The picture prompt can omit these under its character cap. A look that sees only
+        # that truncated text invents the wardrobe from the candidate itself, then later QC
+        # refuses it against the actual character bible.
+        "character_bible": package.get("characters") or [],
+        "in_frame": package.get("in_frame") or [],
+        "shot_plan": {
+            key: package.get(key)
+            for key in ("subject", "action", "camera", "shot_size", "ending_frame")
+        },
+    }
+    if kind != "still":
+        view["motion_prompt"] = _short(package.get("motion_prompt"), 400) or None
+    return view
+
+
 def look_entries(
     engine: Engine, decision: Mapping[str, Any], *, ffmpeg_path: str | None, work_dir: Path
 ) -> list[dict[str, Any]]:
@@ -2548,20 +2740,7 @@ def look_entries(
                     StoryboardScene.scene_index == scene,
                 )
             ).first()
-            package = (
-                row.prompt_json if row is not None and isinstance(row.prompt_json, dict) else {}
-            )
-            visual = row.visual_prompt if row is not None else ""
-            view: dict[str, Any] = {
-                "scene_index": scene,
-                "narration": _short(row.voiceover_segment if row is not None else "", 300),
-                "intent": _short(visual, 400),
-                "picture_prompt": _short(package.get("still_prompt") or visual, 800),
-                "look": _short(package.get("look_block"), 400) or None,
-                "camera_move": package.get("camera_move"),
-            }
-            if kind != "still":
-                view["motion_prompt"] = _short(package.get("motion_prompt"), 400) or None
+            view = scene_look_view(row, scene, kind)
             for take in owed:
                 session.expunge(take)
             planned.append((scene, kind, since, owed, view))
@@ -2904,6 +3083,16 @@ def _outcome_line(outcome: str, step: Mapping[str, Any]) -> str:
     return "Nimic din ce a cerut nu se putea reface acum; filmul care a picat nu se publică."
 
 
+def _letters_of_kind(session: Session, kind: str) -> list[AgentMessage]:
+    """Every STATUS letter of this kind, whoever it was delivered to: the Owner, or the
+    Director's inbox when his letters rule redirected it (`messages.directors_matter`)."""
+    return [
+        message
+        for message in session.scalars(select(AgentMessage).where(AgentMessage.intent == "STATUS"))
+        if isinstance(message.body_json, dict) and message.body_json.get("kind") == kind
+    ]
+
+
 def director_letter(
     engine: Engine,
     reading: Mapping[str, Any],
@@ -2926,16 +3115,13 @@ def director_letter(
     bought_count = len(step.get("bought_so_far") or [])
     with Session(engine) as session, session.begin():
         lock_for_write(session)
-        for message in session.scalars(
-            select(AgentMessage).where(
-                AgentMessage.to_agent_id.is_(None), AgentMessage.intent == "STATUS"
-            )
-        ):
+        # The letter is found wherever his letters rule delivered it: addressed to him, or
+        # redirected to the Director's inbox (`messages.directors_matter`, 2026-10-12). Looking
+        # only among his letters wrote the Director the same letter on every hourly retry.
+        for message in _letters_of_kind(session, LETTER_KIND):
             body = message.body_json if isinstance(message.body_json, dict) else {}
             if (
-                is_for_owner(message)
-                and body.get("kind") == LETTER_KIND
-                and str(body.get("report_id") or "") == report_id
+                str(body.get("report_id") or "") == report_id
                 and body.get("outcome") == outcome
                 and body.get("new_asset") == new_asset
                 and int(body.get("bought_count") or 0) == bought_count
@@ -2975,7 +3161,7 @@ def director_letter(
             "ASKED": f"Filmul «{title}»: refacerea hotărâtă de Directoare așteaptă răspunsul tău",
             "BOUGHT_WAITING": (
                 f"Filmul «{title}»: s-a cumpărat pentru refacerea hotărâtă de Directoare; "
-                "așteaptă aprobarea preluării noi"
+                "studioul verifică și continuă refacerea"
             ),
             "REPAIRED": (
                 f"Filmul «{title}» refăcut la decizia Directoarei a trecut controlul calității"
@@ -3021,17 +3207,9 @@ def look_letter(
     event_id = str(look.get("event_id") or "")
     with Session(engine) as session, session.begin():
         lock_for_write(session)
-        for message in session.scalars(
-            select(AgentMessage).where(
-                AgentMessage.to_agent_id.is_(None), AgentMessage.intent == "STATUS"
-            )
-        ):
+        for message in _letters_of_kind(session, LOOK_LETTER_KIND):
             body = message.body_json if isinstance(message.body_json, dict) else {}
-            if (
-                is_for_owner(message)
-                and body.get("kind") == LOOK_LETTER_KIND
-                and body.get("look_event_id") == event_id
-            ):
+            if body.get("look_event_id") == event_id:
                 return None
         title = _title(session, storyboard_id)
         name = str(look.get("agent_name") or decision.get("agent_name") or "Directoarea")

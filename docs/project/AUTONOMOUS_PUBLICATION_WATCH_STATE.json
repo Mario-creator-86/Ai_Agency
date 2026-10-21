@@ -1,0 +1,246 @@
+{
+  "checked_at": "2026-10-17T12:31:59.858874+00:00",
+  "phase": "supernova_stills_started",
+  "automation_id": "amn-ai-urm-rire-p-n-la-publicare",
+  "commits": [
+    "cb25f7c",
+    "c53f98b",
+    "0bd9f4f",
+    "4fa9b94",
+    "8852c5f",
+    "102c5d4",
+    "22eff0c",
+    "bd30734"
+  ],
+  "baseline_published": [
+    {
+      "id": "ac7e6b07-815f-4adf-89a8-c88f32b2b7ef",
+      "remote_video_id": "98JltCPoOKs",
+      "created_at": "2026-09-12T18:01:18.158168+00:00"
+    },
+    {
+      "id": "86fe911d-11ce-4243-9cc2-70809577517e",
+      "remote_video_id": "sDEtt-WQGh8",
+      "created_at": "2026-09-12T20:58:51.453446+00:00"
+    },
+    {
+      "id": "e7e1fd77-ccf7-4dce-813c-6d63c87f23d7",
+      "remote_video_id": "IxQIzIulLBU",
+      "created_at": "2026-10-10T18:09:26.719636+00:00"
+    },
+    {
+      "id": "737f86bb-7c28-4a87-b4ff-bcecb9fd4bce",
+      "remote_video_id": "0mxS0dZF4uQ",
+      "created_at": "2026-10-11T10:31:10.919934+00:00"
+    },
+    {
+      "id": "aa66a793-4e79-4f86-82e1-3ab0bc784be8",
+      "remote_video_id": "Y_9Aq6glxmQ",
+      "created_at": "2026-10-12T16:55:23.568580+00:00"
+    },
+    {
+      "id": "3f538720-7d0f-40c1-8072-f2c704e3504e",
+      "remote_video_id": "rwNbI9x5cx0",
+      "created_at": "2026-10-15T13:52:39.593062+00:00"
+    },
+    {
+      "id": "9ecc45af-a155-47c3-9ba9-9be48ce0bb38",
+      "remote_video_id": "vqqGk5Po25o",
+      "created_at": "2026-10-15T17:47:51.266771+00:00"
+    },
+    {
+      "id": "d1387b0d-3cd4-450e-b149-9a89bbfb40ae",
+      "remote_video_id": "E83FwHyl5K0",
+      "created_at": "2026-10-15T22:20:47.473094+00:00"
+    },
+    {
+      "id": "4b2aed6c-0348-471b-84b3-eed0322d71e7",
+      "remote_video_id": "symnsSW8Zu4",
+      "created_at": "2026-10-16T06:42:57.189608+00:00"
+    }
+  ],
+  "last_event_sequence": 38168,
+  "waiting_run_id": null,
+  "original_serial_storyboard": "87c05891-ef33-4226-aa9f-1e76a93ad385",
+  "retired_duplicate_storyboard": "a7db1594-bf26-42cb-a573-ee132059fd4b",
+  "working_fix": null,
+  "no_manual_production_actions": true,
+  "launcher_pid": 23148,
+  "health": {
+    "status": "HEALTHY",
+    "service": "api",
+    "version": "0.1.0"
+  },
+  "active_tasks": [
+    {
+      "id": "8ce105f6-233d-42e5-828a-5808e3fe13cd",
+      "task_type": "DIRECTOR_LOOP",
+      "status": "CLAIMED",
+      "payload": "{\"scheduled_job_id\": \"a7ab49c2-e7c9-43ca-a51d-cf6564284b05\", \"job_name\": \"director_loop\", \"due_at\": \"2026-10-17T11:41:20.357454+00:00\"}"
+    },
+    {
+      "id": "8a01fe02-3f70-499e-84a0-77812629137a",
+      "task_type": "WATCHDOG",
+      "status": "QUEUED",
+      "payload": "{\"scheduled_job_id\": \"3d8da8b3-da0b-46c1-9da1-dfc5fac2770f\", \"job_name\": \"watchdog\", \"due_at\": \"2026-10-17T11:40:35.887207+00:00\"}"
+    }
+  ],
+  "new_publications": [
+    {
+      "id": "3b9ecff4-73e4-4142-9b90-18838d303cc2",
+      "remote_video_id": "9sh8hyTZ37Q",
+      "status": "PUBLISHED",
+      "created_at": "2026-10-17T07:05:12.113681+00:00"
+    }
+  ],
+  "confirmation": {
+    "checked_at": "2026-10-17T07:09:14.263187+00:00",
+    "publication": {
+      "id": "3b9ecff4-73e4-4142-9b90-18838d303cc2",
+      "channel_id": "34acf9d6-d5e2-4891-a494-7dafc27a4438",
+      "title": "Zero Scripts Morning Report | Inside The Nexus Ep. 1",
+      "status": "PUBLISHED",
+      "remote_video_id": "9sh8hyTZ37Q",
+      "remote_url": "https://youtube.com/shorts/9sh8hyTZ37Q",
+      "privacy_status": "public",
+      "published_at": "2026-10-17T07:05:19.032968+00:00",
+      "remote_privacy_status": "public",
+      "remote_upload_status": "uploaded",
+      "remote_checked_at": "2026-10-17T07:05:19.033709+00:00"
+    },
+    "youtube_api": {
+      "remote_video_id": "9sh8hyTZ37Q",
+      "exists": true,
+      "privacy_status": "public",
+      "upload_status": "processed",
+      "rejection_reason": null,
+      "failure_reason": null
+    }
+  },
+  "automation_status": "ACTIVE",
+  "target_storyboard": "1efc3319-44ac-416f-a75a-3217ca9c2070",
+  "latest_prompt_audits": [
+    {
+      "sequence": 37423,
+      "time": "2026-10-17T11:02:31.400465+00:00",
+      "scene": 15,
+      "verdict": "REWRITE",
+      "rewritten": true,
+      "reason": "The closing clause «The ruler keeps its own scale and markings» names markings on an object the plan keeps unmarked (planned_markings is empty; continuity: «no text or numbers on the ruler»). Naming scale and markings invites the model to render numbers and graduations on the ruler, which the plan forbids. The rewrite did not answer the earlier brief: it replaced the clause with «no caption, no logo» but left the marking clause in place."
+    },
+    {
+      "sequence": 37412,
+      "time": "2026-10-17T11:02:09.351820+00:00",
+      "scene": 15,
+      "verdict": "REWRITE",
+      "rewritten": false,
+      "reason": "The words say «The ruler keeps its own scale and markings» while the plan's continuity and avoid list forbid numbers or labels on the ruler and planned_markings is empty. That clause invites the model to draw graduations and numbers on the ruler — writing the picture must not carry."
+    }
+  ],
+  "previous_completed_at": "2026-10-17T07:09:40.316477+00:00",
+  "latest_fix": "bd30734",
+  "last_verification": "220 passed;4 existing motion failures reproduced baseline",
+  "gpu_session_id": "9980d1b7-c42e-4f2b-abd4-ee0519e4fb29",
+  "scene34_approved_event": 37919,
+  "active_gpu_jobs": [
+    {
+      "id": "410ef378-dd39-4f0e-a7af-6bcf640b35c0",
+      "status": "QUEUED",
+      "operation": "image",
+      "remote_job_id": "7e783133-4e0d-4026-817c-6eb86af64f11-e2:3",
+      "created_at": "2026-10-17T11:49:33.097223+00:00",
+      "started_at": null
+    },
+    {
+      "id": "d297fc8e-5cf9-4a1a-b26e-6e868ad962e8",
+      "status": "QUEUED",
+      "operation": "image",
+      "remote_job_id": "7e783133-4e0d-4026-817c-6eb86af64f11-e2:2",
+      "created_at": "2026-10-17T11:49:33.095244+00:00",
+      "started_at": null
+    },
+    {
+      "id": "c3dd39c6-6061-4db7-8c6d-5c7d428eade2",
+      "status": "QUEUED",
+      "operation": "image",
+      "remote_job_id": "7e783133-4e0d-4026-817c-6eb86af64f11-e2:1",
+      "created_at": "2026-10-17T11:49:33.093246+00:00",
+      "started_at": null
+    }
+  ],
+  "latest_snapshot": {
+    "health": {
+      "status": "HEALTHY",
+      "service": "api",
+      "version": "0.1.0"
+    },
+    "tasks": [
+      {
+        "id": "26ffbdd9-13b0-42a0-8d0d-d33a3d138fae",
+        "task_type": "FILM_CONTINUE",
+        "status": "CLAIMED",
+        "payload": "{\"storyboard_id\": \"1efc3319-44ac-416f-a75a-3217ca9c2070\", \"cause\": \"unfinished_before_start:NEEDS_PROMPT_APPROVAL\"}",
+        "error_detail": null
+      },
+      {
+        "id": "dc82f8bb-5f95-4240-a545-5907046c24c2",
+        "task_type": "FILM_CONTINUE",
+        "status": "QUEUED",
+        "payload": "{\"storyboard_id\": \"b74270c6-aa19-4f4f-8e50-f2b4eedf96aa\", \"cause\": \"serial_unfilmed_after_start\"}",
+        "error_detail": null
+      }
+    ],
+    "runs": [
+      {
+        "task_type": "still_qc",
+        "status": "SUCCEEDED",
+        "started_at": "2026-10-17T12:31:08.246087+00:00",
+        "finished_at": "2026-10-17T12:31:14.117511+00:00",
+        "error_detail": null
+      },
+      {
+        "task_type": "direct_company:final",
+        "status": "SUCCEEDED",
+        "started_at": "2026-10-17T12:30:31.016056+00:00",
+        "finished_at": "2026-10-17T12:30:39.395654+00:00",
+        "error_detail": null
+      }
+    ],
+    "gpu": [
+      {
+        "id": "9980d1b7-c42e-4f2b-abd4-ee0519e4fb29",
+        "status": "OPEN",
+        "purpose": "image",
+        "step": "stills",
+        "storyboard_id": "1efc3319-44ac-416f-a75a-3217ca9c2070"
+      }
+    ],
+    "jobs": [
+      {
+        "status": "COMPLETED",
+        "n": 39
+      },
+      {
+        "status": "RUNNING",
+        "n": 1
+      }
+    ],
+    "publications": [
+      {
+        "id": "9a2d0425-8a8f-4793-a736-63fe201d7339",
+        "title": "Zero Scripts, Blocked Log | Inside The Nexus Ep. 4",
+        "status": "PUBLISHED",
+        "remote_video_id": "14WqqfoMVjs",
+        "created_at": "2026-10-17T07:56:57.294542+00:00"
+      },
+      {
+        "id": "3b9ecff4-73e4-4142-9b90-18838d303cc2",
+        "title": "Zero Scripts Morning Report | Inside The Nexus Ep. 1",
+        "status": "PUBLISHED",
+        "remote_video_id": "9sh8hyTZ37Q",
+        "created_at": "2026-10-17T07:05:12.113681+00:00"
+      }
+    ],
+    "events": []
+  }
+}

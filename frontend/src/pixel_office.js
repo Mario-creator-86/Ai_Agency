@@ -8,6 +8,7 @@ import { identitySeed, characterProfile, characterMotion, drawSeatedPerson, draw
 import { bubblePages, bubbleFrame } from './speech_bubble.js';
 import { sceneFrame } from './pixel_navigation.js';
 import { drawOutdoorSky } from './pixel_sky.js';
+import { drawWindowViews } from './pixel_windows.js';
 import { ambientMoves, drawOutdoorLife } from './pixel_life.js';
 import { loadActorAtlases, actorAtlasStatus, clearEmptyChair } from './pixel_actor_atlas.js';
 import { depthOrder, foregroundStatus } from './pixel_depth.js';
@@ -252,12 +253,13 @@ export class OfficeEngine {
   bindLivingControls(){
     const host=this.canvas.parentElement;if(host?.id!=='scene-viewport')return;
     const controls=document.createElement('div');controls.className='studio-living-controls';
-    const sound=document.createElement('button');sound.type='button';sound.textContent='Sunet';sound.setAttribute('aria-label','Sunetul studioului');sound.setAttribute('aria-pressed','false');
-    sound.addEventListener('click',async()=>{const on=await this.audio.toggle();sound.setAttribute('aria-pressed',String(on));sound.textContent=on?'Sunet pornit':'Sunet';this.draw();});
-    const volume=document.createElement('input');volume.type='range';volume.min='0';volume.max='1';volume.step='.01';volume.value=String(this.audio.volume);volume.setAttribute('aria-label','Volumul studioului');
-    volume.addEventListener('input',()=>this.audio.setVolume(volume.value));
-    const film=document.createElement('button');film.type='button';film.textContent='Film';film.setAttribute('aria-label','Filmele de pe monitoare');film.addEventListener('click',()=>this.screens.openPlayer());
-    controls.append(sound,volume,film);host.append(controls);this.livingControls=controls;
+    const sound=document.createElement('button');sound.type='button';sound.setAttribute('aria-label','Sunetul interfeței');
+    const paintSound=()=>{sound.textContent=this.audio.enabled?'Sunet ON':'Sunet OFF';sound.setAttribute('aria-pressed',String(this.audio.enabled));sound.title=this.audio.enabled&&!this.audio.unlocked?'Sunet activat · redarea începe după o interacțiune cu pagina':'Activează sau oprește toate sunetele interfeței';};
+    this.audio.onChange=paintSound;paintSound();
+    sound.addEventListener('click',async()=>{sound.disabled=true;try{await this.audio.toggle();paintSound();this.draw();this.schedule();}finally{sound.disabled=false;}});
+    const dashboardToolbar=document.body.classList.contains('studio-dashboard') ? document.querySelector('#office-scene-container .toolbar-scene') : null;
+    controls.append(sound);(dashboardToolbar||host).append(controls);this.livingControls=controls;
+    document.getElementById('media-preview-btn')?.addEventListener('click',()=>this.screens.openPlayer());
     this.soundButton=sound;
   }
   profileFor(agent) { return characterProfile(agent, this.characters.get(String(agent.id || agent.agent_id))); }
@@ -384,6 +386,7 @@ export class OfficeEngine {
     this.weatherFrameAt = animate ? at : null;
     drawOutdoorLight(ctx, moment, weather);
     const sky = drawOutdoorSky(ctx, this.background, moment, weather, this.lifeElapsed);
+    drawWindowViews(ctx, this.background, moment, weather, this.lifeElapsed, this.weatherElapsed);
     let clock;
     this.street = drawOutdoorLife(ctx, weather, this.lifeElapsed, moment, {background:this.background,
       clock:()=>{clock=drawOutdoorClock(ctx,now,this.facts?.timeZone);}});
@@ -419,7 +422,7 @@ export class OfficeEngine {
     }
     this.bubbles = this.bubbles.filter(b => b.expiresAt > Date.now());
     this.depth={outdoors:this.street.depthOrder,indoors:positions.map(({id,depth})=>({id,depth})),foreground:foregroundStatus(this.background)};
-    this.audio.update(ambient,weather,positions.map(p=>({p,motion:motions.get(p.id)})),this.roomFrame,this.lifeElapsed,this.street);
+    this.audio.update(!this.parked&&!this.replay&&!document.hidden&&Boolean(this.options.dataLive?.()),weather,positions.map(p=>({p,motion:motions.get(p.id)})),this.roomFrame,this.lifeElapsed,this.street);
     if (this.options.infoElement) {
       this.options.infoElement.textContent = outdoorReadout(clock, weather, this.replay);
       this.options.infoElement.title = weather.available ? `${studioPlace().city} · ${weather.observedAt || 'observație curentă'} · ${this.weatherSource}` : 'Ora studioului; datele meteo nu sunt disponibile.';
@@ -510,7 +513,7 @@ export class OfficeEngine {
       const hit = this.renderer.hits.find(h => p.x >= h.x && p.x <= h.x + h.w && p.y >= h.y && p.y <= h.y + h.h);
       this.hover = hit ? String(hit.agent.id || hit.agent.agent_id) : null;
       this.canvas.style.cursor = hit ? 'pointer' : this.movable ? 'grab' : 'default';
-      this.canvas.title = hit ? `${hit.agent.display_name || hit.agent.id}: ${this.motionFor(hit.agent).mode === 'PAUSED' ? runtimeLabel('PAUSED') : this.stateWord(hit.agent)}` : 'Birourile agenților · Ctrl + rotiță: zoom · scena mărită: scroll sau tragere · Încadrează: vedere completă';
+      this.canvas.title = hit ? `${hit.agent.display_name || hit.agent.id}: ${this.motionFor(hit.agent).mode === 'PAUSED' ? runtimeLabel('PAUSED') : this.stateWord(hit.agent)}` : '';
       this.draw();
     });
     const endDrag = event => {

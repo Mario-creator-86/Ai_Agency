@@ -48,7 +48,7 @@ from test_second_look import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = Path(__file__).parent / "fixtures" / "factual_sample"
+FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
 GATE_WORDS = "YuNet a găsit 1 față în imagine; biblia vizuală interzice fețele"
 CLIP_WORDS = "Scena 2: privit la 1080 px: nu arată ce cere planul"
 TITLE = "The Particle That Shouldn't Exist (But Does)"

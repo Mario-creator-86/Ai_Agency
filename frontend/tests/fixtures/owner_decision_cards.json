@@ -1,756 +1,756 @@
 {
-  "_note": "GET /api/v1/owner/decision-cards and one POST /owner/decisions/{id}/decide answer, produced by app.decisions on a scratch database (2026-10-03), plus a reconnect card and an answered approval shaped as the seed and _answered_approvals write them.",
-  "feed": {
-    "cards": [
-      {
-        "card_id": "letter:00000000-0000-4000-8000-0000000000db",
-        "source_type": "letter",
-        "id": "00000000-0000-4000-8000-0000000000db",
-        "kind": "sheet_repair_paused",
-        "subject": null,
-        "title_ro": "Reparația foii s-a oprit",
-        "why_ro": "Am nevoie de tine.",
-        "effect_ro": "Răspunsul tău ajunge la Directoarea; închiderea scrisorii o scoate din listă.",
-        "options": [
-          {
-            "key": "reply",
-            "label_ro": "Răspund",
-            "effect_ro": "Scrisoarea ta ajunge la Directoarea.",
-            "recommended": false,
-            "apply_type": "letter",
-            "place_ro": null,
-            "steps_ro": null
-          },
-          {
-            "key": "resolve",
-            "label_ro": "Închid scrisoarea",
-            "effect_ro": "Scrisoarea se închide cu nota ta.",
-            "recommended": false,
-            "apply_type": "letter",
-            "place_ro": null,
-            "steps_ro": null
-          }
-        ],
-        "recommended_option": null,
-        "source": "Directoarea",
-        "status": "PENDING",
-        "status_ro": "așteaptă decizia ta",
-        "chosen_option": null,
-        "note": null,
-        "decided_by": null,
-        "decided_at": null,
-        "applied": null,
-        "apply_error_ro": null,
-        "expires_at": null,
-        "version": null,
-        "created_at": "2026-10-03T16:15:04.713935+00:00",
-        "updated_at": "2026-10-03T16:15:04.713935+00:00",
-        "waiting": true,
-        "answer": {
-          "method": "POST",
-          "reply_path": "/api/v1/agents/messages/00000000-0000-4000-8000-0000000000db/reply",
-          "resolve_path": "/api/v1/agents/messages/00000000-0000-4000-8000-0000000000db/resolve"
-        },
-        "context": null,
-        "cost_usd": null
-      },
-      {
-        "card_id": "approval:00000000-0000-4000-8000-0000000001f9",
-        "source_type": "approval",
-        "id": "00000000-0000-4000-8000-0000000001f9",
-        "kind": "publishing.public_publish",
-        "subject": {
-          "type": "subject",
-          "id": "video-1"
-        },
-        "title_ro": "Publicarea unui film pe canalul lui",
-        "why_ro": "Filmul a trecut controlul.",
-        "effect_ro": "0.0 USD",
-        "options": [
-          {
-            "key": "APPROVED",
-            "label_ro": "Accept",
-            "effect_ro": "Studioul face pasul cerut, cu 0.0 USD; răspunsul acoperă un singur pas.",
-            "recommended": true,
-            "apply_type": "approval",
-            "place_ro": null,
-            "steps_ro": null
-          },
-          {
-            "key": "REFUSED",
-            "label_ro": "Refuz",
-            "effect_ro": "Pasul nu se face; studioul nu întreabă din nou până expiră răspunsul.",
-            "recommended": false,
-            "apply_type": "approval",
-            "place_ro": null,
-            "steps_ro": null
-          }
-        ],
-        "recommended_option": "APPROVED",
-        "source": "Director",
-        "status": "PENDING",
-        "status_ro": "așteaptă decizia ta",
-        "chosen_option": null,
-        "note": null,
-        "decided_by": null,
-        "decided_at": null,
-        "applied": null,
-        "apply_error_ro": null,
-        "expires_at": "2026-10-04T16:15:04.712233+00:00",
-        "version": null,
-        "created_at": "2026-10-03T16:15:04.712622+00:00",
-        "updated_at": "2026-10-03T16:15:04.712622+00:00",
-        "waiting": true,
-        "answer": {
-          "method": "POST",
-          "path": "/api/v1/owner/approvals/decision",
-          "body": {
-            "approval_id": "00000000-0000-4000-8000-0000000001f9"
-          },
-          "accept": "APPROVED",
-          "refuse": "REFUSED"
-        },
-        "context": null,
-        "cost_usd": 0
-      },
-      {
-        "card_id": "approval:00000000-0000-4000-8000-000000000095",
-        "source_type": "approval",
-        "id": "00000000-0000-4000-8000-000000000095",
-        "kind": "media.stills_purchase",
-        "subject": {
-          "type": "storyboard",
-          "id": "00000000-0000-4000-8000-00000000008e"
-        },
-        "title_ro": "Imaginile unui film, înainte de orice mișcare",
-        "why_ro": "Imaginile filmului «Nepal».",
-        "effect_ro": "plafon 0.72 USD",
-        "options": [
-          {
-            "key": "APPROVED",
-            "label_ro": "Accept",
-            "effect_ro": "Studioul face pasul cerut, cu plafon 0.72 USD; răspunsul acoperă un singur pas.",
-            "recommended": true,
-            "apply_type": "approval",
-            "place_ro": null,
-            "steps_ro": null
-          },
-          {
-            "key": "REFUSED",
-            "label_ro": "Refuz",
-            "effect_ro": "Pasul nu se face; studioul nu întreabă din nou până expiră răspunsul.",
-            "recommended": false,
-            "apply_type": "approval",
-            "place_ro": null,
-            "steps_ro": null
-          }
-        ],
-        "recommended_option": "APPROVED",
-        "source": "Director",
-        "status": "PENDING",
-        "status_ro": "așteaptă decizia ta",
-        "chosen_option": null,
-        "note": null,
-        "decided_by": null,
-        "decided_at": null,
-        "applied": null,
-        "apply_error_ro": null,
-        "expires_at": "2026-10-05T16:15:04.707408+00:00",
-        "version": null,
-        "created_at": "2026-10-03T16:15:04.707797+00:00",
-        "updated_at": "2026-10-03T16:15:04.707797+00:00",
-        "waiting": true,
-        "answer": {
-          "method": "POST",
-          "path": "/api/v1/owner/approvals/decision",
-          "body": {
-            "approval_id": "00000000-0000-4000-8000-000000000095"
-          },
-          "accept": "APPROVED",
-          "refuse": "REFUSED"
-        },
-        "context": {
-          "step": "stills",
-          "plan_hash": "aaaaaaaaaaaa",
-          "storyboard_id": "00000000-0000-4000-8000-00000000008e"
-        },
-        "cost_usd": 0.72
-      },
-      {
-        "id": "00000000-0000-4000-8000-00000000007f",
-        "kind": "sale_terms",
-        "subject": null,
-        "title_ro": "Termenii de vânzare ai studioului (LICENSE / EULA)",
-        "why_ro": "Proiectul nu are încă o licență sau un contract de utilizare pentru cumpărător. Termenii îi stabilești tu, de preferat cu un jurist; studioul nu îi scrie singur.",
-        "effect_ro": "Studioul poate fi vândut cu termeni clari.",
-        "options": [
-          {
-            "key": "write",
-            "label_ro": "Stabilesc termenii",
-            "effect_ro": "Pui LICENSE și EULA în rădăcina proiectului.",
-            "recommended": true,
-            "apply_type": "guided",
-            "place_ro": "rădăcina proiectului: LICENSE și EULA.md",
-            "steps_ro": "Alege licența și termenii pentru cumpărător și pune-i în rădăcina proiectului."
-          }
-        ],
-        "recommended_option": "write",
-        "source": "audit",
-        "status": "WAITING_FOR_OWNER_ACTION",
-        "status_ro": "în așteptarea acțiunii tale",
-        "chosen_option": "write",
-        "note": null,
-        "decided_by": "owner",
-        "decided_at": "2026-10-03T16:15:04.729302+00:00",
-        "applied": {
-          "type": "guided",
-          "place": null,
-          "place_ro": "rădăcina proiectului: LICENSE și EULA.md",
-          "steps_ro": "Alege licența și termenii pentru cumpărător și pune-i în rădăcina proiectului."
-        },
-        "apply_error_ro": null,
-        "expires_at": null,
-        "version": 2,
-        "created_at": "2026-10-03T16:15:04.700094+00:00",
-        "updated_at": "2026-10-03T16:15:04.729302+00:00",
-        "card_id": "decision:00000000-0000-4000-8000-00000000007f",
-        "source_type": "decision",
-        "waiting": true,
-        "answer": {
-          "method": "POST",
-          "path": "/api/v1/owner/decisions/00000000-0000-4000-8000-00000000007f/decide",
-          "accept": "ACCEPT",
-          "refuse": "REFUSE",
-          "done": "DONE"
-        },
-        "context": null,
-        "cost_usd": null
-      },
-      {
-        "id": "00000000-0000-4000-8000-00000000009a",
-        "kind": "daily_budget",
-        "subject": null,
-        "title_ro": "Studioul nu are un buget zilnic pentru filme",
-        "why_ro": "Nu există un buget zilnic activ; în producție, fără buget nu se cumpără nimic. Cel mai ieftin film capabil din catalogul documentat (config/film_models.json) — 4 scene de câte 10 s, cu oameni, cu wan3 — costă aproximativ 8,72 USD, iar rezervarea lui ține plafonul de 11,44 USD (o refacere a celei mai scumpe scene și încă un rând de imagini). Un buget zilnic de această mărime îl lasă să încapă într-o zi.",
-        "effect_ro": "Bugetul zilnic devine 15 USD; cheltuiala rămâne plafonată.",
-        "options": [
-          {
-            "key": "raise",
-            "label_ro": "Ridic bugetul zilnic la 15 USD",
-            "effect_ro": "Un film întreg, cu plafonul lui, încape într-o zi.",
-            "recommended": true,
-            "apply_type": "budget",
-            "place_ro": null,
-            "steps_ro": null
-          },
-          {
-            "key": "cheaper",
-            "label_ro": "Aleg un model mai ieftin sau 720p",
-            "effect_ro": "Bugetul rămâne; filmul se face cu modele mai ieftine.",
-            "recommended": false,
-            "apply_type": "guided",
-            "place_ro": "config/film_models.json (setul permis) și foaia de filmare",
-            "steps_ro": "Scoate din setul permis modelele scumpe sau alege 720p pe foaia de filmare a filmului."
-          }
-        ],
-        "recommended_option": "raise",
-        "source": "audit",
-        "status": "PENDING",
-        "status_ro": "așteaptă decizia ta",
-        "chosen_option": null,
-        "note": null,
-        "decided_by": null,
-        "decided_at": null,
-        "applied": null,
-        "apply_error_ro": null,
-        "expires_at": null,
-        "version": 1,
-        "created_at": "2026-10-03T16:15:04.696150+00:00",
-        "updated_at": "2026-10-03T16:15:04.696150+00:00",
-        "card_id": "decision:00000000-0000-4000-8000-00000000009a",
-        "source_type": "decision",
-        "waiting": true,
-        "answer": {
-          "method": "POST",
-          "path": "/api/v1/owner/decisions/00000000-0000-4000-8000-00000000009a/decide",
-          "accept": "ACCEPT",
-          "refuse": "REFUSE",
-          "done": null
-        },
-        "context": null,
-        "cost_usd": null
-      },
-      {
-        "id": "00000000-0000-4000-8000-0000000000bf",
-        "kind": "reconnect_connection",
-        "subject": {
-          "type": "integration",
-          "id": "cloud"
-        },
-        "title_ro": "Reconectează Ollama Cloud",
-        "why_ro": "Fiecare rulare a modelului de limbaj din ziua de recuperare a eșuat (HTTP 401).",
-        "effect_ro": "Angajații pot gândi din nou; ziua poate rula.",
-        "options": [
-          {
-            "key": "reconnect",
-            "label_ro": "Reconectez Ollama Cloud",
-            "effect_ro": "Pui cheia nouă și verifici conexiunea.",
-            "recommended": true,
-            "apply_type": "guided",
-            "place_ro": "Setări → Furnizori AI",
-            "steps_ro": "Deschide conexiunea Ollama Cloud, pune cheia nouă și apasă «Verifică»."
-          }
-        ],
-        "recommended_option": "reconnect",
-        "source": "audit",
-        "status": "PENDING",
-        "status_ro": "așteaptă decizia ta",
-        "chosen_option": null,
-        "note": null,
-        "decided_by": null,
-        "decided_at": null,
-        "applied": null,
-        "apply_error_ro": null,
-        "expires_at": null,
-        "version": 1,
-        "created_at": "2026-10-03T16:15:04.690000+00:00",
-        "updated_at": "2026-10-03T16:15:04.690000+00:00",
-        "card_id": "decision:00000000-0000-4000-8000-0000000000bf",
-        "source_type": "decision",
-        "waiting": true,
-        "answer": {
-          "method": "POST",
-          "path": "/api/v1/owner/decisions/00000000-0000-4000-8000-0000000000bf/decide",
-          "accept": "ACCEPT",
-          "refuse": "REFUSE",
-          "done": null
-        },
-        "context": null,
-        "cost_usd": null
-      }
+ "_note": "GET /api/v1/owner/decision-cards and one POST /owner/decisions/{id}/decide answer, produced by app.decisions on a scratch database (2026-10-03), plus a reconnect card and an answered approval shaped as the seed and _answered_approvals write them.",
+ "feed": {
+  "cards": [
+   {
+    "card_id": "letter:667074af-5826-4f45-8d7c-c7c741f8c5d3",
+    "source_type": "letter",
+    "id": "667074af-5826-4f45-8d7c-c7c741f8c5d3",
+    "kind": "sheet_repair_paused",
+    "subject": null,
+    "title_ro": "Reparația foii s-a oprit",
+    "why_ro": "Am nevoie de tine.",
+    "effect_ro": "Răspunsul tău ajunge la Directoarea; închiderea scrisorii o scoate din listă.",
+    "options": [
+     {
+      "key": "reply",
+      "label_ro": "Răspund",
+      "effect_ro": "Scrisoarea ta ajunge la Directoarea.",
+      "recommended": false,
+      "apply_type": "letter",
+      "place_ro": null,
+      "steps_ro": null
+     },
+     {
+      "key": "resolve",
+      "label_ro": "Închid scrisoarea",
+      "effect_ro": "Scrisoarea se închide cu nota ta.",
+      "recommended": false,
+      "apply_type": "letter",
+      "place_ro": null,
+      "steps_ro": null
+     }
     ],
-    "count": 6,
-    "counts": {
-      "approvals": 2,
-      "decisions": 2,
-      "waiting_action": 1,
-      "letters": 1
+    "recommended_option": null,
+    "source": "Directoarea",
+    "status": "PENDING",
+    "status_ro": "așteaptă decizia ta",
+    "chosen_option": null,
+    "note": null,
+    "decided_by": null,
+    "decided_at": null,
+    "applied": null,
+    "apply_error_ro": null,
+    "expires_at": null,
+    "version": null,
+    "created_at": "2026-10-03T16:15:04.713935+00:00",
+    "updated_at": "2026-10-03T16:15:04.713935+00:00",
+    "waiting": true,
+    "answer": {
+     "method": "POST",
+     "reply_path": "/api/v1/agents/messages/667074af-5826-4f45-8d7c-c7c741f8c5d3/reply",
+     "resolve_path": "/api/v1/agents/messages/667074af-5826-4f45-8d7c-c7c741f8c5d3/resolve"
     },
-    "history": [
-      {
-        "id": "00000000-0000-4000-8000-000000000133",
-        "kind": "paid_media_rule",
-        "subject": null,
-        "title_ro": "Când trece studioul de la «fiecare pas plătit» la MODE",
-        "why_ro": "Acum te întreabă fiecare pas plătit al fiecărui film. Recomandarea auditului: rămâi așa până vezi cu ochii tăi primul film plătit cu plafon, apoi treci la MODE, unde decide modul de autonomie.",
-        "effect_ro": "Cu MODE, pașii plătiți nu te mai întreabă; plafonul rămâne.",
-        "options": [
-          {
-            "key": "keep",
-            "label_ro": "Rămân la fiecare pas plătit până văd primul film",
-            "effect_ro": "Nimic nu se schimbă acum.",
-            "recommended": true,
-            "apply_type": "none",
-            "place_ro": null,
-            "steps_ro": null
-          },
-          {
-            "key": "mode",
-            "label_ro": "Trec acum la MODE",
-            "effect_ro": "Pașii plătiți urmează modul de autonomie.",
-            "recommended": false,
-            "apply_type": "paid_media_approval",
-            "place_ro": null,
-            "steps_ro": null
-          }
-        ],
-        "recommended_option": "keep",
-        "source": "audit",
-        "status": "WITHDRAWN",
-        "status_ro": "retras",
-        "chosen_option": null,
-        "note": null,
-        "decided_by": null,
-        "decided_at": null,
-        "applied": {
-          "withdrawn_reason_ro": "Situația s-a rezolvat: studioul a văzut că nu mai este nevoie de card.",
-          "withdrawn_by": "condition"
-        },
-        "apply_error_ro": null,
-        "expires_at": null,
-        "version": 2,
-        "created_at": "2026-10-03T16:15:04.698902+00:00",
-        "updated_at": "2026-10-03T16:15:04.754827+00:00",
-        "card_id": "decision:00000000-0000-4000-8000-000000000133",
-        "source_type": "decision",
-        "waiting": false,
-        "answer": {
-          "method": "POST",
-          "path": "/api/v1/owner/decisions/00000000-0000-4000-8000-000000000133/decide",
-          "accept": "ACCEPT",
-          "refuse": "REFUSE",
-          "done": null
-        },
-        "context": null,
-        "cost_usd": null
-      },
-      {
-        "id": "00000000-0000-4000-8000-0000000000a5",
-        "kind": "narration_paid_step",
-        "subject": null,
-        "title_ro": "Narațiunea ca pas plătit întrebat",
-        "why_ro": "Regula ta este «fiecare pas plătit»: imaginile, cadrul de probă și mișcarea te întreabă, dar narațiunea ElevenLabs (~0,10 USD pe film) se cumpără fără întrebare. Schimbarea cere o modificare a specificației 51.",
-        "effect_ro": "Narațiunea te întreabă și ea înainte de cumpărare.",
-        "options": [
-          {
-            "key": "ask",
-            "label_ro": "Să mă întrebe și pentru narațiune",
-            "effect_ro": "Se modifică specificația 51 și codul; până atunci rămâne cumpărată fără întrebare.",
-            "recommended": true,
-            "apply_type": "record",
-            "place_ro": null,
-            "steps_ro": null
-          },
-          {
-            "key": "unasked",
-            "label_ro": "Narațiunea rămâne cumpărată fără întrebare",
-            "effect_ro": "Nimic nu se schimbă (~0,10 USD pe film).",
-            "recommended": false,
-            "apply_type": "none",
-            "place_ro": null,
-            "steps_ro": null
-          }
-        ],
-        "recommended_option": "ask",
-        "source": "audit",
-        "status": "WITHDRAWN",
-        "status_ro": "retras",
-        "chosen_option": null,
-        "note": null,
-        "decided_by": null,
-        "decided_at": null,
-        "applied": {
-          "withdrawn_reason_ro": "Situația s-a rezolvat: studioul a văzut că nu mai este nevoie de card.",
-          "withdrawn_by": "condition"
-        },
-        "apply_error_ro": null,
-        "expires_at": null,
-        "version": 2,
-        "created_at": "2026-10-03T16:15:04.698208+00:00",
-        "updated_at": "2026-10-03T16:15:04.753619+00:00",
-        "card_id": "decision:00000000-0000-4000-8000-0000000000a5",
-        "source_type": "decision",
-        "waiting": false,
-        "answer": {
-          "method": "POST",
-          "path": "/api/v1/owner/decisions/00000000-0000-4000-8000-0000000000a5/decide",
-          "accept": "ACCEPT",
-          "refuse": "REFUSE",
-          "done": null
-        },
-        "context": null,
-        "cost_usd": null
-      },
-      {
-        "id": "00000000-0000-4000-8000-0000000001cf",
-        "kind": "paid_media_rule",
-        "subject": null,
-        "title_ro": "Când trece studioul la MODE",
-        "why_ro": "Primul film plătit a trecut.",
-        "effect_ro": "Pașii plătiți urmează modul.",
-        "options": [
-          {
-            "key": "mode",
-            "label_ro": "Trec la MODE",
-            "effect_ro": "Pașii plătiți urmează modul de autonomie.",
-            "recommended": true,
-            "apply_type": "paid_media_approval",
-            "place_ro": null,
-            "steps_ro": null
-          },
-          {
-            "key": "keep",
-            "label_ro": "Rămân la fiecare pas plătit",
-            "effect_ro": "Nimic nu se schimbă.",
-            "recommended": false,
-            "apply_type": "none",
-            "place_ro": null,
-            "steps_ro": null
-          }
-        ],
-        "recommended_option": "mode",
-        "source": "agent:director",
-        "status": "ACCEPTED",
-        "status_ro": "acceptat",
-        "chosen_option": "mode",
-        "note": null,
-        "decided_by": "owner",
-        "decided_at": "2026-10-03T16:15:04.750127+00:00",
-        "applied": {
-          "type": "paid_media_approval",
-          "command": "SetPaidMediaApproval",
-          "result": {
-            "command_id": "00000000-0000-4000-8000-000000000007",
-            "status": "COMMITTED",
-            "paid_media_approval": "MODE",
-            "over_usd": null,
-            "version": 2,
-            "event_id": "00000000-0000-4000-8000-0000000001db"
-          },
-          "event_id": "00000000-0000-4000-8000-0000000001db"
-        },
-        "apply_error_ro": null,
-        "expires_at": null,
-        "version": 2,
-        "created_at": "2026-10-03T16:15:04.716559+00:00",
-        "updated_at": "2026-10-03T16:15:04.750127+00:00",
-        "card_id": "decision:00000000-0000-4000-8000-0000000001cf",
-        "source_type": "decision",
-        "waiting": false,
-        "answer": {
-          "method": "POST",
-          "path": "/api/v1/owner/decisions/00000000-0000-4000-8000-0000000001cf/decide",
-          "accept": "ACCEPT",
-          "refuse": "REFUSE",
-          "done": null
-        },
-        "context": null,
-        "cost_usd": null
-      },
-      {
-        "id": "00000000-0000-4000-8000-0000000000ab",
-        "kind": "editorial_qc",
-        "subject": null,
-        "title_ro": "Controlul editorial: consultativ sau blocant",
-        "why_ro": "Controlul editorial al filmului (poveste, ritm, final) doar avertizează acum. Blocant, ar opri un film slab înainte de publicare, dar ar putea opri și unul bun până nu e calibrat pe filme reale.",
-        "effect_ro": "Consultativ: avertismente; blocant: filmul nu trece QC.",
-        "options": [
-          {
-            "key": "advisory",
-            "label_ro": "Rămâne consultativ până la primul film real",
-            "effect_ro": "Nimic nu se schimbă.",
-            "recommended": true,
-            "apply_type": "none",
-            "place_ro": null,
-            "steps_ro": null
-          },
-          {
-            "key": "blocking",
-            "label_ro": "Devine blocant",
-            "effect_ro": "Un film care pică controlul editorial nu se publică.",
-            "recommended": false,
-            "apply_type": "guided",
-            "place_ro": "fișierul .env al studioului",
-            "steps_ro": "Scrie STUDIO_EDITORIAL_QC_BLOCKING=true și repornește studioul."
-          }
-        ],
-        "recommended_option": "advisory",
-        "source": "audit",
-        "status": "ACCEPTED",
-        "status_ro": "acceptat",
-        "chosen_option": "advisory",
-        "note": null,
-        "decided_by": "owner",
-        "decided_at": "2026-10-03T16:15:04.740156+00:00",
-        "applied": {
-          "type": "none",
-          "result_ro": "Nimic de schimbat: rămâne cum este."
-        },
-        "apply_error_ro": null,
-        "expires_at": null,
-        "version": 2,
-        "created_at": "2026-10-03T16:15:04.699502+00:00",
-        "updated_at": "2026-10-03T16:15:04.740156+00:00",
-        "card_id": "decision:00000000-0000-4000-8000-0000000000ab",
-        "source_type": "decision",
-        "waiting": false,
-        "answer": {
-          "method": "POST",
-          "path": "/api/v1/owner/decisions/00000000-0000-4000-8000-0000000000ab/decide",
-          "accept": "ACCEPT",
-          "refuse": "REFUSE",
-          "done": null
-        },
-        "context": null,
-        "cost_usd": null
-      },
-      {
-        "id": "00000000-0000-4000-8000-0000000000e1",
-        "kind": "music_library",
-        "subject": null,
-        "title_ro": "Biblioteca de muzică este goală",
-        "why_ro": "config/music_library.json nu are nicio piesă cu licență comercială, așa că filmele ies fără muzică. Sursa muzicii este alegerea ta.",
-        "effect_ro": "Filmele primesc un fond muzical potrivit, cu licența verificată.",
-        "options": [
-          {
-            "key": "add",
-            "label_ro": "Adaug muzică licențiată",
-            "effect_ro": "Pui piesele și licențele lor în bibliotecă.",
-            "recommended": true,
-            "apply_type": "guided",
-            "place_ro": "config/music_library.json",
-            "steps_ro": "Adaugă fiecare piesă: fișierul, sha256, licența și commercial_ok true doar dacă licența permite folosire comercială."
-          },
-          {
-            "key": "without",
-            "label_ro": "Filmele merg fără muzică",
-            "effect_ro": "Nimic nu se schimbă.",
-            "recommended": false,
-            "apply_type": "none",
-            "place_ro": null,
-            "steps_ro": null
-          }
-        ],
-        "recommended_option": "add",
-        "source": "audit",
-        "status": "REFUSED",
-        "status_ro": "refuzat",
-        "chosen_option": null,
-        "note": "Mai târziu.",
-        "decided_by": "owner",
-        "decided_at": "2026-10-03T16:15:04.735183+00:00",
-        "applied": null,
-        "apply_error_ro": null,
-        "expires_at": null,
-        "version": 2,
-        "created_at": "2026-10-03T16:15:04.697457+00:00",
-        "updated_at": "2026-10-03T16:15:04.735183+00:00",
-        "card_id": "decision:00000000-0000-4000-8000-0000000000e1",
-        "source_type": "decision",
-        "waiting": false,
-        "answer": {
-          "method": "POST",
-          "path": "/api/v1/owner/decisions/00000000-0000-4000-8000-0000000000e1/decide",
-          "accept": "ACCEPT",
-          "refuse": "REFUSE",
-          "done": null
-        },
-        "context": null,
-        "cost_usd": null
-      },
-      {
-        "card_id": "approval:00000000-0000-4000-8000-000000000146",
-        "source_type": "approval",
-        "id": "00000000-0000-4000-8000-000000000146",
-        "kind": "media.stills_purchase",
-        "subject": {
-          "type": "storyboard",
-          "id": "00000000-0000-4000-8000-00000000008e"
-        },
-        "title_ro": "Imaginile unui film, înainte de orice mișcare",
-        "why_ro": "Imaginile filmului «Nepal».",
-        "effect_ro": "plafon 0.72 USD",
-        "options": [
-          {
-            "key": "APPROVED",
-            "label_ro": "Accept",
-            "effect_ro": "Studioul face pasul cerut, cu plafon 0.72 USD; răspunsul acoperă un singur pas.",
-            "recommended": true,
-            "apply_type": "approval",
-            "place_ro": null,
-            "steps_ro": null
-          },
-          {
-            "key": "REFUSED",
-            "label_ro": "Refuz",
-            "effect_ro": "Pasul nu se face; studioul nu întreabă din nou până expiră răspunsul.",
-            "recommended": false,
-            "apply_type": "approval",
-            "place_ro": null,
-            "steps_ro": null
-          }
-        ],
-        "recommended_option": "APPROVED",
-        "source": "Director",
-        "status": "REFUSED",
-        "status_ro": "refuzat",
-        "chosen_option": "REFUSED",
-        "note": "Nu acum.",
-        "decided_by": "owner",
-        "decided_at": "2026-10-03T15:00:00+00:00",
-        "applied": null,
-        "apply_error_ro": null,
-        "expires_at": "2026-10-05T16:15:04.707408+00:00",
-        "version": null,
-        "created_at": "2026-10-03T14:00:00+00:00",
-        "updated_at": "2026-10-03T15:00:00+00:00",
-        "waiting": false,
-        "answer": {
-          "method": "POST",
-          "path": "/api/v1/owner/approvals/decision",
-          "body": {
-            "approval_id": "00000000-0000-4000-8000-000000000146"
-          },
-          "accept": "APPROVED",
-          "refuse": "REFUSED"
-        },
-        "context": {
-          "step": "stills",
-          "plan_hash": "aaaaaaaaaaaa",
-          "storyboard_id": "00000000-0000-4000-8000-00000000008e"
-        },
-        "cost_usd": 0.72
-      }
+    "context": null,
+    "cost_usd": null
+   },
+   {
+    "card_id": "approval:fc5c1225-fa6b-4e79-ac9b-031db2e28bec",
+    "source_type": "approval",
+    "id": "fc5c1225-fa6b-4e79-ac9b-031db2e28bec",
+    "kind": "publishing.public_publish",
+    "subject": {
+     "type": "subject",
+     "id": "video-1"
+    },
+    "title_ro": "Publicarea unui film pe canalul lui",
+    "why_ro": "Filmul a trecut controlul.",
+    "effect_ro": "0.0 USD",
+    "options": [
+     {
+      "key": "APPROVED",
+      "label_ro": "Accept",
+      "effect_ro": "Studioul face pasul cerut, cu 0.0 USD; răspunsul acoperă un singur pas.",
+      "recommended": true,
+      "apply_type": "approval",
+      "place_ro": null,
+      "steps_ro": null
+     },
+     {
+      "key": "REFUSED",
+      "label_ro": "Refuz",
+      "effect_ro": "Pasul nu se face; studioul nu întreabă din nou până expiră răspunsul.",
+      "recommended": false,
+      "apply_type": "approval",
+      "place_ro": null,
+      "steps_ro": null
+     }
     ],
-    "measured_at": "2026-10-03T16:15:04.759151+00:00"
+    "recommended_option": "APPROVED",
+    "source": "Director",
+    "status": "PENDING",
+    "status_ro": "așteaptă decizia ta",
+    "chosen_option": null,
+    "note": null,
+    "decided_by": null,
+    "decided_at": null,
+    "applied": null,
+    "apply_error_ro": null,
+    "expires_at": "2026-10-04T16:15:04.712233+00:00",
+    "version": null,
+    "created_at": "2026-10-03T16:15:04.712622+00:00",
+    "updated_at": "2026-10-03T16:15:04.712622+00:00",
+    "waiting": true,
+    "answer": {
+     "method": "POST",
+     "path": "/api/v1/owner/approvals/decision",
+     "body": {
+      "approval_id": "fc5c1225-fa6b-4e79-ac9b-031db2e28bec"
+     },
+     "accept": "APPROVED",
+     "refuse": "REFUSED"
+    },
+    "context": null,
+    "cost_usd": 0
+   },
+   {
+    "card_id": "approval:41e61bb4-f5e2-4684-9a22-3cabeb87d2d2",
+    "source_type": "approval",
+    "id": "41e61bb4-f5e2-4684-9a22-3cabeb87d2d2",
+    "kind": "media.stills_purchase",
+    "subject": {
+     "type": "storyboard",
+     "id": "3ec1740c-0000-4000-8000-000000000001"
+    },
+    "title_ro": "Imaginile unui film, înainte de orice mișcare",
+    "why_ro": "Imaginile filmului «Nepal».",
+    "effect_ro": "plafon 0.72 USD",
+    "options": [
+     {
+      "key": "APPROVED",
+      "label_ro": "Accept",
+      "effect_ro": "Studioul face pasul cerut, cu plafon 0.72 USD; răspunsul acoperă un singur pas.",
+      "recommended": true,
+      "apply_type": "approval",
+      "place_ro": null,
+      "steps_ro": null
+     },
+     {
+      "key": "REFUSED",
+      "label_ro": "Refuz",
+      "effect_ro": "Pasul nu se face; studioul nu întreabă din nou până expiră răspunsul.",
+      "recommended": false,
+      "apply_type": "approval",
+      "place_ro": null,
+      "steps_ro": null
+     }
+    ],
+    "recommended_option": "APPROVED",
+    "source": "Director",
+    "status": "PENDING",
+    "status_ro": "așteaptă decizia ta",
+    "chosen_option": null,
+    "note": null,
+    "decided_by": null,
+    "decided_at": null,
+    "applied": null,
+    "apply_error_ro": null,
+    "expires_at": "2026-10-05T16:15:04.707408+00:00",
+    "version": null,
+    "created_at": "2026-10-03T16:15:04.707797+00:00",
+    "updated_at": "2026-10-03T16:15:04.707797+00:00",
+    "waiting": true,
+    "answer": {
+     "method": "POST",
+     "path": "/api/v1/owner/approvals/decision",
+     "body": {
+      "approval_id": "41e61bb4-f5e2-4684-9a22-3cabeb87d2d2"
+     },
+     "accept": "APPROVED",
+     "refuse": "REFUSED"
+    },
+    "context": {
+     "step": "stills",
+     "plan_hash": "aaaaaaaaaaaa",
+     "storyboard_id": "3ec1740c-0000-4000-8000-000000000001"
+    },
+    "cost_usd": 0.72
+   },
+   {
+    "id": "385fed8b-0c69-49fe-8dd3-4f4811f4add1",
+    "kind": "sale_terms",
+    "subject": null,
+    "title_ro": "Termenii de vânzare ai studioului (LICENSE / EULA)",
+    "why_ro": "Proiectul nu are încă o licență sau un contract de utilizare pentru cumpărător. Termenii îi stabilești tu, de preferat cu un jurist; studioul nu îi scrie singur.",
+    "effect_ro": "Studioul poate fi vândut cu termeni clari.",
+    "options": [
+     {
+      "key": "write",
+      "label_ro": "Stabilesc termenii",
+      "effect_ro": "Pui LICENSE și EULA în rădăcina proiectului.",
+      "recommended": true,
+      "apply_type": "guided",
+      "place_ro": "rădăcina proiectului: LICENSE și EULA.md",
+      "steps_ro": "Alege licența și termenii pentru cumpărător și pune-i în rădăcina proiectului."
+     }
+    ],
+    "recommended_option": "write",
+    "source": "audit",
+    "status": "WAITING_FOR_OWNER_ACTION",
+    "status_ro": "în așteptarea acțiunii tale",
+    "chosen_option": "write",
+    "note": null,
+    "decided_by": "owner",
+    "decided_at": "2026-10-03T16:15:04.729302+00:00",
+    "applied": {
+     "type": "guided",
+     "place": null,
+     "place_ro": "rădăcina proiectului: LICENSE și EULA.md",
+     "steps_ro": "Alege licența și termenii pentru cumpărător și pune-i în rădăcina proiectului."
+    },
+    "apply_error_ro": null,
+    "expires_at": null,
+    "version": 2,
+    "created_at": "2026-10-03T16:15:04.700094+00:00",
+    "updated_at": "2026-10-03T16:15:04.729302+00:00",
+    "card_id": "decision:385fed8b-0c69-49fe-8dd3-4f4811f4add1",
+    "source_type": "decision",
+    "waiting": true,
+    "answer": {
+     "method": "POST",
+     "path": "/api/v1/owner/decisions/385fed8b-0c69-49fe-8dd3-4f4811f4add1/decide",
+     "accept": "ACCEPT",
+     "refuse": "REFUSE",
+     "done": "DONE"
+    },
+    "context": null,
+    "cost_usd": null
+   },
+   {
+    "id": "44ae2be0-b3e5-4d53-b064-b5831848f021",
+    "kind": "daily_budget",
+    "subject": null,
+    "title_ro": "Studioul nu are un buget zilnic pentru filme",
+    "why_ro": "Nu există un buget zilnic activ; în producție, fără buget nu se cumpără nimic. Cel mai ieftin film capabil din catalogul documentat (config/film_models.json) — 4 scene de câte 10 s, cu oameni, cu wan3 — costă aproximativ 8,72 USD, iar rezervarea lui ține plafonul de 11,44 USD (o refacere a celei mai scumpe scene și încă un rând de imagini). Un buget zilnic de această mărime îl lasă să încapă într-o zi.",
+    "effect_ro": "Bugetul zilnic devine 15 USD; cheltuiala rămâne plafonată.",
+    "options": [
+     {
+      "key": "raise",
+      "label_ro": "Ridic bugetul zilnic la 15 USD",
+      "effect_ro": "Un film întreg, cu plafonul lui, încape într-o zi.",
+      "recommended": true,
+      "apply_type": "budget",
+      "place_ro": null,
+      "steps_ro": null
+     },
+     {
+      "key": "cheaper",
+      "label_ro": "Aleg un model mai ieftin sau 720p",
+      "effect_ro": "Bugetul rămâne; filmul se face cu modele mai ieftine.",
+      "recommended": false,
+      "apply_type": "guided",
+      "place_ro": "config/film_models.json (setul permis) și foaia de filmare",
+      "steps_ro": "Scoate din setul permis modelele scumpe sau alege 720p pe foaia de filmare a filmului."
+     }
+    ],
+    "recommended_option": "raise",
+    "source": "audit",
+    "status": "PENDING",
+    "status_ro": "așteaptă decizia ta",
+    "chosen_option": null,
+    "note": null,
+    "decided_by": null,
+    "decided_at": null,
+    "applied": null,
+    "apply_error_ro": null,
+    "expires_at": null,
+    "version": 1,
+    "created_at": "2026-10-03T16:15:04.696150+00:00",
+    "updated_at": "2026-10-03T16:15:04.696150+00:00",
+    "card_id": "decision:44ae2be0-b3e5-4d53-b064-b5831848f021",
+    "source_type": "decision",
+    "waiting": true,
+    "answer": {
+     "method": "POST",
+     "path": "/api/v1/owner/decisions/44ae2be0-b3e5-4d53-b064-b5831848f021/decide",
+     "accept": "ACCEPT",
+     "refuse": "REFUSE",
+     "done": null
+    },
+    "context": null,
+    "cost_usd": null
+   },
+   {
+    "id": "5b0e2a1c-1111-4c2d-9e3f-000000000042",
+    "kind": "reconnect_connection",
+    "subject": {
+     "type": "integration",
+     "id": "cloud"
+    },
+    "title_ro": "Reconectează Ollama Cloud",
+    "why_ro": "Fiecare rulare a modelului de limbaj din ziua de recuperare a eșuat (HTTP 401).",
+    "effect_ro": "Angajații pot gândi din nou; ziua poate rula.",
+    "options": [
+     {
+      "key": "reconnect",
+      "label_ro": "Reconectez Ollama Cloud",
+      "effect_ro": "Pui cheia nouă și verifici conexiunea.",
+      "recommended": true,
+      "apply_type": "guided",
+      "place_ro": "Setări → Furnizori AI",
+      "steps_ro": "Deschide conexiunea Ollama Cloud, pune cheia nouă și apasă «Verifică»."
+     }
+    ],
+    "recommended_option": "reconnect",
+    "source": "audit",
+    "status": "PENDING",
+    "status_ro": "așteaptă decizia ta",
+    "chosen_option": null,
+    "note": null,
+    "decided_by": null,
+    "decided_at": null,
+    "applied": null,
+    "apply_error_ro": null,
+    "expires_at": null,
+    "version": 1,
+    "created_at": "2026-10-03T16:15:04.690000+00:00",
+    "updated_at": "2026-10-03T16:15:04.690000+00:00",
+    "card_id": "decision:5b0e2a1c-1111-4c2d-9e3f-000000000042",
+    "source_type": "decision",
+    "waiting": true,
+    "answer": {
+     "method": "POST",
+     "path": "/api/v1/owner/decisions/5b0e2a1c-1111-4c2d-9e3f-000000000042/decide",
+     "accept": "ACCEPT",
+     "refuse": "REFUSE",
+     "done": null
+    },
+    "context": null,
+    "cost_usd": null
+   }
+  ],
+  "count": 6,
+  "counts": {
+   "approvals": 2,
+   "decisions": 2,
+   "waiting_action": 1,
+   "letters": 1
   },
-  "accept_answer": {
-    "command_id": "00000000-0000-4000-8000-00000000017a",
-    "status": "COMMITTED",
-    "decision": {
-      "id": "00000000-0000-4000-8000-0000000001cf",
-      "kind": "paid_media_rule",
-      "subject": null,
-      "title_ro": "Când trece studioul la MODE",
-      "why_ro": "Primul film plătit a trecut.",
-      "effect_ro": "Pașii plătiți urmează modul.",
-      "options": [
-        {
-          "key": "mode",
-          "label_ro": "Trec la MODE",
-          "effect_ro": "Pașii plătiți urmează modul de autonomie.",
-          "recommended": true,
-          "apply_type": "paid_media_approval",
-          "place_ro": null,
-          "steps_ro": null
-        },
-        {
-          "key": "keep",
-          "label_ro": "Rămân la fiecare pas plătit",
-          "effect_ro": "Nimic nu se schimbă.",
-          "recommended": false,
-          "apply_type": "none",
-          "place_ro": null,
-          "steps_ro": null
-        }
-      ],
-      "recommended_option": "mode",
-      "source": "agent:director",
-      "status": "ACCEPTED",
-      "status_ro": "acceptat",
-      "chosen_option": "mode",
-      "note": null,
-      "decided_by": "owner",
-      "decided_at": "2026-10-03T16:15:04.750127+00:00",
-      "applied": {
-        "type": "paid_media_approval",
-        "command": "SetPaidMediaApproval",
-        "result": {
-          "command_id": "00000000-0000-4000-8000-000000000007",
-          "status": "COMMITTED",
-          "paid_media_approval": "MODE",
-          "over_usd": null,
-          "version": 2,
-          "event_id": "00000000-0000-4000-8000-0000000001db"
-        },
-        "event_id": "00000000-0000-4000-8000-0000000001db"
-      },
-      "apply_error_ro": null,
-      "expires_at": null,
-      "version": 2,
-      "created_at": "2026-10-03T16:15:04.716559+00:00",
-      "updated_at": "2026-10-03T16:15:04.750127+00:00"
+  "history": [
+   {
+    "id": "961c56f4-9652-4901-b826-0ccb5f64c9f7",
+    "kind": "paid_media_rule",
+    "subject": null,
+    "title_ro": "Când trece studioul de la «fiecare pas plătit» la MODE",
+    "why_ro": "Acum te întreabă fiecare pas plătit al fiecărui film. Recomandarea auditului: rămâi așa până vezi cu ochii tăi primul film plătit cu plafon, apoi treci la MODE, unde decide modul de autonomie.",
+    "effect_ro": "Cu MODE, pașii plătiți nu te mai întreabă; plafonul rămâne.",
+    "options": [
+     {
+      "key": "keep",
+      "label_ro": "Rămân la fiecare pas plătit până văd primul film",
+      "effect_ro": "Nimic nu se schimbă acum.",
+      "recommended": true,
+      "apply_type": "none",
+      "place_ro": null,
+      "steps_ro": null
+     },
+     {
+      "key": "mode",
+      "label_ro": "Trec acum la MODE",
+      "effect_ro": "Pașii plătiți urmează modul de autonomie.",
+      "recommended": false,
+      "apply_type": "paid_media_approval",
+      "place_ro": null,
+      "steps_ro": null
+     }
+    ],
+    "recommended_option": "keep",
+    "source": "audit",
+    "status": "WITHDRAWN",
+    "status_ro": "retras",
+    "chosen_option": null,
+    "note": null,
+    "decided_by": null,
+    "decided_at": null,
+    "applied": {
+     "withdrawn_reason_ro": "Situația s-a rezolvat: studioul a văzut că nu mai este nevoie de card.",
+     "withdrawn_by": "condition"
     },
-    "event_id": "00000000-0000-4000-8000-00000000003a"
-  }
+    "apply_error_ro": null,
+    "expires_at": null,
+    "version": 2,
+    "created_at": "2026-10-03T16:15:04.698902+00:00",
+    "updated_at": "2026-10-03T16:15:04.754827+00:00",
+    "card_id": "decision:961c56f4-9652-4901-b826-0ccb5f64c9f7",
+    "source_type": "decision",
+    "waiting": false,
+    "answer": {
+     "method": "POST",
+     "path": "/api/v1/owner/decisions/961c56f4-9652-4901-b826-0ccb5f64c9f7/decide",
+     "accept": "ACCEPT",
+     "refuse": "REFUSE",
+     "done": null
+    },
+    "context": null,
+    "cost_usd": null
+   },
+   {
+    "id": "4bb17b7f-7bfc-42f5-bc72-f0161de98ae4",
+    "kind": "narration_paid_step",
+    "subject": null,
+    "title_ro": "Narațiunea ca pas plătit întrebat",
+    "why_ro": "Regula ta este «fiecare pas plătit»: imaginile, cadrul de probă și mișcarea te întreabă, dar narațiunea ElevenLabs (~0,10 USD pe film) se cumpără fără întrebare. Schimbarea cere o modificare a specificației 51.",
+    "effect_ro": "Narațiunea te întreabă și ea înainte de cumpărare.",
+    "options": [
+     {
+      "key": "ask",
+      "label_ro": "Să mă întrebe și pentru narațiune",
+      "effect_ro": "Se modifică specificația 51 și codul; până atunci rămâne cumpărată fără întrebare.",
+      "recommended": true,
+      "apply_type": "record",
+      "place_ro": null,
+      "steps_ro": null
+     },
+     {
+      "key": "unasked",
+      "label_ro": "Narațiunea rămâne cumpărată fără întrebare",
+      "effect_ro": "Nimic nu se schimbă (~0,10 USD pe film).",
+      "recommended": false,
+      "apply_type": "none",
+      "place_ro": null,
+      "steps_ro": null
+     }
+    ],
+    "recommended_option": "ask",
+    "source": "audit",
+    "status": "WITHDRAWN",
+    "status_ro": "retras",
+    "chosen_option": null,
+    "note": null,
+    "decided_by": null,
+    "decided_at": null,
+    "applied": {
+     "withdrawn_reason_ro": "Situația s-a rezolvat: studioul a văzut că nu mai este nevoie de card.",
+     "withdrawn_by": "condition"
+    },
+    "apply_error_ro": null,
+    "expires_at": null,
+    "version": 2,
+    "created_at": "2026-10-03T16:15:04.698208+00:00",
+    "updated_at": "2026-10-03T16:15:04.753619+00:00",
+    "card_id": "decision:4bb17b7f-7bfc-42f5-bc72-f0161de98ae4",
+    "source_type": "decision",
+    "waiting": false,
+    "answer": {
+     "method": "POST",
+     "path": "/api/v1/owner/decisions/4bb17b7f-7bfc-42f5-bc72-f0161de98ae4/decide",
+     "accept": "ACCEPT",
+     "refuse": "REFUSE",
+     "done": null
+    },
+    "context": null,
+    "cost_usd": null
+   },
+   {
+    "id": "e6bd05f1-b5a0-4263-83f4-59bc8874f454",
+    "kind": "paid_media_rule",
+    "subject": null,
+    "title_ro": "Când trece studioul la MODE",
+    "why_ro": "Primul film plătit a trecut.",
+    "effect_ro": "Pașii plătiți urmează modul.",
+    "options": [
+     {
+      "key": "mode",
+      "label_ro": "Trec la MODE",
+      "effect_ro": "Pașii plătiți urmează modul de autonomie.",
+      "recommended": true,
+      "apply_type": "paid_media_approval",
+      "place_ro": null,
+      "steps_ro": null
+     },
+     {
+      "key": "keep",
+      "label_ro": "Rămân la fiecare pas plătit",
+      "effect_ro": "Nimic nu se schimbă.",
+      "recommended": false,
+      "apply_type": "none",
+      "place_ro": null,
+      "steps_ro": null
+     }
+    ],
+    "recommended_option": "mode",
+    "source": "agent:director",
+    "status": "ACCEPTED",
+    "status_ro": "acceptat",
+    "chosen_option": "mode",
+    "note": null,
+    "decided_by": "owner",
+    "decided_at": "2026-10-03T16:15:04.750127+00:00",
+    "applied": {
+     "type": "paid_media_approval",
+     "command": "SetPaidMediaApproval",
+     "result": {
+      "command_id": "042eb1fe-ab80-58c9-8710-052ab01e0f01",
+      "status": "COMMITTED",
+      "paid_media_approval": "MODE",
+      "over_usd": null,
+      "version": 2,
+      "event_id": "ebe716df-a3ea-4d9c-8e4a-8f5969d2e058"
+     },
+     "event_id": "ebe716df-a3ea-4d9c-8e4a-8f5969d2e058"
+    },
+    "apply_error_ro": null,
+    "expires_at": null,
+    "version": 2,
+    "created_at": "2026-10-03T16:15:04.716559+00:00",
+    "updated_at": "2026-10-03T16:15:04.750127+00:00",
+    "card_id": "decision:e6bd05f1-b5a0-4263-83f4-59bc8874f454",
+    "source_type": "decision",
+    "waiting": false,
+    "answer": {
+     "method": "POST",
+     "path": "/api/v1/owner/decisions/e6bd05f1-b5a0-4263-83f4-59bc8874f454/decide",
+     "accept": "ACCEPT",
+     "refuse": "REFUSE",
+     "done": null
+    },
+    "context": null,
+    "cost_usd": null
+   },
+   {
+    "id": "4e8e7cce-0868-4bfe-97f5-565fb5d02f3e",
+    "kind": "editorial_qc",
+    "subject": null,
+    "title_ro": "Controlul editorial: consultativ sau blocant",
+    "why_ro": "Controlul editorial al filmului (poveste, ritm, final) doar avertizează acum. Blocant, ar opri un film slab înainte de publicare, dar ar putea opri și unul bun până nu e calibrat pe filme reale.",
+    "effect_ro": "Consultativ: avertismente; blocant: filmul nu trece QC.",
+    "options": [
+     {
+      "key": "advisory",
+      "label_ro": "Rămâne consultativ până la primul film real",
+      "effect_ro": "Nimic nu se schimbă.",
+      "recommended": true,
+      "apply_type": "none",
+      "place_ro": null,
+      "steps_ro": null
+     },
+     {
+      "key": "blocking",
+      "label_ro": "Devine blocant",
+      "effect_ro": "Un film care pică controlul editorial nu se publică.",
+      "recommended": false,
+      "apply_type": "guided",
+      "place_ro": "fișierul .env al studioului",
+      "steps_ro": "Scrie STUDIO_EDITORIAL_QC_BLOCKING=true și repornește studioul."
+     }
+    ],
+    "recommended_option": "advisory",
+    "source": "audit",
+    "status": "ACCEPTED",
+    "status_ro": "acceptat",
+    "chosen_option": "advisory",
+    "note": null,
+    "decided_by": "owner",
+    "decided_at": "2026-10-03T16:15:04.740156+00:00",
+    "applied": {
+     "type": "none",
+     "result_ro": "Nimic de schimbat: rămâne cum este."
+    },
+    "apply_error_ro": null,
+    "expires_at": null,
+    "version": 2,
+    "created_at": "2026-10-03T16:15:04.699502+00:00",
+    "updated_at": "2026-10-03T16:15:04.740156+00:00",
+    "card_id": "decision:4e8e7cce-0868-4bfe-97f5-565fb5d02f3e",
+    "source_type": "decision",
+    "waiting": false,
+    "answer": {
+     "method": "POST",
+     "path": "/api/v1/owner/decisions/4e8e7cce-0868-4bfe-97f5-565fb5d02f3e/decide",
+     "accept": "ACCEPT",
+     "refuse": "REFUSE",
+     "done": null
+    },
+    "context": null,
+    "cost_usd": null
+   },
+   {
+    "id": "695e6f7a-e265-4311-a5c3-f8726391e19c",
+    "kind": "music_library",
+    "subject": null,
+    "title_ro": "Biblioteca de muzică este goală",
+    "why_ro": "config/music_library.json nu are nicio piesă cu licență comercială, așa că filmele ies fără muzică. Sursa muzicii este alegerea ta.",
+    "effect_ro": "Filmele primesc un fond muzical potrivit, cu licența verificată.",
+    "options": [
+     {
+      "key": "add",
+      "label_ro": "Adaug muzică licențiată",
+      "effect_ro": "Pui piesele și licențele lor în bibliotecă.",
+      "recommended": true,
+      "apply_type": "guided",
+      "place_ro": "config/music_library.json",
+      "steps_ro": "Adaugă fiecare piesă: fișierul, sha256, licența și commercial_ok true doar dacă licența permite folosire comercială."
+     },
+     {
+      "key": "without",
+      "label_ro": "Filmele merg fără muzică",
+      "effect_ro": "Nimic nu se schimbă.",
+      "recommended": false,
+      "apply_type": "none",
+      "place_ro": null,
+      "steps_ro": null
+     }
+    ],
+    "recommended_option": "add",
+    "source": "audit",
+    "status": "REFUSED",
+    "status_ro": "refuzat",
+    "chosen_option": null,
+    "note": "Mai târziu.",
+    "decided_by": "owner",
+    "decided_at": "2026-10-03T16:15:04.735183+00:00",
+    "applied": null,
+    "apply_error_ro": null,
+    "expires_at": null,
+    "version": 2,
+    "created_at": "2026-10-03T16:15:04.697457+00:00",
+    "updated_at": "2026-10-03T16:15:04.735183+00:00",
+    "card_id": "decision:695e6f7a-e265-4311-a5c3-f8726391e19c",
+    "source_type": "decision",
+    "waiting": false,
+    "answer": {
+     "method": "POST",
+     "path": "/api/v1/owner/decisions/695e6f7a-e265-4311-a5c3-f8726391e19c/decide",
+     "accept": "ACCEPT",
+     "refuse": "REFUSE",
+     "done": null
+    },
+    "context": null,
+    "cost_usd": null
+   },
+   {
+    "card_id": "approval:9d1f0000-0000-4000-8000-000000000009",
+    "source_type": "approval",
+    "id": "9d1f0000-0000-4000-8000-000000000009",
+    "kind": "media.stills_purchase",
+    "subject": {
+     "type": "storyboard",
+     "id": "3ec1740c-0000-4000-8000-000000000001"
+    },
+    "title_ro": "Imaginile unui film, înainte de orice mișcare",
+    "why_ro": "Imaginile filmului «Nepal».",
+    "effect_ro": "plafon 0.72 USD",
+    "options": [
+     {
+      "key": "APPROVED",
+      "label_ro": "Accept",
+      "effect_ro": "Studioul face pasul cerut, cu plafon 0.72 USD; răspunsul acoperă un singur pas.",
+      "recommended": true,
+      "apply_type": "approval",
+      "place_ro": null,
+      "steps_ro": null
+     },
+     {
+      "key": "REFUSED",
+      "label_ro": "Refuz",
+      "effect_ro": "Pasul nu se face; studioul nu întreabă din nou până expiră răspunsul.",
+      "recommended": false,
+      "apply_type": "approval",
+      "place_ro": null,
+      "steps_ro": null
+     }
+    ],
+    "recommended_option": "APPROVED",
+    "source": "Director",
+    "status": "REFUSED",
+    "status_ro": "refuzat",
+    "chosen_option": "REFUSED",
+    "note": "Nu acum.",
+    "decided_by": "owner",
+    "decided_at": "2026-10-03T15:00:00+00:00",
+    "applied": null,
+    "apply_error_ro": null,
+    "expires_at": "2026-10-05T16:15:04.707408+00:00",
+    "version": null,
+    "created_at": "2026-10-03T14:00:00+00:00",
+    "updated_at": "2026-10-03T15:00:00+00:00",
+    "waiting": false,
+    "answer": {
+     "method": "POST",
+     "path": "/api/v1/owner/approvals/decision",
+     "body": {
+      "approval_id": "9d1f0000-0000-4000-8000-000000000009"
+     },
+     "accept": "APPROVED",
+     "refuse": "REFUSED"
+    },
+    "context": {
+     "step": "stills",
+     "plan_hash": "aaaaaaaaaaaa",
+     "storyboard_id": "3ec1740c-0000-4000-8000-000000000001"
+    },
+    "cost_usd": 0.72
+   }
+  ],
+  "measured_at": "2026-10-03T16:15:04.759151+00:00"
+ },
+ "accept_answer": {
+  "command_id": "b7d1b97e-6f10-4281-b515-fe74e6a5c99d",
+  "status": "COMMITTED",
+  "decision": {
+   "id": "e6bd05f1-b5a0-4263-83f4-59bc8874f454",
+   "kind": "paid_media_rule",
+   "subject": null,
+   "title_ro": "Când trece studioul la MODE",
+   "why_ro": "Primul film plătit a trecut.",
+   "effect_ro": "Pașii plătiți urmează modul.",
+   "options": [
+    {
+     "key": "mode",
+     "label_ro": "Trec la MODE",
+     "effect_ro": "Pașii plătiți urmează modul de autonomie.",
+     "recommended": true,
+     "apply_type": "paid_media_approval",
+     "place_ro": null,
+     "steps_ro": null
+    },
+    {
+     "key": "keep",
+     "label_ro": "Rămân la fiecare pas plătit",
+     "effect_ro": "Nimic nu se schimbă.",
+     "recommended": false,
+     "apply_type": "none",
+     "place_ro": null,
+     "steps_ro": null
+    }
+   ],
+   "recommended_option": "mode",
+   "source": "agent:director",
+   "status": "ACCEPTED",
+   "status_ro": "acceptat",
+   "chosen_option": "mode",
+   "note": null,
+   "decided_by": "owner",
+   "decided_at": "2026-10-03T16:15:04.750127+00:00",
+   "applied": {
+    "type": "paid_media_approval",
+    "command": "SetPaidMediaApproval",
+    "result": {
+     "command_id": "042eb1fe-ab80-58c9-8710-052ab01e0f01",
+     "status": "COMMITTED",
+     "paid_media_approval": "MODE",
+     "over_usd": null,
+     "version": 2,
+     "event_id": "ebe716df-a3ea-4d9c-8e4a-8f5969d2e058"
+    },
+    "event_id": "ebe716df-a3ea-4d9c-8e4a-8f5969d2e058"
+   },
+   "apply_error_ro": null,
+   "expires_at": null,
+   "version": 2,
+   "created_at": "2026-10-03T16:15:04.716559+00:00",
+   "updated_at": "2026-10-03T16:15:04.750127+00:00"
+  },
+  "event_id": "1b942869-c190-4ac3-b3ab-c24fe697c212"
+ }
 }

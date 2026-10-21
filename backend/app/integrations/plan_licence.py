@@ -1,6 +1,17 @@
-"""Plan licence: existing local-first media checks.
+"""The commercial licence of a voice, read from the vendor's own account (2026-10-10).
 
-Private production traces omitted; implementation unchanged."""
+A film is published publicly only when every component carries commercial-use evidence
+(`media.factory.vendor_licence`, AR-15). For ElevenLabs that evidence was the Owner's own «da»
+typed on the connection in Setări, and nobody had typed it: film babcf272 could only be uploaded
+private, five narrations «nicio confirmare de folosire comercială». The Owner's card the same day
+(«Da, citește singur»): the studio reads his plan through the API (GET /v1/user/subscription,
+which the books already read for its character count, `economy.credits`) and records the
+licence itself when the plan is a paid one, which ElevenLabs licenses for commercial use. The
+reading, the tier and the date are kept on the connection as the evidence. A free plan, an
+unknown tier or a plan that is not active records nothing, and the film stays private.
+
+The plan is never inferred from the vendor's name: only the account's own answer counts.
+"""
 
 from __future__ import annotations
 

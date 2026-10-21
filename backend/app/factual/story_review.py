@@ -31,6 +31,19 @@ money, because rewriting text costs nothing and re-filming a shot costs dollars.
   Every version read is an `editorial.judged` event; the chosen version's scores stay on its
   story_json (`editorial`) for the weekly review, and a version it supersedes is marked so,
   owing the room nothing more (`runbook.stages.script_work`).
+
+- **Her letter reaches the writer** (2026-10-13, the Owner: «Directorul comunică cu fiecare
+  și poate întoarce către el indicații noi?»): a REVISE or REJECT used to be posted to her
+  own inbox, where the Scriptwriter never read it. It is now a REQUEST_REVIEW addressed to
+  him, with her retention row and the span where she loses the viewer in its words
+  (`letter_to_writer`); his mail round answers it (since 2026-10-16 no identity carries a
+  letter: `agents.identity`), and it stays open until a later draft of the story passes and
+  `_settle_writer_letters` resolves it. His rewrite is given, in its own data, her notes and
+  that same retention row as a sentence (`rewrite_notes`): the REVISE loop of the runbook,
+  a topic carried to the next day, the editorial rewrite on her brief and the shooting
+  sheet's story repair all pass it.
+  When a story ships, what it scored and her last note become one AGENT_OPINION on his
+  memory (`remember_shipped_story`).
 """
 
 from __future__ import annotations
@@ -45,22 +58,32 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.editorial_judgement import (
+    CRITERION_KEYS,
     FACTUAL_SHORT,
+    MAX_SCORE,
+    EditorialOutcome,
     Version,
     editorial_loop,
     letter_to_owner,
     record_rounds,
 )
-from app.agents.identity import parse_structured
-from app.agents.memory import agent_for_role
-from app.agents.messages import post_message
+from app.agents.identity import cut_at_word, parse_structured
+from app.agents.memory import agent_for_role, remember
+from app.agents.messages import post_message, resolve_message
+from app.agents.models import AgentMessage
 from app.agents.services import run_agent_task
-from app.factual.agent_pipeline import NoVerifiedClaims, ScriptRejected, agent_write_script
-from app.factual.editorial import expected_seconds, failed, revision_notes, story_checks
+from app.factual.agent_pipeline import (
+    PREFERRED_WRITER_ROLE,
+    NoVerifiedClaims,
+    ScriptRejected,
+    agent_write_script,
+)
+from app.factual.editorial import failed, revision_notes, story_checks
 from app.factual.grounding import grounding_check, script_grounding
 from app.factual.models import ScriptDraft, StoryReview
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.factual.services import FactualGateError
+from app.media.film_length import factual_film_length, factual_rows
 from app.services import append_event, utc_now
 from app.wording import count, decimal, review_verdict
 
@@ -174,7 +197,10 @@ _INSTRUCTIONS = (
     "You are the Director, and this script has not been produced yet — changing it now costs "
     "nothing, while re-filming a shot costs real money. Below is the whole script as data: "
     "the topic, the story it means to tell, and every scene with its narration, its purpose "
-    "and the verified claims behind it. Read it as a viewer on a phone will.\n\n"
+    "and the verified claims behind it. The topic's target_audience is the actual viewer "
+    "segment Marcus was given, not a licence to invent demographics; judge whether that "
+    "audience can understand the stakes and benefit, without assuming specialist knowledge. "
+    "Read it as a viewer on a phone will.\n\n"
     "Answer, in order: do the first three seconds open a gap worth staying for; is there one "
     "clear idea; does every sentence move the story rather than restate it; is there a real "
     "payoff that answers the hook; does the ending close the film; is the closing question "
@@ -221,6 +247,92 @@ def stalled_rounds(history: list[StoryReview]) -> int:
     return stalled
 
 
+def retention_sentence(retention: dict[str, Any]) -> str:
+    """Her retention row as a sentence the writer reads: «Reținerea la care se așteaptă
+    Directorul: 100% la 0 s, 70% la 3 s, 40% la final; pierde publicul la 3-9: …». A mark she
+    left at 0 is not said (the row's default is 0 for a mark she did not give); empty when no
+    model answered and the row is empty."""
+    marks = []
+    for mark in MARKS:
+        value = retention.get(f"at_{mark}")
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            continue
+        if value <= 0 and mark != "0":
+            continue
+        marks.append(f"{int(value)}% la {'final' if mark == 'end' else f'{mark} s'}")
+    if not marks:
+        return ""
+    said = "Reținerea la care se așteaptă Directorul: " + ", ".join(marks)
+    span = " ".join(str(retention.get("collapse_at") or "").split())
+    why = " ".join(str(retention.get("why") or "").split())
+    if span:
+        said += f"; pierde publicul la {span}" + (f": {why}" if why else "")
+    elif why:
+        said += f"; {why}"
+    return said + "."
+
+
+def rewrite_notes(notes: Any, retention: Any) -> list[str]:
+    """The notes a rewrite of the story is given in its own data: her notes, whole and in
+    order, then her retention row as a sentence (`retention_sentence`: the marks, where she
+    expects to lose the viewer and why), so the next draft is written to the row she judged
+    against, not only to the notes (2026-10-13). Since 2026-10-16 («Context pe sarcină») no
+    identity carries her letter, so the rewrite's data is where the row must ride. Nothing is
+    added when she gave no row, or when the notes already say it."""
+    out = [str(note) for note in (notes or []) if str(note).strip()]
+    said = retention_sentence(retention) if isinstance(retention, dict) else ""
+    if said and said not in out:
+        out.append(said)
+    return out
+
+
+def letter_to_writer(verdict: str, notes: list[str], retention: dict[str, Any]) -> str:
+    """The words of her letter to the Scriptwriter: the verdict, her notes, and where she
+    expects to lose the viewer (`retention_sentence`). It is his mail round's to answer; the
+    rewrite itself is given the same row in its own data (`rewrite_notes`)."""
+    words = (
+        f"Scenariul nu poate intra în producție așa cum e ({review_verdict(verdict)}). "
+        + " ".join(str(note) for note in notes)
+    ).strip()
+    expected = retention_sentence(retention)
+    return f"{words} {expected}".strip() if expected else words
+
+
+def _settle_writer_letters(
+    session: Session,
+    *,
+    writer_id: str | None,
+    topic_id: str | None,
+    script_id: str,
+    resolved_by: str,
+    correlation_id: str,
+) -> int:
+    """The story-review letters still open on the writer's desk for this topic, resolved now
+    that a draft of it passed: what they asked for is done, and a letter left open would sit
+    in his every prompt beside the next story's. Returns how many were resolved."""
+    if writer_id is None or not topic_id:
+        return 0
+    rows = session.scalars(
+        select(AgentMessage).where(
+            AgentMessage.to_agent_id == writer_id, AgentMessage.status == "OPEN"
+        )
+    ).all()
+    settled = 0
+    for row in rows:
+        body = row.body_json if isinstance(row.body_json, dict) else {}
+        if body.get("kind") != "story_review" or body.get("topic_id") != topic_id:
+            continue
+        resolve_message(
+            session,
+            row.id,
+            resolution=f"Versiunea {script_id[:8]} a trecut recenzia de poveste.",
+            resolved_by=resolved_by,
+            correlation_id=correlation_id,
+        )
+        settled += 1
+    return settled
+
+
 def _script_facts(session: Session, script: ScriptDraft) -> dict[str, Any]:
     """Everything the review reads, from the rows the studio already has."""
     from app.factual.models import FactualClaim, TopicIdea  # noqa: PLC0415
@@ -249,10 +361,12 @@ def _script_facts(session: Session, script: ScriptDraft) -> dict[str, Any]:
     return {
         "title": script.title,
         "topic": topic.title if topic else "",
+        "target_audience": str(topic.target_audience or "") if topic else "",
         "thesis": (topic.thesis_json if topic and topic.thesis_json else {}),
         "story": dict(script.story_json or {}),
         "target_seconds": script.target_duration_seconds,
-        "estimated_seconds": expected_seconds(script.scenes_json or []),
+        # The film the montage will cut, as the length check measures it.
+        "estimated_seconds": factual_film_length(script.scenes_json or []).seconds,
         "scenes": scenes,
         # Last, because the payload she reads is cut at a fixed length and the scenes are
         # what she must not lose.
@@ -268,7 +382,14 @@ def scene_clip_check(engine: Engine, scenes: list[dict[str, Any]]) -> dict[str, 
     carried words for 11.1 s and 12.5 s of clip under a model whose clips end at 10 s, and
     nothing said so until the shooting sheet, after the story had passed. The length is
     estimated as the motion step will buy it (`assembler.script_clip_seconds`), and the
-    refusal names each scene's seconds, so the writer splits it in the next draft."""
+    refusal names each scene's seconds, so the writer splits it in the next draft.
+
+    Since 2026-10-16 the montage cuts a LIVE scene into shots of its own, each its own clip
+    (`montage.factual_shots`): what must fit one clip is each shot as the storyboard will cut
+    it (`film_length.factual_rows`), and a scene is measured by its longest shot, as the
+    serial's review measures a beat (`story.review._filmable`). With the montage off a scene is
+    one shot, and the whole scene is measured as before. A 28-word scene was refused at 12.75 s
+    while the montage would have filmed it as three shots of about four seconds."""
     from app.media.assembler import script_clip_seconds, spoken_words  # noqa: PLC0415
     from app.media.cost_plan import SLOWDOWN_ALLOWANCE  # noqa: PLC0415
     from app.media.shooting_sheet import motion_clip_limit  # noqa: PLC0415 - media reads us
@@ -278,9 +399,17 @@ def scene_clip_check(engine: Engine, scenes: list[dict[str, Any]]) -> dict[str, 
         return None
     model_id, longest = limit
     most = longest * (1 + SLOWDOWN_ALLOWANCE)
+    rows = factual_rows(scenes)
+    # Each writer's scene by its longest shot: (seconds, the shot's row).
+    longest_shot: dict[int, tuple[float, dict[str, Any]]] = {}
+    for position, seconds in script_clip_seconds(rows).items():
+        row = rows[position - 1]
+        number = int(row["scene_number"])
+        if number not in longest_shot or seconds > longest_shot[number][0]:
+            longest_shot[number] = (seconds, row)
     over = [
-        (position, seconds)
-        for position, seconds in script_clip_seconds(scenes).items()
+        (number, seconds, row)
+        for number, (seconds, row) in sorted(longest_shot.items())
         if seconds > most + 1e-9
     ]
     if not over:
@@ -292,20 +421,54 @@ def scene_clip_check(engine: Engine, scenes: list[dict[str, Any]]) -> dict[str, 
             ),
         }
 
-    def refusal(position: int, seconds: float) -> str:
-        scene = scenes[position - 1]
-        said = spoken_words(str(scene.get("narration") or scene.get("voiceover_segment") or ""))
+    def refusal(number: int, seconds: float, row: dict[str, Any]) -> str:
+        said = spoken_words(str(row.get("narration") or ""))
+        shots = int(row.get("of") or 1)
+        where = (
+            f", în cel mai lung din cele {shots} cadre în care o taie montajul" if shots > 1 else ""
+        )
         return (
-            f"Scena {position} cere un cadru de {decimal(seconds)} s "
-            f"({count(said, 'cuvânt rostit', 'cuvinte rostite')}); {model_id} filmează cel mult "
-            f"{longest} s într-un cadru, iar studioul îl încetinește local cu cel mult "
+            f"Scena {number} cere un cadru de {decimal(seconds)} s "
+            f"({count(said, 'cuvânt rostit', 'cuvinte rostite')}{where}); {model_id} filmează "
+            f"cel mult {longest} s într-un cadru, iar studioul îl încetinește local cu cel mult "
             f"{round(SLOWDOWN_ALLOWANCE * 100)}% ({decimal(most)} s). Împarte scena în două "
             "scene, fiecare cu imaginea ei, sau scurtează-i narațiunea."
         )
 
     return {
         "passed": False,
-        "reason": " ".join(refusal(position, seconds) for position, seconds in over),
+        "reason": " ".join(refusal(number, seconds, row) for number, seconds, row in over),
+    }
+
+
+def film_wall_check(session: Session, scenes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Whether the film cut from these scenes stays under its channel's wall: min(the factual
+    channel's Shorts maximum, 180 s) (`pauses.wall_seconds`), the film estimated as the
+    storyboard will freeze it, its words held with the estimate's margin
+    (`film_length.FilmLength.against_wall`). None with the pause rules off: the length check
+    holds the legacy wall then (`editorial.duration_check`)."""
+    from app.media.film_length import FACTUAL, timing  # noqa: PLC0415
+    from app.media.pause_plan import channel_wall  # noqa: PLC0415 - pause_plan reads qc
+
+    when = timing(FACTUAL)
+    if not when.paused:
+        return None
+    wall = channel_wall(session, "MAIN_FACTUAL", when.rules)
+    film = factual_film_length(scenes, when=when)
+    passed = film.against_wall <= wall + 1e-9
+    return {
+        "passed": passed,
+        "wall_seconds": wall,
+        "estimated_seconds": film.seconds,
+        "with_margin_seconds": film.against_wall,
+        "reason": (
+            f"Filmul ar dura {decimal(film.seconds, 1)} s ({decimal(film.against_wall, 1)} s cu "
+            f"marja estimării), sub zidul de {decimal(wall, 0)} s al canalului."
+            if passed
+            else f"Filmul ar dura {decimal(film.seconds, 1)} s, iar cu marja estimării "
+            f"{decimal(film.against_wall, 1)} s, peste zidul de {decimal(wall, 0)} s al "
+            "canalului: mai puține cuvinte."
+        ),
     }
 
 
@@ -347,6 +510,11 @@ def review_story(
         fits = scene_clip_check(engine, list(script.scenes_json or []))
         if fits is not None:
             checks["every_scene_fits_one_clip"] = fits
+        # «Pauza vocii» (the Owner, 2026-10-16): the film against its channel's own wall,
+        # computed before a still is bought; a script past it is refused, no model asked.
+        wall = film_wall_check(session, list(script.scenes_json or []))
+        if wall is not None:
+            checks["film_fits_the_wall"] = wall
         earlier = session.scalar(
             select(StoryReview).where(StoryReview.script_id == script_id).limit(1)
         )
@@ -379,6 +547,12 @@ def review_story(
         exchange = len(history) + 1
         reviewer = agent_for_role(session, REVIEWER_ROLE)
         reviewer_id = reviewer.id if reviewer else None
+        reviewer_name = reviewer.display_name if reviewer else REVIEWER_ROLE
+        # The writer her letter goes to (2026-10-13): the one who holds the role, as
+        # `agent_write_script` resolves him; without one, her inbox, as before.
+        writer = agent_for_role(session, PREFERRED_WRITER_ROLE)
+        writer_id = writer.id if writer else None
+        topic_id = script.topic_id
         # What she said the last time she read this story, so this reading continues the
         # conversation instead of starting a new one.
         previous = None
@@ -448,7 +622,7 @@ def review_story(
                 "cta_fit": opinion.cta_fit,
             }
             retention = opinion.retention.model_dump()
-            notes.extend(str(note) for note in opinion.notes[:6])
+            notes.extend(str(note) for note in opinion.notes)
             # The Director may send back a script the checks did not catch; she may not wave
             # through one they did. Taste can be stricter than a rule, never looser — once per
             # story: a second REVISE on taste alone, on a draft that passes every check, is a
@@ -496,7 +670,7 @@ def review_story(
                 retention_json=retention,
                 scores_json=scores,
                 notes_json={
-                    "notes": notes[:12],
+                    "notes": notes,
                     "failed": every_failure,
                     "flagged": flagged,
                     "taste_only": taste_only and verdict == "REVISE",
@@ -509,18 +683,38 @@ def review_story(
                 event_id=event.event_id,
             )
         )
-        if verdict != "PASS" and reviewer_id is not None:
+        if verdict == "PASS":
+            _settle_writer_letters(
+                session,
+                writer_id=writer_id,
+                topic_id=topic_id,
+                script_id=script_id,
+                resolved_by=reviewer_name,
+                correlation_id=correlation,
+            )
+        elif reviewer_id is not None:
+            # Her letter goes to the writer (2026-10-13, the Owner: «Directorul comunică cu
+            # fiecare și poate întoarce către el indicații noi?»). It was posted to her own
+            # inbox (`to_agent_id=None`), so the one employee who had to act on it never read
+            # it in his prompt; the retention row she judged against was stored and never
+            # told. A REQUEST_REVIEW addressed to him is a letter his mail round answers
+            # (`agents.mail`), open until a later draft of this story passes.
             post_message(
                 session,
-                intent="CHALLENGE" if verdict == "REJECT" else "REQUEST_REVIEW",
-                subject=f"Povestea «{facts['title'][:60]}»: {review_verdict(verdict)}",
-                body={"kind": "story_review", "verdict": verdict, "failed": broken[:6]},
-                body_text=(
-                    "Scenariul nu poate intra în producție așa cum e "
-                    f"({review_verdict(verdict)}). " + " ".join(notes[:6])
-                ),
+                intent="REQUEST_REVIEW",
+                subject=f"Povestea «{facts['title']}»: {review_verdict(verdict)}",
+                body={
+                    "kind": "story_review",
+                    "verdict": verdict,
+                    "failed": broken[:6],
+                    "topic_id": topic_id,
+                    "script_id": script_id,
+                    "exchange": exchange,
+                    "retention": retention,
+                },
+                body_text=letter_to_writer(verdict, notes, retention),
                 from_agent_id=reviewer_id,
-                to_agent_id=None,
+                to_agent_id=writer_id,
                 correlation_id=correlation,
             )
     logger.info(
@@ -533,7 +727,7 @@ def review_story(
         "verdict": verdict,
         "checks": checks,
         "failed": broken,
-        "notes": notes[:12],
+        "notes": notes,
         "retention": retention,
         "scores": scores,
         "estimated_seconds": facts["estimated_seconds"],
@@ -565,7 +759,7 @@ def _ask_director(
     told which exchange this is, what she asked for last time, and that the last exchange is a
     decision: a REVISE there is a refusal that will not say its name.
     """
-    payload = json.dumps(facts, ensure_ascii=False, default=str)[:14000]
+    payload = json.dumps(facts, ensure_ascii=False, default=str)
     prompt = _INSTRUCTIONS
     prompt += (
         f"\nThis is exchange {exchange}. Continue revising until the checks pass; "
@@ -576,7 +770,7 @@ def _ask_director(
     if earlier_notes:
         prompt += (
             "What you asked for last time:\n"
-            + "\n".join(f"- {note}" for note in earlier_notes[:8])
+            + "\n".join(f"- {note}" for note in earlier_notes)
             + "\nFor each one, say whether this draft addressed it. A note you have already "
             "given and the writer has acted on is settled — do not raise it again, and do not "
             "trade it for a new one of the same size. The question is whether the film is good "
@@ -623,7 +817,7 @@ def _ask_director(
         prompt,
         TEMPLATE_VERSION,
         correlation,
-        summary=f"Citesc povestea «{facts['title'][:50]}» înainte de producție.",
+        summary=f"Citesc povestea «{facts['title']}» înainte de producție.",
         max_tokens=3000,
         temperature=0.2,
         emit_message=False,
@@ -665,7 +859,7 @@ def story_gate(session: Session, script_id: str) -> tuple[bool, str]:
         notes = (review.notes_json or {}).get("notes") or []
         return False, (
             f"Recenzia de poveste s-a încheiat cu {review.verdict}. "
-            + " ".join(str(note) for note in notes[:3])
+            + " ".join(str(note) for note in notes)
         )
     # Measured again here rather than trusted from the review: a PASS written before the
     # narration was measured, or by hand, must not buy a shot for a film about something its
@@ -674,7 +868,7 @@ def story_gate(session: Session, script_id: str) -> tuple[bool, str]:
     if grounding is not None and not grounding["passed"]:
         return False, (
             "Narațiunea nu spune ce spun afirmațiile și subiectul ei. "
-            + " ".join(grounding["reasons"][:3])
+            + " ".join(grounding["reasons"])
         )
     return True, ""
 
@@ -719,7 +913,7 @@ def script_as_text(script: ScriptDraft) -> tuple[str, dict[str, Any]]:
         "cta_kind": story.get("cta_kind"),
         "scenes": len(scenes),
         "purposes": purposes,
-        "estimated_seconds": expected_seconds(scenes),
+        "estimated_seconds": factual_film_length(scenes).seconds,
         "target_seconds": script.target_duration_seconds,
     }
     return "\n".join(rows), context
@@ -739,6 +933,51 @@ def _version_of_script(
         eligible=passed,
         note=note or ("" if passed else reasons),
         title=str(script.title or ""),
+    )
+
+
+def remember_shipped_story(
+    session: Session, outcome: EditorialOutcome, *, title: str, writer_id: str
+) -> None:
+    """One AGENT_OPINION on the writer's own memory when a story ships (2026-10-13): the
+    title, how many versions she read, what the shipped one scored, and her last note — her
+    KEEP / CHANGE / AVOID after the last version she sent back, else her reasons on the two
+    weakest criteria of the one that shipped. The weekly review measures the film later; this
+    is what he can learn before any measurement, among the records his next run recalls."""
+    shipped = outcome.shipped
+    judged = shipped.judgement
+    if judged is None:
+        said = f"a plecat nejudecată ({outcome.stopped})"
+    else:
+        scored = ", ".join(f"{key} {judged.scores[key]}" for key in CRITERION_KEYS)
+        said = f"a plecat versiunea {shipped.number} cu {judged.total}/50 ({scored})" + (
+            "" if outcome.passed else ", sub prag"
+        )
+    briefed = next(
+        (item for item in reversed(outcome.rounds) if item.brief and item.judgement), None
+    )
+    if briefed is not None and briefed.judgement is not None:
+        note = " ".join(briefed.judgement.answer.brief.words().split())
+    elif judged is not None:
+        reasons = judged.answer.reasons()
+        note = "; ".join(
+            f"{key} ({judged.scores[key]}/{MAX_SCORE}): {reasons[key]}"
+            for key in judged.weakest
+            if reasons.get(key)
+        )
+    else:
+        note = ""
+    remember(
+        session,
+        memory_class="AGENT_OPINION",
+        content=(
+            f"Povestea «{title}»: "
+            f"{count(len(outcome.rounds), 'versiune citită', 'versiuni citite')} de Director; "
+            f"{said}. Ultima ei notă: {cut_at_word(note, 300) or 'niciuna'}"
+        ),
+        source_type="run" if judged is not None and judged.run_id else "system",
+        source_id=judged.run_id if judged is not None and judged.run_id else shipped.version.id,
+        agent_id=writer_id,
     )
 
 
@@ -780,6 +1019,9 @@ def judged_story(
         director_id = director.id if director is not None else None
         first = _version_of_script(script, passed)
     reviews: dict[str, dict[str, Any]] = {script_id: passed}
+    # The retention row of the version her brief is about (the newest read): the rewrite is
+    # written to it as well as to the brief (`rewrite_notes`).
+    judged_row: dict[str, Any] = {"retention": passed.get("retention")}
 
     def rewrite(brief: str, number: int) -> Version | None:
         try:
@@ -790,7 +1032,7 @@ def judged_story(
                 str(uuid4()),
                 target_duration_seconds=target_seconds,
                 language=language,
-                notes=[brief],
+                notes=rewrite_notes([brief], judged_row["retention"]),
             )
         except (ScriptRejected, NoVerifiedClaims, FactualGateError, ValueError) as exc:
             # Unattributable narration, no claims, a claim refuted meanwhile, or no answer:
@@ -806,11 +1048,13 @@ def judged_story(
                 engine, registry, new_id, str(uuid4()), target_seconds=target_seconds
             )
         except StoryReviewError as exc:
+            judged_row["retention"] = None  # this version has no row of hers
             with Session(engine) as session:
                 row = session.get(ScriptDraft, new_id)
                 assert row is not None  # stored above, in this same process
                 return _version_of_script(row, None, note=str(exc))
         reviews[new_id] = verdict
+        judged_row["retention"] = verdict.get("retention")
         with Session(engine) as session:
             row = session.get(ScriptDraft, new_id)
             assert row is not None
@@ -842,6 +1086,11 @@ def judged_story(
             director_id=director_id,
             correlation_id=correlation,
         )
+        writer = agent_for_role(session, PREFERRED_WRITER_ROLE)
+        if writer is not None:
+            remember_shipped_story(
+                session, outcome, title=shipped.version.title, writer_id=writer.id
+            )
     return {
         "script_id": shipped_id,
         "review": reviews.get(shipped_id, passed),

@@ -1,9 +1,731 @@
 {
-  "snapshot_kind": "source_only",
-  "published_on": "2026-10-13",
-  "phase": "Audit existing implementation; production state intentionally omitted",
-  "runtime_configuration_included": false,
-  "models_included": false,
-  "unmerged_worktrees_included": false,
-  "next_task": "Read CLAUDE.md; run offline checks; propose fixes via a feature branch and PR"
+  "phase": "10 (full automation hardening; production-readiness audit of 2026-10-01/02 implemented on fakes; the first capped paid film under the staircase not yet made)",
+  "completed_milestone": "2026-10-09 PIXEL_LIVING_STUDIO complete: eight raised individual office chairs, Nadia rear-left toward her corrected upright v9 monitor, backend-authorized gestures, bounded 2D contacts/room life/media and original sound. 898 frontend/types, eight bounded browser and 81 scoped backend/docs/scan checks; actual 32 s H.264/AAC clip and 24 s event-socket-loss rehearsal. 2026-10-09 PIXEL_DEPTH_PHYSICS complete: coherent scene/pointer depth, original foreground occlusion and adjacent menu fix. 883 frontend/types, seven bounded browser and 66 scoped backend/docs/secret checks; nine real dialogs and 32 s live clip. 2026-10-09 PIXEL_STREET_REFINEMENT complete: 10% character scale, full-width street/cat patrols and original detailed cars. 879 frontend/types, six browser and 66 scoped backend/docs/secret cases; real 31.958008 s clip. 2026-10-09 PIXEL_NATURAL_MOTION complete: eight integrated person/chair assets, one uniform grounded scale, continuous upper joints and selective clean plate. 863 frontend/types, five Playwright including 60 simulated seconds, 62 scoped backend/docs/secret cases; actual 19.916016 s live clip. 2026-10-09 PIXEL_SEAT_ALIGNMENT complete: eight chair contacts, 48 pose review and actual seated UI verification; 16 s clip. 2026-10-09: PIXEL_ACTOR_REFINEMENT complete; five original detailed atlases, all eight real staff visibly animate; 859 frontend, types, three bounded browser and 53 scoped backend/docs pass. 2026-10-08: PIXEL_STUDIO_LIFE complete; one hover label/no character border, independent role/state desk gestures and original city life; actual eight-agent production animation/video verified. 846 frontend, type check, three bounded browser and 53 scoped backend/docs pass. 2026-10-08: full-scene fit, bounded wheel/drag navigation and coloured solar sky/moon; actual authenticated UI verified, 826 frontend cases / type check / two bounded browser cases / 53 scoped backend/docs pass. 2026-10-08: pixel outdoor clock and actual Bucharest weather/solar lighting implemented, production frontend built; 168 scoped backend cases, 818 frontend cases and isolated real Canvas acceptance pass. Full owner flows deferred by game guard (11 skipped). 2026-10-08: AGENT_SCENARIO_ACCEPTANCE completed with recorded limits: 30 Cloud attempts (one timeout), 3540 unique backend cases passing across broad lanes and final rechecks, 5 skipped, no unresolved test failures; 812 frontend tests and 10 browser flows pass. Normal two-draft serial safely REJECTED; real GPU/media/upload acceptance pending. 2026-10-08: simplified RunPod-ready studio and detailed three-floor pixel office; eight actual employees assigned available Ollama Cloud models, 16/16 role samples verified. 2026-10-03: Owner decision cards (0054_owner_decisions) implemented, versioned and Owner-only. EARLIER: Production-readiness audit (2026-10-01/02, twenty items, every provider faked, 0 credits): paid calls and take intent, every purchase booked, no re-buy, gates before buying, hero accepted by clip QC under MODE/OVER_USD, a day that never stalls, FILM_CONTINUE and automatic repair, queue leases and graceful shutdown, security and start-up, gates and CI, film audio and rights, story and picture QC, backup/disk/health, publishing truth and metadata, sellable, the page. See CURRENT_STATUS «State on 2026-10-02». EARLIER: Phase A (the clock, fault classes, provider retries, the watchdog), Phase B/C (per-channel publish policy, the serial filmed in-run, captions and loudness measured), Phases E/F (a film's cost estimated and held before it is made, prices the Owner's alone, a failed render costed, a token ceiling with the Accountant's letter; the studio's own page discovery, a search engine filtered to the allowlist, the research health report in the preflight) and Phases D/G (2026-09-18: a picture gate and a character gate that certify only what they measured; the Character Bible's five reference slots filled by an Owner-triggered route; one approved alternative vendor per purpose per scene; the autonomy mode as a column, a versioned command and a tier gate the day asks before every stage, every paid film and every upload); Phase D/G closed the same day (2026-09-18: the Owner answers an approval and the day spends the answer once, migration 0044_approval_answered keying a request by the action and the film; his own render and quality control read a film the way the day reads it; Runway can be handed a character's reference; and a governance panel exists in frontend/src, unbuilt); readiness for the first day (2026-09-18: five preflight checks for what only the Owner can supply — no active budget, models unpriced on both token sides, nobody whose model declares vision, characters with no readable reference, the serial's channel unbound or the Director without leave — none of them blocking, because a check must not refuse the day for something he chose; approval_expires_after_hours lifted from a module constant into Settings; the Video Editor's role prefers vision at the PREFERRED level and vision is a seeded row attached to no proposed model; every factual scene records its cast and a film that shows nobody says so once in its storyboard's creation event; the Accountant writes one letter a day about the approval requests still standing; and migration 0045_reconciliation with PUT /economy/reconciliations, where the Owner's invoice writes a BILLED row and marks the estimates it replaces instead of subtracting them); readiness closed the same day (2026-09-18: prefer_capable_models called a second time from sync_provider_models after apply_llm_allocation, so the employee who can see arrives in the sync that admits the model rather than at the next seed, with _owner_chose_models no longer reading the studio's own allocation file as the Owner's hand and RoleView.preferred_capabilities beside required_capabilities; a scene's cast split into what the film states and what its prose only spells, only the stated cast written to character_ids_json, the guess kept on media.storyboard_created as guessed_cast and looked at by the picture gate as OBSERVED without ever counting or failing a film, and character_drift_qc reporting the board's own note; the estimate returning what it could not price and that one sentence reaching the hold, the Owner's question and the Accountant's letter; waiting_approvals_letter written in the minute the question is born as well as at the day's close; and frontend/src/readiness.js giving a failing INFORMATIONAL check the word INFORMATIV in neutral grey and the five new checks their Romanian names); the rehearsal on the Owner's data (2026-09-18: one whole scheduled day run on a copy of his studio through the real scheduler, worker and runbook with every paid vendor faked and every outside connection refused, audited independently with the verdict FIX_FIRST; then a failed stage blocks only the stages that depend on it (STAGE_PREREQUISITES), safe mode opens only for a P0 (SAFE_MODE_STAGES), the same-day re-attempt follows only a transient fault that cost a film, a statistics read that cannot be made is «fără date», the run counts what each stage produced, the books charge only a motion shot that was bought, narration on Flash and Turbo is priced at the documented half, the tests fake every paid path with a call-graph scan to prove the list, and the preflight reads the YouTube grants and the day's budget and names the first line that would stop the day); after the rehearsal (2026-09-19: a computed check, backend/app/factual/grounding.py, that a factual script's narration says what its cited claims and its topic say — each cited claim present by two of its terms, the topic by two of its terms, and no more than half of the narration's numbers and names from nowhere — refusing in the story review (narration_is_grounded, REVISE then REJECT at the last exchange), in _director_approves, at story_gate before the shot descriptions and the render, and in the Director's last look (gather_facts), only ever adding refusals, NOT_MEASURED never passing and the serial not measured; 50_CONTENT_GATE_MATRIX gaining its row and re-hashed; and the panel showing what the day made — the run's summary, each stage's produced count, rb-empty for a COMPLETED day that made nothing and the preflight's first_stop above the list — in frontend/src/day_outcome.js, unbuilt)",
+  "active_task": "2026-10-09 PIXEL_BACKEND_ANIMATION_ACCEPTANCE complete locally; claim released. Eight front profile portraits and role backgrounds, 48 disposable-backend state transitions, actual read-only profile/roster/phone delivery verified. Preserve 2026-10-02 readiness / 2026-10-03 Decizii external acceptance limits and separately recorded RunPod/film proof.",
+  "next_task": "Repeat owner_flows when its existing game guard permits it. Prove serial acceptance within normal retry caps; supply RunPod credentials/endpoints and run capped live generation with existing QC. Verify real voice/media and authorised platform publication. No production worker/GPU/upload started by scenario testing.",
+  "last_green_test_commit": null,
+  "verification": "docs/project/AGENT_SCENARIO_REPORT.md; CURRENT_STATUS.md; data/scenario-acceptance-2026-10-08/verification-summary.json. Quick 3262/0/3, slow 274/2/2 then affected-file recheck 123/0/0. Aggregate 3540 unique passing / 0 unresolved failures / 5 skipped; not a single all-green full run. 30 actual Cloud attempts including one 600-second timeout. Normal serial REJECTED; clarified PASS is DRAFT.",
+  "tests": {
+    "python_passed": 3540,
+    "python_skipped": 5,
+    "python_failed": 0,
+    "python_seconds": 2836.79,
+    "python_run": "2026-10-08 Python 3.14.8/SQLite 3.53.1: broad quick/slow lanes followed by 123 affected-case rechecks, including both initial failures. Aggregate unique test IDs, not a single all-green full-suite run.",
+    "python_known_red_after_audit": [],
+    "javascript_passed": 818,
+    "javascript_failed": 0,
+    "playwright_e2e_passed": 10,
+    "javascript_run": "2026-10-08 clock/weather: 818 units pass, types pass; isolated Canvas integration passes. Historical 10 owner-flow pass predates weather; current 11 owner flows are skipped by game guard.",
+    "previous": {
+      "python_passed": 1518,
+      "python_skipped": 4,
+      "python_collected": 1536,
+      "javascript_passed": 146,
+      "failed": 14,
+      "note": "JavaScript, 2026-09-23 after the polishing pass: 146 pass / 0 fail (143 before it; +3 hq_palette, one of which fails when a token in style.css drifts from the renderer's copy). JavaScript, 2026-09-23: npm test --prefix frontend 143 pass / 0 fail on the committed tree (125 before the interface work; +8 dialog_rail, +7 ledger_fold, +3 ledger arrival), with npm run check (tsc) clean and the build succeeding. The interface was also photographed at 1024, 1280, 1440, 1920 and 2560 with 0 missing fixtures and 0 console errors, and 655 contrast pairs per width measured from the running page with 0 failures. Python, 2026-09-19, the session that committed the grounding check: the whole suite (`uv run pytest -q tests -p no:cacheprovider -rfE`, 917 s) gave 1518 passed / 4 skipped / 12 failed / 2 errors. All 14 are the machine out of commit memory, not the code: MemoryError inside SQLAlchemy and FFmpeg dying mid-encode, while Windows logged low-virtual-memory conditions at 14:09, 14:14 and 14:20 (Market Signals 22.6 GB of commit, the live Unreal stream 13.6 GB). Their seven files run again at 16:45: 169 passed, so every test passes across the two runs. The 4 skips: numpy absent for test_clock_atlas and test_sky_atlas, real Ollama not configured, the opt-in rehearsal. The verify part's whole run on the tree it found: 1523 passed / 4 skipped / 2 failed, both fixtures that broke the writer's brief, corrected. javascript_passed 125: npm test --prefix frontend on the committed tree, by the verify part and the committing session (the panel part measured 124 before 9ce725a's stream test was on its tree). What stood here: Python: 1265 passed / 2 skipped is still the newest whole-suite run, the rehearsal audit's of 2026-09-18, older than every fix since; no part of 2026-09-19 made a whole-suite run. What the 2026-09-19 parts measured, each its own: the grounding part tests/test_script_grounding.py 15 (new) and tests/test_editorial.py 16 (3 new), and 352 passed / 1 skipped across seventeen factual, editorial, pipeline, runbook, media, publishing and whole-day files (the skip is the opt-in rehearsal), with ruff check and ruff format --check clean on its six files; the panel part node --test tests/day_outcome.test.js red first (0 passed, 1 failed, the module missing) then 9, npm test --prefix frontend 124 — the figure now in javascript_passed — and tsc clean; the documentation part scripts/check_docs.py passed and tests/test_documentation.py 3 passed. frontend/dist is still not rebuilt. What stood here before 2026-09-19: 1265 passed / 2 skipped is the rehearsal audit's whole-suite run of 2026-09-18 (`uv run pytest -q tests -p no:cacheprovider`, 829 s). It was taken on the tree as it stood at the rehearsal, with tests/test_rehearsal_on_a_copy.py present and skipped because it is opt-in, and BEFORE the four parts that fixed what the rehearsal found. The other skip is tests/test_ollama_adapter.py:195, by design. The previous figure, 1265 passed / 1 skipped, was the final adversarial pass's run on the committed tree. No whole-suite run was made after the fixes; the verifier's figure lands after these documents. What the parts measured, each its own: the failure-and-analytics part 202 passed / 1 skipped across ten related files (tests/test_day_survives_a_stage.py 14, new); the books part 158 across seven economy and media files; the fakes part 340 passed / 1 skipped across the getaddrinfo, research, provider and adversary files, plus 14 / 1 skipped across the new scan, the whole-day test and the rehearsal; the preflight part 30 across the two readiness files and 130 across the preflight's consumers. javascript_passed is 115, the HQ stream session's (Codex) run of all frontend tests on 2026-09-18; the preflight part ran node --test frontend/tests/readiness.test.js, 8 passed. frontend/dist is still not rebuilt. The loopback-only guard in tests/conftest.py, which since 2026-09-18 also refuses DNS and asyncio sock_connect, was active throughout: no provider was called, no run was queued on the live studio, and data/studio.db was not opened."
+    },
+    "python_collected": 3545,
+    "python_verification_lanes": {
+      "quick": {
+        "passed": 3262,
+        "failed": 0,
+        "skipped": 3,
+        "elapsed_seconds": 1088.4732334000291
+      },
+      "slow": {
+        "passed": 274,
+        "failed": 2,
+        "skipped": 2,
+        "elapsed_seconds": 1598.7194319000118
+      },
+      "final-fixes": {
+        "passed": 123,
+        "failed": 0,
+        "skipped": 0,
+        "elapsed_seconds": 149.5976621999871
+      }
+    }
+  },
+  "future_integration_dependencies": [
+    "Capped RunPod generation after credentials/endpoints and media service selection",
+    "Serial acceptance within existing autonomous retry and token caps",
+    "Real TTS/media/quality/rights verification and authorised YouTube receipt",
+    "Speech recognition for captions; current checks match storyboard text"
+  ],
+  "configured_provider_names": [
+    "Ollama Cloud authenticated and role/scenario tested 2026-10-08; eight role assignments saved (five primary models)",
+    "RunPod awaits credentials/endpoints and image service selection",
+    "Stored voice/motion/YouTube configuration present; no fresh live media/upload acceptance"
+  ],
+  "migration_version": "0058_shorts_max_180",
+  "autonomy_mode": "AUTONOMOUS_CEO",
+  "feature_flags": {
+    "public_publish_enabled": false,
+    "external_payments_enabled": false,
+    "autonomous_firing_enabled": false,
+    "provider_auto_switch_enabled": false,
+    "world_generation_enabled": false
+  },
+  "migration_count": 57,
+  "feature_flags_note": "public_publish_enabled is per channel since migration 0037 (channel_record.public_publish_enabled, seeded false on both slots); the studio-wide flag here is the seeded default. Since migration 0043 autonomy_mode above is a real column moved only by change_autonomy_mode, recorded AUTONOMOUS_CEO because that is what the code does; the four Literal[\"False\"] switches below are still constants on PolicyView, and three of the acts they name now also carry a T3 tier that may_act reasons about independently Since 2026-10-02 a new install starts MANUAL (services.NEW_STUDIO_AUTONOMY_MODE); the Owner's own studio stays AUTONOMOUS_CEO.",
+  "scenario_evidence": "data/scenario-acceptance-2026-10-08",
+  "verification_before_scenarios": {
+    "phase": "10 (full automation hardening; production-readiness audit of 2026-10-01/02 implemented on fakes; the first capped paid film under the staircase not yet made)",
+    "tests": {
+      "python_passed": 3257,
+      "python_skipped": 3,
+      "python_failed": 0,
+      "python_seconds": 988.35,
+      "python_run": "2026-10-08 final quick lane (-m not slow), 3257 passed / 3 skipped / 278 deselected; slow lane still running separately",
+      "python_known_red_after_audit": [],
+      "javascript_passed": 812,
+      "javascript_failed": 0,
+      "playwright_e2e_passed": 10,
+      "javascript_run": "2026-10-08, scenario verification: 812 tests and 10 real browser flows pass; TypeScript and scratch build pass",
+      "previous": {
+        "python_passed": 1518,
+        "python_skipped": 4,
+        "python_collected": 1536,
+        "javascript_passed": 146,
+        "failed": 14,
+        "note": "JavaScript, 2026-09-23 after the polishing pass: 146 pass / 0 fail (143 before it; +3 hq_palette, one of which fails when a token in style.css drifts from the renderer's copy). JavaScript, 2026-09-23: npm test --prefix frontend 143 pass / 0 fail on the committed tree (125 before the interface work; +8 dialog_rail, +7 ledger_fold, +3 ledger arrival), with npm run check (tsc) clean and the build succeeding. The interface was also photographed at 1024, 1280, 1440, 1920 and 2560 with 0 missing fixtures and 0 console errors, and 655 contrast pairs per width measured from the running page with 0 failures. Python, 2026-09-19, the session that committed the grounding check: the whole suite (`uv run pytest -q tests -p no:cacheprovider -rfE`, 917 s) gave 1518 passed / 4 skipped / 12 failed / 2 errors. All 14 are the machine out of commit memory, not the code: MemoryError inside SQLAlchemy and FFmpeg dying mid-encode, while Windows logged low-virtual-memory conditions at 14:09, 14:14 and 14:20 (Market Signals 22.6 GB of commit, the live Unreal stream 13.6 GB). Their seven files run again at 16:45: 169 passed, so every test passes across the two runs. The 4 skips: numpy absent for test_clock_atlas and test_sky_atlas, real Ollama not configured, the opt-in rehearsal. The verify part's whole run on the tree it found: 1523 passed / 4 skipped / 2 failed, both fixtures that broke the writer's brief, corrected. javascript_passed 125: npm test --prefix frontend on the committed tree, by the verify part and the committing session (the panel part measured 124 before 9ce725a's stream test was on its tree). What stood here: Python: 1265 passed / 2 skipped is still the newest whole-suite run, the rehearsal audit's of 2026-09-18, older than every fix since; no part of 2026-09-19 made a whole-suite run. What the 2026-09-19 parts measured, each its own: the grounding part tests/test_script_grounding.py 15 (new) and tests/test_editorial.py 16 (3 new), and 352 passed / 1 skipped across seventeen factual, editorial, pipeline, runbook, media, publishing and whole-day files (the skip is the opt-in rehearsal), with ruff check and ruff format --check clean on its six files; the panel part node --test tests/day_outcome.test.js red first (0 passed, 1 failed, the module missing) then 9, npm test --prefix frontend 124 — the figure now in javascript_passed — and tsc clean; the documentation part scripts/check_docs.py passed and tests/test_documentation.py 3 passed. frontend/dist is still not rebuilt. What stood here before 2026-09-19: 1265 passed / 2 skipped is the rehearsal audit's whole-suite run of 2026-09-18 (`uv run pytest -q tests -p no:cacheprovider`, 829 s). It was taken on the tree as it stood at the rehearsal, with tests/test_rehearsal_on_a_copy.py present and skipped because it is opt-in, and BEFORE the four parts that fixed what the rehearsal found. The other skip is tests/test_ollama_adapter.py:195, by design. The previous figure, 1265 passed / 1 skipped, was the final adversarial pass's run on the committed tree. No whole-suite run was made after the fixes; the verifier's figure lands after these documents. What the parts measured, each its own: the failure-and-analytics part 202 passed / 1 skipped across ten related files (tests/test_day_survives_a_stage.py 14, new); the books part 158 across seven economy and media files; the fakes part 340 passed / 1 skipped across the getaddrinfo, research, provider and adversary files, plus 14 / 1 skipped across the new scan, the whole-day test and the rehearsal; the preflight part 30 across the two readiness files and 130 across the preflight's consumers. javascript_passed is 115, the HQ stream session's (Codex) run of all frontend tests on 2026-09-18; the preflight part ran node --test frontend/tests/readiness.test.js, 8 passed. frontend/dist is still not rebuilt. The loopback-only guard in tests/conftest.py, which since 2026-09-18 also refuses DNS and asyncio sock_connect, was active throughout: no provider was called, no run was queued on the live studio, and data/studio.db was not opened."
+      }
+    },
+    "next_task": "The Owner's steps, in the order of CURRENT_STATUS «State on 2026-10-02»: (1) restart the studio when it suits him (start.py makes a premigrare backup, migrates 0052 to 0053_channel_upload_settings and rebuilds the page), then uv sync --locked while nothing runs from .venv, and scripts/backup.py once; (2) reconnect Ollama Cloud and both YouTube channels (invalid_grant since 2026-09-26); (3) a daily budget (required for MODE or OVER_USD in PRODUCTION) and STUDIO_FILM_BUDGET_USD above a real film's caps; (4) commercial-use answers on Runway and ElevenLabs, a licensed music library, STUDIO_DISPLAY_NAME; (5) one whole-suite run with scripts/check_all.py; (6) the first capped paid film under EVERY_PAID_STEP, the real test; (7) his decisions: a git remote for CI, narration_purchase, LOCAL_MOVE, an always-on host.",
+    "verification": "docs/project/CURRENT_STATUS.md «The Owner's decisions window (2026-10-03)»; docs/project/16_DECISION_LOG.md, the same section; tests/test_docs_owner_decisions.py. Before: docs/project/CURRENT_STATUS.md, «State on 2026-10-02» and «The production-readiness audit (2026-10-01 → 2026-10-02)»; docs/project/16_DECISION_LOG.md, «The production-readiness audit»; scripts/check_docs.py passes; tests/test_docs_truth.py. Earlier: docs/project/CURRENT_STATUS.md, sections 'The rehearsal on the Owner's data (2026-09-18)' with its subsection 'After the rehearsal — 2026-09-19: the narration says what its claims say, and the panel says what the day made', 'Readiness for the first day (2026-09-18)', 'Quality and governance (Phase D/G, 2026-09-18)', 'Money and sources (2026-09-17/18)', 'Delivery and the serial (2026-09-17/18)' and 'The clock, and a day that asks again (2026-09-17)'"
+  },
+  "historical_blockers_before_scenarios": [
+    "No real film has passed QC; the staircase, clip QC, hero acceptance, FILM_CONTINUE, the music mix, the grade and publishing reconciliation are proven on fakes only",
+    "No whole-suite run since the audit (2026-10-01 baseline 2,550 passed, 4 failed, 6 skipped in 1,717 s); one run with scripts/check_all.py is owed",
+    "tests/test_serial_voices.py two-speaker test is red on caption card length since the phrase-aware captions",
+    "Hosted CI has never run: the repository has no git remote (Owner's decision)",
+    "The shared .venv has cryptography 48.0.1 and urllib3 2.7.0 until uv sync --locked",
+    "The Owner's database is at 0052; 0053_channel_upload_settings is applied at his next start",
+    "Ollama Cloud: every model call of the 2026-10-02 catch-up day failed (revoked key or ended plan); both YouTube connections invalid_grant since 2026-09-26",
+    "At start-up, daily_main, trends_daily and model_review_daily firing together made edit_and_qc fail four times on 'database busy' (2026-10-02, not fixed)",
+    "The default film ceiling (15.24 USD) is below a four-scene film of 10 s scenes (motion cap 27.20 USD): under MODE such a film waits OVER_FILM_BUDGET until the Owner sets STUDIO_FILM_BUDGET_USD",
+    "Every new paid film is NEEDS_REVIEW for rights (private uploads only) until the Owner records commercial use on Runway and ElevenLabs; no music bed until he adds a licensed library",
+    "Serial episodes are not walked or retired; a SpentStageError at the media stage opens safe mode; no sweep books credits on takes left unbooked by a hard kill",
+    "Owner decisions pending: narration_purchase, LOCAL_MOVE, an always-on host",
+    "(2026-09-19 list, not re-checked) Whether the Owner's two YouTube refresh tokens still work is unknown (rehearsal, 2026-09-18): Nexus Curiosity and Inside The Nexus were connected on 2026-09-11, Google granted youtube.readonly and youtube.upload and not yt-analytics.readonly, and a Google OAuth app in Testing mode kills a refresh token seven days after the grant. Only a free Verify or Reconnect in Settings proves them. Until the night of 2026-09-18 no reconnect could grant statistics access, because SCOPES in backend/app/youtube/services.py asked only for youtube.readonly and youtube.upload; another part added yt-analytics.readonly while these documents were being written (tests/test_youtube_connections.py::test_the_consent_asks_for_the_statistics_the_day_reads, 1 passed in the documentation part's run), so each connection must be reconnected once after his studio runs that code, and until then statistics stay «fără date»",
+    "(2026-09-19 list, not re-checked) The uploader (backend/app/providers/youtube.py) writes no youtube.token_refresh_failed event when Google refuses its refresh, so an upload-side refusal reaches youtube_upload_access only after the statistics read meets the same dead token, and the first day with a dead token films and pays before its upload fails",
+    "(2026-09-19 list, not re-checked) The film's hold still takes the dearest active ElevenLabs price (estimate_film_cost_micros), so it holds Flash narration at about twice what the books now charge",
+    "(2026-09-19 list, not re-checked) Corrected in part 2026-09-19: frontend/src now shows the run's summary, each stage's produced count, rb-empty for a COMPLETED day that made nothing and the preflight's first_stop (frontend/src/day_outcome.js, 9 node tests), never reading a missing count as zero; frontend/dist is not rebuilt, a PARTIAL run's stopped_at_stage still reads «stopped at», and the stages.py docstring is unchanged. What stood here: The panel does not show the run's summary, stages_productive, each stage's produced count or the preflight's first_stop (frontend/src/main.js), and backend/app/runbook/stages.py's module docstring still says a raised fault stops the day",
+    "(2026-09-19 list, not re-checked) The paid-path scan (tests/test_no_paid_path_escapes.py) covers the daily day only: the watchdog, director_loop, model_review, the catalogue refresh, the reference-set route and the API routes are held by the network guard alone, and the scan cannot see getattr by string, importlib or code built at run time",
+    "(2026-09-19 list, not re-checked) Corrected in part 2026-09-19: a script whose narration does not say its cited claims and its topic is now refused by a computed check (backend/app/factual/grounding.py) in the story review, the Director's approval, story_gate and the Director's last look, before any money for the first three; the rehearsal's telescope script is refused on all three counts. Still open: the serial's upload carrying the factual film's metadata, and whether a real writer repairs a refused script within the exchange budget. What stood here: The rehearsal's films were written, reviewed and judged by a stand-in model. A JWST script on a Nepal topic passed every reviewer, the serial was uploaded with the factual film's title, and the picture gate read NOT_APPLICABLE while QC scored 1.0. Whether his real models catch those, answer the idea, Director and Accountant schemas, and whether Runway delivers usable clips at the estimated credits, is measured only by a real day. The free re-run of the rehearsal after the fixes has not been made",
+    "(2026-09-19 list, not re-checked) The narration check (backend/app/factual/grounding.py, 2026-09-19) measures words, numbers and names, not meaning: a narration that repeats two of a claim's terms while contradicting it passes, and that judgement stays the Director's, who now receives the measurement. It was calibrated on the 31 real scripts of 2026-09-12 and tested across languages only as a Romanian narration of English claims. 4 of the 29 scripts waiting for the Owner fail it (step 12 of «Ce are Owner-ul de făcut»). Its module docstring now says two letters, as SUFFIX_SLACK does (corrected 2026-09-19 by the verify part). Also passing, measured by the verify part: negation, one claim said with the others carried by generic and topic words, keywords in unrelated sentences; stricter rules refuse the Owner's approved LHC and ATLAS films. «opt» and «nouă» still read as 8 and 9",
+    "(2026-09-19 list, not re-checked) No vision model has ever answered the picture check, here or anywhere: every test fakes the provider at its transport by the Owner's rule of 2026-09-17, and no seeded model declares vision — the seed creates the Capability row and attaches it to no proposed model, because nothing in the seed contacts a vendor. Since 2026-09-18 the Video Editor's role PREFERS vision and prefer_capable_models moves her onto a seeing model if the Owner has admitted one — corrected at the same day's closure: in the very sync that admits it, not at the next seed, because the second call site is at the end of sync_provider_models after apply_llm_allocation and the guard no longer reads the studio's own allocation file as his hand. Until he admits one, picture_qc and character_drift_qc report NOT_APPLICABLE with their reason on the live studio, and the preflight's vision_capability check says so before the day starts",
+    "(2026-09-19 list, not re-checked) The Character Bible's five reference slots are empty on every studio that has ever run: POST /media/characters/{id}/reference-set fills them with real files but spends image credits, so it is the Owner's act and no stage of the day calls it; until he runs it, a character whose look is locked and has no readable reference refuses its film rather than having a face invented",
+    "(2026-09-19 list, not re-checked) No real render has gone through the second vendor, through OpenAI's /v1/images/edits multipart body or through Runway's referenceImages field: a studio whose Owner has approved no alternative has a chain of one, which is every studio today, REFERENCE_IMAGE_VERIFIED is False on both adapters until an Owner-approved run has drawn a scene that way, and the size of an inline reference is not checked because Runway's published data-URI limit was not read — a sheet too large will come back as a vendor refusal on the first live run, not as a silent truncation",
+    "(2026-09-19 list, not re-checked) No approval has ever been answered by a real Owner through the real route against a real database: since 2026-09-18 GET /api/v1/owner/approvals lists what waits and POST /api/v1/owner/approvals/decision answers it once, the request is keyed by the action and the film (subject, migration 0044), the yes is consumed before the act it authorises and owner_approval_request is in maintenance.HISTORY_TABLES — but every measurement is against the test engine with every provider faked, and 0044 has been walked from an empty database by every test in the run and never against data/studio.db",
+    "(2026-09-19 list, not re-checked) Corrected 2026-09-18: the Accountant now writes the Owner one letter per business date naming the approval requests still standing, with each question's own cost label and the hour the oldest expires (waiting_approvals_letter), and writes nothing when nothing is waiting. Still open: it leaves only at the day's close, no notification is written, and an approval cannot be withdrawn once given — the stop is the only way to hold a film back after a yes",
+    "(2026-09-19 list, not re-checked) Corrected 2026-09-18: a factual scene now records its cast, read from the scriptwriter's list and the requested picture's names and never from the narration, and a film that shows nobody says so once in media.storyboard_created (cast_note). Corrected again at the same day's closure: the reading itself was the fault — a bare given name in the prose cast a character into the column the assembler, the factory's referenceImages and the locked-look refusal all read, so the cast is now what the film STATES (the writer's characters list, or a whole canonical name in the requested picture) while a guessed given name stays on the creation event as guessed_cast, is shown to the picture gate as OBSERVED and can never count for or against a film; and picture_qc reads the board's note, so character_drift_qc reports the board's own words instead of one sentence for every reason there could be. Still open: the guessed cast is not returned by get_storyboard, so the Owner cannot see on the page which names the studio read and refused to cast on; and the Director is still not told what quality control saw, because gather_facts filters the QC report to keys starting with 'measured' — whoever fixes that should pass characters_observed through as an observation and never as evidence",
+    "(2026-09-19 list, not re-checked) 51's department-scoped autonomy is not implemented: owner_policy.autonomy_mode is one global mode, and a per-department override needs the Owner's department list first. 51's acceptance criteria and burn-in are not checked either and cannot be from this database, so change_autonomy_mode names them in its refusal instead",
+    "(2026-09-19 list, not re-checked) The governance panel is written and not built: frontend/src/governance.js holds the judgements (14 tests) and main.js renders the autonomy mode, the approvals list and the Character Bible's reference-set chips, but frontend/dist was deliberately not rebuilt, so the Owner sees none of it until npm run build --prefix frontend; the screens themselves have no test because main.js touches the document at import, the refusal card sends no note although the command accepts one",
+    "(2026-09-19 list, not re-checked) The daily job is seeded dormant and stays so until the Owner's recorded activation (workflow.job_activated); no daily run has been queued by anyone since Phase A, by the Owner's rule that video generation costs money and happens only when everything is proven",
+    "(2026-09-19 list, not re-checked) No real day has run with both channels bound: the per-channel publish policy, the serial's routing to OFFICE_SERIAL, publishAt and videos.update were exercised only against faked providers and transports",
+    "(2026-09-19 list, not re-checked) director_may_approve_episodes defaults to false on every channel, so until the Owner grants it (POST /api/v1/publishing/channels/{id}/publish-policy) a Director's PASS leaves the episode DRAFT for the Owner and the serial produces no storyboard on its own",
+    "(2026-09-19 list, not re-checked) Today's log is still closed at the end of the run, so a date whose run completes is frozen at the run's hour; a full-day log for every date needs that close moved",
+    "(2026-09-19 list, not re-checked) No frontend screen sets the publish policy or the Director's leave, and the scheduler panel does not yet read run_at_local; the API carries both",
+    "(2026-09-19 list, not re-checked) The seeded Character Bibles carry no voice binding and the assembler synthesises one voice per scene, so every serial scene is the narrator until the Owner binds voices",
+    "(2026-09-19 list, not re-checked) Corrected 2026-09-18 by the rehearsal on a copy of his data: the live database is at 0045_reconciliation, migrated by the Owner's own start at 22:42 local (start.py runs scripts/bootstrap.py first); on a copy of his backup of 2026-09-12 the chain 0036-0045 ran with no warning and no pre-existing cell changed, and bootstrap run again on the live copy changed no row. What stood here: The live database is still at 0038: migrations 0039 (pricing and reservations), 0040 (research sources), 0043 (autonomy mode), 0044 (the subject a request is about and the Owner's answer) and 0045 (a vendor's invoice against the estimates it covers) chain in that order — 0041 and 0042 were reserved in Phase D/G and 0046 was reserved for the media part and needed by nothing, so 0046 is free — and main.py pins 0045_reconciliation, so scripts/bootstrap.py must be run by the Owner before the server starts on this version",
+    "(2026-09-19 list, not re-checked) Corrected in part 2026-09-18 by the rehearsal: a DAILY budget of 15 USD is active on his data; no price is typed, six Ollama Cloud models are unpriced, and the voice is priced only by the DOCUMENTED rows (eleven_flash_* and eleven_turbo_* at 0.11 USD per 1k characters are seeded at his next start). What stood here: No budget and no price are set on the live studio: budgets are the Owner's alone (PUT /economy/budget) and a price enters the books only through PUT /economy/prices, so until he types them a reservation holds a plan priced from settings and the public ElevenLabs figure, and nothing refuses a day that has no budget",
+    "(2026-09-19 list, not re-checked) The Owner has typed no price, so every agent_run still records cost_vr NULL and the Accountant reports unpriced_agent_runs: the lookups are wired into all four construction sites and bootstrap seeds the one DOCUMENTED ElevenLabs figure, which makes a cost computable, not known. Ollama Cloud is deliberately never seeded",
+    "(2026-09-19 list, not re-checked) A vendor's invoice can be reconciled since 2026-09-18 (migration 0045_reconciliation, PUT /economy/reconciliations, Owner-only and versioned with a required expected_version) and no real invoice has ever been reconciled: every figure in the books is still ESTIMATED or DOCUMENTED until he types one. The Accountancy office has no screen for it, the cost list does not show reconciled_at or the two new labels, an employee's token cost never passes through provider_cost_record so no invoice can replace it, and an invoice matches on a correlation only by render_job_id",
+    "(2026-09-19 list, not re-checked) No search engine is connected, so the studio can only find pages through the search addresses its authorised sites carry; the routes, the reason codes and the BLOCKED_BUDGET label exist in source, but frontend/dist is not rebuilt, so the served page still carries the old bundle",
+    "(2026-09-19 list, not re-checked) The script-only heuristic and the OpenSearch discovery are proven on fixture HTML modelled on the hosts that failed, not on live pages (no test may open a socket); the first weekly retest on the live database is the measurement",
+    "(2026-09-19 list, not re-checked) Corrected at the closure of 2026-09-18: frontend/src/readiness.js (new) gives a failing INFORMATIONAL check the word INFORMATIV and a neutral class instead of a red 'DEGRADES', prints an unknown severity as it came rather than rounding it, and labels the five new checks and autonomy_mode in Romanian; main.js imports it and style.css carries .rb-informational and .approval-caveat. Still open: RUNBOOK_CHECK_LABELS has no entry for youtube_channel_binding, which run_preflight also emits and which showed by its code name before this phase and still does; and frontend/dist is not rebuilt, so nobody has yet looked at an INFORMATIV card or an amber caveat in a browser — the panel was proved by node --test and npm run check only Corrected 2026-09-18, measured in the tree: RUNBOOK_CHECK_LABELS does label youtube_channel_binding («Sloturi de canal legate de YouTube») and has since the module was created, and the three checks added after the rehearsal have labels too.",
+    "(2026-09-19 list, not re-checked) The Owner's manual quality control can now spend tokens: POST /media/qc/{identifier} makes the same single vision call per film the day makes and cuts frames with ffmpeg inside the request, metered only by the day's token ceiling and cached nowhere, because caching a measurement is how a gate starts certifying what it did not measure this time",
+    "(2026-09-19 list, not re-checked) Corrected in part 2026-09-18 by the rehearsal: on his data a DAILY budget of 15 USD is active; the unpriced models stand. What stood here: No budget is active and no model the employees run on is priced on both token sides, which the preflight now reports as spending_budget and model_prices: a reservation still holds a film's money against no limit, and every agent_run records cost_vr NULL. model_prices covers the LLM token sides only — not the voice price (per_1k_characters) nor the motion and image prices (per_second, per_generation), and not the secondary or tertiary model slots — because a check that half-covered them would report a pass certifying less than it looks like",
+    "(2026-09-19 list, not re-checked) The Video Editor's preference for a seeing model reaches a running studio only at the next seed: prefer_capable_models is idempotent and callable from anywhere, but the second call — at the end of sync_provider_models and AFTER apply_llm_allocation, in that order, because the allocation rewrites the slots — is not wired, and the preference is invisible in the interface because list_roles returns REQUIRED capabilities only",
+    "(2026-09-19 list, not re-checked) Corrected at the closure of 2026-09-18: waiting_approvals_letter is called from _media the moment the refusal is recorded (guarded by refusal.get('approval_id'), so a MANUAL refusal writes nothing) as well as by reconcile_day, and _letter_once_a_day's business-date idempotency keeps the day to one letter whichever end of it notices first — so the Owner has the whole twenty-four hours rather than the remainder after the run's close. The figure in it now carries what the estimate could not price (unpriced_caveat), in the same words on the approvals card and in the hold's note. Still open: the letter is called from _media without a try/except, matching the unguarded budget_refusal_letter call below it, so a raise inside it would fail the media stage instead of returning SKIPPED; the caveat lives in the request's evidence text rather than a column; and estimate_film_cost_micros still does not price the stills at all, so a film's image spend is outside the figure rather than counted as zero inside it",
+    "(2026-09-19 list, not re-checked) The interface was finished and measured only against the page's own canvas renderer (2026-09-23): nothing in it has been photographed over the live Unreal Pixel Streaming frame. The Live window's palette was corrected the same day. Also open: 447 of 574 control borders measure under 3:1 (the ghost-control language, a whole-surface decision), the «Studio Office» heading now stands in an empty band, and the sign-in card leaves no room for the footer at 1280x800"
+  ],
+  "historical_integration_dependencies_before_scenarios": [
+    "A real day with both YouTube channels bound (the Owner watches the first)",
+    "A licensed caption face instead of Arial by name",
+    "Speech recognition for caption coverage (today matched against the storyboard text)"
+  ],
+  "historical_provider_names_before_scenarios": [
+    "Ollama Cloud (LLM), ElevenLabs (voice), Runway (picture), YouTube (two OAuth connections) — verified by the Owner on the live studio; not present on a clean install"
+  ],
+  "known_blockers": [
+    "Normal autonomous serial: exact two-draft Kimi stage REJECTED; Nemotron alternative timed out at 600 seconds. Manually clarified PASS does not certify normal-retry acceptance.",
+    "RunPod live generation awaits credentials/endpoints. Actual production image_provider is unselected; paid image/video and QC remain unverified live.",
+    "Actual production preflight DEGRADED: STUDIO_AGENT_DAILY_TOKEN_BUDGET is unset. Existing USD budget preserved; no invented limit or permission change.",
+    "Real voice/media/platform acceptance pending: stored connection status is not a fresh authenticated vendor or upload test.",
+    "Eight film Character Bible image references absent (informational); UI sprites complete.",
+    "Keyless two-day rehearsal proves preflight refusal only, not autonomous films/resume.",
+    "Hosted CI has not run; no Git remote configured. Earlier unrevalidated observations are preserved in historical_blockers_before_scenarios."
+  ],
+  "production_preflight": {
+    "status": "DEGRADED",
+    "blocking_failures": [],
+    "degrading_failures": [
+      "image_provider",
+      "agent_token_ceiling"
+    ],
+    "informational_missing": [
+      "character_references"
+    ],
+    "evidence": "data/scenario-acceptance-2026-10-08/production-preflight.json"
+  },
+  "weather_verification": {
+    "backend_scoped_passed": 168,
+    "frontend_passed": 818,
+    "canvas_browser_passed": 1,
+    "owner_browser_passed": 0,
+    "owner_browser_failed": 0,
+    "owner_browser_skipped": 11,
+    "owner_browser_skip_reason": "existing Owner game guard",
+    "type_check": "passed",
+    "backend_mypy_source_files": 252,
+    "production_frontend_build": "passed; previous served UI backed up",
+    "live_observation": {
+      "checked_at_utc": "2026-10-08T16:01:02.613190+00:00",
+      "city": "București",
+      "timezone": "Europe/Bucharest",
+      "observation": {
+        "available": true,
+        "condition": "clear",
+        "intensity": 0.0,
+        "weather_code": 0,
+        "temperature_c": 21.8,
+        "wind_kph": 4.2,
+        "cloud_cover": 0.0,
+        "precipitation_mm": 0.0,
+        "is_day": false,
+        "observed_at": "2026-10-08T19:00",
+        "observed_at_utc": "2026-10-08T16:00:00+00:00",
+        "apparent_temperature_c": 20.0,
+        "rain_mm": 0.0,
+        "showers_mm": 0.0,
+        "snowfall_cm": 0.0,
+        "snow_depth_m": 0.0,
+        "wind_from_deg": 160.0,
+        "wind_gust_kph": 9.7,
+        "visibility_m": 46720.0,
+        "cloud_cover_low": 0.0,
+        "precip_last_3h_mm": 0.0,
+        "source": "api.open-meteo.com"
+      }
+    },
+    "evidence": "data/pixel-weather-2026-10-08",
+    "historical_suite_counts": "tests retains the previous scenario audit; do not sum scoped reruns"
+  },
+  "launcher_verification": {
+    "date": "2026-10-08",
+    "root_entry": "python start.py",
+    "windows_entry": "start.cmd",
+    "canonical": "uv run --locked python scripts/start.py",
+    "scoped_tests_passed": 12,
+    "help_probe": "passed",
+    "production_started": false
+  },
+  "runtime_recovery_verification": {
+    "date": "2026-10-08",
+    "uv_version": "0.12.23",
+    "python_version": "3.14.8",
+    "sqlite_version": "3.53.1",
+    "scoped_launcher_tests_passed": 12,
+    "missing_base_red_exit": 103,
+    "actual_fixture_recovery": "passed",
+    "missing_pin_and_unavailable_runtime": "stopped exit 1",
+    "full_server_start": "passed on isolated copy",
+    "http_200": [
+      "/health/live",
+      "/",
+      "bundle assets",
+      "/api/v1/snapshot",
+      "/api/v1/agents/"
+    ],
+    "agents_returned": 8,
+    "ready_503_reason": "BACKUP_MISSING in isolated test folder",
+    "application_shutdown_complete": true,
+    "listener_closed": true,
+    "production_database_unchanged": true,
+    "production_worker_started": false,
+    "evidence": "data/python-runtime-repair-2026-10-08",
+    "launcher_and_documentation_tests_passed": 21,
+    "empty_pin_inherited_version_rejection": "passed"
+  },
+  "backup_recovery_verification": {
+    "date": "2026-10-08",
+    "backup_file": "studio-20261008T171104Z.db",
+    "manifest_and_integrity": "verified",
+    "restoration": "passed on isolated target",
+    "active_agents_restored": 8,
+    "copied_keys_usable": true,
+    "automatic_backup_task": "COMPLETED attempt 1",
+    "live_readiness": "200 HEALTHY problems empty",
+    "backup_tests_passed": 11,
+    "production_policy_changed": false,
+    "evidence": "data/backup-alert-2026-10-08"
+  },
+  "pixel_navigation_night_verification": {
+    "report": "docs/project/PIXEL_NAVIGATION_NIGHT.md",
+    "evidence": "data/pixel-navigation-night-2026-10-08/verification.json",
+    "frontend_unit_passed": 826,
+    "frontend_typecheck": "PASS",
+    "scoped_backend_docs_passed": 53,
+    "bounded_browser_passed": 2,
+    "production_build": "PASS",
+    "build_source_hash_matches": true,
+    "art_unchanged": true,
+    "new_paid_calls": 0
+  },
+  "pixel_studio_life_verification": {
+    "report": "docs/project/PIXEL_STUDIO_LIFE.md",
+    "evidence": "data/pixel-life-2026-10-08/verification.json",
+    "frontend_unit_passed": 846,
+    "frontend_typecheck": "PASS",
+    "bounded_browser_passed": 3,
+    "scoped_backend_docs_passed": 53,
+    "production_build": "PASS",
+    "build_source_hash_matches": true,
+    "art_unchanged": true,
+    "actual_staff_animated": 8,
+    "actual_staff_runtime": "IDLE",
+    "video_seconds": 7.886,
+    "new_paid_calls": 0,
+    "full_owner_workflows": "not run; prior guard limitation retained"
+  },
+  "pixel_actor_refinement_verification": {
+    "verified_at_utc": "2026-10-09T04:57:29.577373+00:00",
+    "frontend_unit_passed": 859,
+    "frontend_typecheck": "PASS",
+    "bounded_browser_passed": 3,
+    "scoped_backend_docs_passed": 53,
+    "background_unchanged": true,
+    "actual_staff_visible_motion": 8,
+    "actual_states": [
+      "IDLE"
+    ],
+    "actual_readout": "07:54 · Înnorat 10°C",
+    "built_in_image_generations": 5,
+    "production_server_restarted": false,
+    "full_owner_workflows": "not run; historical guard and external acceptance limitations remain",
+    "report": "docs/project/PIXEL_ACTOR_REFINEMENT.md",
+    "evidence": "data/pixel-actors-2026-10-08/verification.json",
+    "video_seconds": 15.916016,
+    "production_build_source_matches": true
+  },
+  "pixel_seat_alignment_verification": {
+    "date": "2026-10-09T05:30:47.403025+00:00",
+    "fixture_poses_visually_checked": 48,
+    "actual_staff_seated_animated": 8,
+    "frontend_units": 859,
+    "types": "PASS",
+    "bounded_browser": 3,
+    "scoped_backend_docs": 53,
+    "actual_readout": "08:30 · Înnorat 11°C",
+    "video_seconds": 16,
+    "current_source_build": "PASS",
+    "preceding_backend_config_regression": "PASS",
+    "production_server_restarted": false,
+    "evidence": "data/pixel-actors-2026-10-08/verification.json"
+  },
+  "pixel_motion_resume_verification": {
+    "background_sha256": "957e67d70e01438056c5e2f073a8b39d8152f2488ea28217df2368384b75dbe1",
+    "verified_at_utc": "2026-10-09T05:48:33.991513+00:00",
+    "windows_client_area_animations": false,
+    "frontend_units": 861,
+    "frontend_types": "PASS",
+    "bounded_browser_tests": 4,
+    "scoped_backend_docs": 53,
+    "actual_pedestrians_moving": 4,
+    "actual_staff_visible_motion": 8,
+    "actual_bicycle_dog_cats_motion": "PASS",
+    "reduced_motion_emulated_in_real_ui": true,
+    "actual_readout": "08:45 · Înnorat 12°C",
+    "pause_reload_resume": "PASS",
+    "mobile": "PASS, 390px control visible",
+    "video_seconds": 15.916016,
+    "production_server_restarted": false,
+    "production_policy_database_commands": 0,
+    "new_paid_calls": 0,
+    "evidence": "data/pixel-motion-2026-10-09/verification.json",
+    "report": "docs/project/PIXEL_MOTION_RESUME.md"
+  },
+  "pixel_street_refinement_verification": {
+    "report": "docs/project/PIXEL_STREET_REFINEMENT.md",
+    "evidence": "output/playwright/street-refinement-2026-10-09/",
+    "verified_at_utc": "2026-10-09T07:18:59.340Z",
+    "frontend_units": 879,
+    "frontend_types": "PASS",
+    "bounded_browser_tests": 6,
+    "scoped_backend_docs_secret_tests": 66,
+    "simulated_street_seconds": 80,
+    "simulated_street_frames": 641,
+    "simulated_seating_seconds": 60,
+    "simulated_seating_frames": 481,
+    "character_scale": 0.9,
+    "actual_staff_visible_motion": 8,
+    "actual_staff_runtime": "IDLE",
+    "actual_pedestrians_moving": 4,
+    "actual_vehicle_variants": 4,
+    "real_time_ratio": 1.000724962292151,
+    "actual_cat_travel_spans": [
+      274.54175,
+      320
+    ],
+    "video_seconds": 31.958008,
+    "pause_reload_resume": "PASS",
+    "page_errors": 0,
+    "production_build_current": true,
+    "approved_background_unchanged": true,
+    "built_in_artwork_generations": 2,
+    "production_server_restarted": false,
+    "production_policy_database_commands": 0,
+    "production_gpu_media_upload_jobs": 0,
+    "external_workflows": "separate; historical acceptance limits retained",
+    "final_build_bundles": [
+      "index-CtVh_ILQ.js",
+      "index-COi7u3qU.css"
+    ],
+    "final_verified_at_utc": "2026-10-09T07:31:35.753759+00:00"
+  },
+  "pixel_depth_physics_verification": {
+    "report": "docs/project/PIXEL_DEPTH_PHYSICS.md",
+    "evidence": "output/playwright/depth-physics-2026-10-09/",
+    "verified_at_utc": "2026-10-09T09:49:44.236271+00:00",
+    "frontend_units": 883,
+    "frontend_types": "PASS",
+    "bounded_playwright_tests": 7,
+    "scoped_backend_docs_secret_tests": 66,
+    "docs_inventory": "PASS",
+    "repository_scan": "PASS: 1066 files / 68 reviewed findings; baseline unchanged",
+    "simulated_depth_seconds": 64,
+    "simulated_depth_frames": 257,
+    "three_gardens_day_night": "PASS",
+    "incorrect_crossing_pixels": 0,
+    "foreground_native_pixels": 55498,
+    "weather_exterior_clips": [
+      {
+        "condition": "rain",
+        "interiorProtected": true,
+        "outsideChanged": true
+      },
+      {
+        "condition": "snow",
+        "interiorProtected": true,
+        "outsideChanged": true
+      },
+      {
+        "condition": "fog",
+        "interiorProtected": true,
+        "outsideChanged": true
+      }
+    ],
+    "pointer_frontmost": true,
+    "indoor_floors": [
+      229,
+      375,
+      525
+    ],
+    "existing_seats_life_outdoors_unchanged": true,
+    "approved_background_unchanged": true,
+    "actual_dom_dialogs": 9,
+    "menu_click_widths": [
+      1051,
+      1280,
+      1366,
+      1700,
+      1720,
+      1920,
+      2560
+    ],
+    "actual_staff_visible_motion": 8,
+    "actual_staff_runtime": [
+      "IDLE"
+    ],
+    "actual_readout": "11:11 · Parțial înnorat 23°C",
+    "actual_frames_sampled": 110,
+    "real_time_ratio": 1.0001444833892945,
+    "measured_pedestrian_speeds": [
+      36.13425230309709,
+      -36.13425230309709,
+      36.13425230309709,
+      -36.1342523030971
+    ],
+    "actual_vehicle_variants": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "actual_cat_travel_spans": [
+      274.2617500000782,
+      320
+    ],
+    "video_seconds": 31.916667,
+    "pause_reload_resume": "PASS",
+    "page_errors": 0,
+    "refused_requests": 0,
+    "production_build_current": true,
+    "final_bundles": [
+      "/assets/index-BTU66zFA.js",
+      "/assets/index-D53Pq9o2.css"
+    ],
+    "health_statuses": {
+      "/health/live": 200,
+      "/health/ready": 200
+    },
+    "built_in_artwork_generations": 0,
+    "production_server_restarted": false,
+    "production_policy_database_commands": 0,
+    "production_gpu_media_upload_jobs": 0,
+    "external_workflows": "separate; historical acceptance limits retained"
+  },
+  "pixel_living_studio_verification": {
+    "report": "docs/project/PIXEL_LIVING_STUDIO.md",
+    "evidence": "output/playwright/living-studio-2026-10-09/",
+    "verified_at_utc": "2026-10-09T12:32:40.325363+00:00",
+    "frontend_units": 898,
+    "frontend_types": "PASS",
+    "bounded_playwright_tests": 8,
+    "scoped_backend_docs_scan_tests": 81,
+    "backend_presentation_tests": 15,
+    "docs_inventory": "PASS: final architecture inventory and original hashes verified",
+    "repository_scan": "PASS: shipped-tree CLI verified by the final 81-case run; baseline and detectors unchanged",
+    "staff": 8,
+    "chair_height_raise_world_px": 5.4,
+    "wheel_floor_contacts_fixed": true,
+    "nadia_view": "rear_left",
+    "nadia_monitor_desktop_y": 484,
+    "screen_planes": 9,
+    "physics": "bounded 2D joints/contact/paper, not full 3D rigid bodies",
+    "runtime_scenarios": [
+      "IDLE",
+      "WORKING",
+      "THINKING",
+      "REVIEWING",
+      "ERROR",
+      "BLOCKED"
+    ],
+    "scenario_checkpoints": 360,
+    "authorized_actions": [
+      "look",
+      "think",
+      "coffee",
+      "hair",
+      "relax",
+      "screen_off",
+      "screen_on",
+      "mouse",
+      "read",
+      "type",
+      "write",
+      "frustrated"
+    ],
+    "seating_samples": 481,
+    "max_papers": 8,
+    "audio": "original local WebAudio; user-activated; bounded and pause-aware",
+    "skill_client_shots": 3,
+    "skill_client_errors": 0,
+    "skill_helper_stopped": true,
+    "actual_staff_runtime": "IDLE",
+    "actual_staff_visible_motion": 8,
+    "actual_configured_channels": 2,
+    "actual_playable_publications": 0,
+    "actual_eligible_local_films": 0,
+    "real_film_playback": "pending eligible production film",
+    "codec_fixture": "PASS; isolated test media, not registered in production",
+    "real_time_ratio": 1.0000722457078628,
+    "actual_pedestrian_speeds": [
+      36.13164242557441,
+      -36.1316424255744,
+      36.13164242557437,
+      -36.13164242557439
+    ],
+    "actual_cat_travel_spans": [
+      268.1122499998435,
+      320
+    ],
+    "actual_car_variants": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "socket_closed_seconds": 24,
+    "socket_closed_real_policy_reads": 3,
+    "socket_closed_real_time_ratio": 1.0000657670280324,
+    "actual_dialogs": 9,
+    "pause_reload_resume": "PASS",
+    "page_errors": 0,
+    "refused_requests": 0,
+    "video_seconds": 32.0125,
+    "video_codecs": [
+      "h264",
+      "aac"
+    ],
+    "video_capture_fps": 24,
+    "capture_rate_is_not_renderer_benchmark": true,
+    "production_build_current": true,
+    "served_bundle_bytes_match": true,
+    "bundles": [
+      "/assets/index-BOq2Agoi.js",
+      "/assets/index-BMmTEe_Q.css"
+    ],
+    "approved_background_sha256": "957e67d70e01438056c5e2f073a8b39d8152f2488ea28217df2368384b75dbe1",
+    "approved_background_unchanged": true,
+    "built_in_artwork_generations": 7,
+    "production_server_restarted": "graceful after fresh zero-running/queued-task check",
+    "production_policy_database_commands": 0,
+    "production_gpu_media_upload_jobs": 0,
+    "health_statuses": {
+      "/health/live": 200,
+      "/health/ready": 200
+    },
+    "external_workflows": "separate; historical acceptance limits and concurrent changes retained",
+    "scoped_backend_docs_scan_seconds": 64.64,
+    "source_diff_whitespace_check": "PASS",
+    "actual_readout": "15:14 · Parțial înnorat 28°C",
+    "monitor_correction": {
+      "source": "art-source/pixel/accounting-monitor-v9/README.md",
+      "actual_screenshot": "output/playwright/living-studio-2026-10-09/nadia-chair-monitor-v9.png",
+      "actual_proof": "output/playwright/living-studio-2026-10-09/monitor-verification.json",
+      "upright_monitor": true,
+      "original_drafting_board_removed": true,
+      "visible_pedestal_contact": true,
+      "glass_native_corners": [
+        [
+          733,
+          738
+        ],
+        [
+          770,
+          738
+        ],
+        [
+          770,
+          760
+        ],
+        [
+          733,
+          760
+        ]
+      ],
+      "inside_changed_pixels": 2430,
+      "outside_changed_pixels": 0,
+      "panel_desktop_intersection_regression": "PASS",
+      "sound_film_drawer_inset": "PASS",
+      "previous_slanted_monitor": "rejected; preserved in before-monitor-correction/",
+      "checksum_provenance": "art-source/pixel/accounting-monitor-v9/README.md"
+    },
+    "audio_mean_db": -54.1,
+    "audio_max_db": -26.1
+  },
+  "pixel_backend_animation_verification": {
+    "verified_at_utc": "2026-10-09T18:35:22.768445+00:00",
+    "task": "PIXEL_BACKEND_ANIMATION_ACCEPTANCE",
+    "complete": true,
+    "frontend_units": {
+      "passed": 909,
+      "failed": 0,
+      "skipped": 0,
+      "elapsed_seconds": 2.2382005
+    },
+    "types": "pass",
+    "backend_and_documentation": {
+      "passed": 72,
+      "failed": 0,
+      "elapsed_seconds": 12.56
+    },
+    "bounded_backend_page": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "elapsed_seconds": 84.218513,
+      "transitions": 48,
+      "profiles": 8,
+      "policy_reads": 23,
+      "websocket_frames": 69,
+      "batch_latency_ms": {
+        "WORKING": 2168.201,
+        "THINKING": 1840.363,
+        "REVIEWING": 1709.775,
+        "BLOCKED": 1607.361,
+        "ERROR": 1796.076,
+        "IDLE": 1847.727
+      },
+      "paid_providers": "replaced; outbound sockets denied; fresh disposable DB"
+    },
+    "bounded_scene": {
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "concurrency": 1,
+      "lanes_seconds": [
+        108.1420512,
+        75.9596814
+      ],
+      "movie_codec": "not repeated; prior living-studio proof remains historical"
+    },
+    "local_delivery": {
+      "profiles": 8,
+      "roster": 8,
+      "phone_width": 390,
+      "phone_bounds": {
+        "viewport": 390,
+        "dialogLeft": 11.703125,
+        "dialogRight": 378.296875,
+        "portraitLeft": 28.703125,
+        "portraitRight": 116.703125,
+        "scrollWidth": 390
+      },
+      "page_build": "hash",
+      "served": [
+        "/assets/index-CSGyWStl.js",
+        "/assets/index-Diqxo9nR.css",
+        "/assets/pixel/staff-front-portraits-v10.png"
+      ],
+      "health": 200,
+      "read_only": true,
+      "page_errors": 0,
+      "refused_requests": 0,
+      "backend_restarted": false,
+      "legacy_event_repair": "tested; authenticated committed layout read"
+    },
+    "approved_base_unchanged": true,
+    "provenance": "art-source/pixel/front-portraits-v10/README.md",
+    "generations": 1,
+    "repository_scan": "1104 files, 68 findings, all existing baseline; no detector or baseline changes",
+    "documentation_integrity": "pass; architecture untouched",
+    "targeted_ruff": "check and format pass",
+    "evidence": "output/playwright/backend-animation-2026-10-09/",
+    "report": "docs/project/PIXEL_BACKEND_ANIMATION_ACCEPTANCE.md",
+    "limits": [
+      "Heavy owner_flows game guard untouched and suite not rerun",
+      "Production profiles read only; controlled state mutations restricted to disposable DB",
+      "No paid-provider/media/upload acceptance claimed for this task",
+      "Additive backend serializer takes effect at next ordinary startup; current server supported by legacy repair"
+    ],
+    "documentation_recheck": {
+      "passed": 23,
+      "failed": 0,
+      "elapsed_seconds": 2.62,
+      "historical_acceptance_references": "preserved"
+    },
+    "clean_portrait_followup": {
+      "complete": true,
+      "overlay_nodes": 0,
+      "inspector_profiles_checked": 8,
+      "roster_profiles_checked": 8,
+      "separate_roster_state_facts": 8,
+      "frontend_units_passed": 909,
+      "types": "pass",
+      "served": [
+        "/assets/index-CSGyWStl.js",
+        "/assets/index-Diqxo9nR.css",
+        "/assets/pixel/staff-front-portraits-v10.png"
+      ],
+      "phone_width": 390,
+      "read_only": true,
+      "page_errors": 0,
+      "health": 200,
+      "verified_at_utc": "2026-10-09T18:40:01.206Z"
+    }
+  }
 }

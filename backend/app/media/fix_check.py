@@ -72,7 +72,7 @@ from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.media.models import SceneTake
@@ -80,9 +80,7 @@ from app.models import DomainEvent
 
 logger = logging.getLogger("studio.fix_check")
 
-#: At most this many items are checked on one picture or clip, each at most this long: the
-#: look stays one look, and the refusal's words stay inside a take's failure detail.
-MAX_ITEMS = 4
+#: Length of the legacy finding summaries; the original domain events remain evidence.
 MAX_CHARS = 300
 #: The layers an item is checked on (`scene_rewrite.STILL`, `scene_rewrite.MOTION`), and the
 #: mark of an item whose layer is not known: it is checked on both.
@@ -95,7 +93,7 @@ PICTURE_LAYER = STILL_LAYER
 #: of it is left (accepted, a warning), or it is there again (refused).
 GONE, MINOR, PERSISTS = "gone", "minor", "persists"
 FIX_STATUSES = (GONE, MINOR, PERSISTS)
-#: Where an item comes from, in the order they are ranked under the cap.
+#: Where an item comes from, in the order they are ranked.
 FROM_REVIEW, FROM_DIRECTOR_QC, FROM_FILM = "review", "director_qc", "film"
 #: Two items whose content words overlap this much are one finding said twice: her review's
 #: ``qc_text`` and her QC verdict's text, or two paraphrases of one picture (`token_overlap`).
@@ -155,9 +153,11 @@ TAKE_NOTE_EVENT = "media.take_quality_note"
 #: Who approved a take by looking: her second look (`director_second_look`).
 DIRECTOR_LOOK_APPROVER = "director_look"
 #: The violations a look of hers never overturns (the Owner, 2026-10-12: hard-coded rules stay
-#: only where money or the bible's hard limits are at stake — faces where forbidden, writing,
-#: panels; a blank or striped field is no picture at all).
-HARD_LIMITS = frozenset({"faces", "readable_text", "panels", "degenerate"})
+#: only where money or the bible's hard limits are at stake — faces where forbidden, panels; a
+#: blank or striped field is no picture at all). Writing is hers since 2026-10-15 («scrisul,
+#: ea trebuie să hotărască»): the scene's own writing stays, only text laid over the picture
+#: or a logo is serious, and she says which.
+HARD_LIMITS = frozenset({"faces", "panels", "degenerate"})
 #: Her second look's verdicts (`app.media.second_look.second_look`, the shared contract).
 CONFIRMED, OVERTURNED, UNAVAILABLE = "CONFIRMED", "OVERTURNED", "UNAVAILABLE"
 #: How serious her review (or her QC verdict) called a finding; an item without a word is
@@ -303,7 +303,9 @@ def _approved_still_after(session: Session, storyboard_id: str, scene: int, mome
 
 
 def _passing_clip_after(session: Session, storyboard_id: str, scene: int, moment: Any) -> bool:
-    """Whether a clip made after ``moment`` was accepted: his approval, or clip QC's pass."""
+    """Whether a clip made after ``moment`` was accepted: his approval, or clip QC's pass. A
+    clip only kept under the Owner's renders cap (`assembler.CAP_VERDICT`) did not pass and
+    closes nothing (the dishonest-code audit of 2026-10-16, STUB-003)."""
     from app.media.assembler import SHOT_TAKE_KINDS, clip_qc_of  # noqa: PLC0415 - a large module
 
     for row in session.scalars(
@@ -342,12 +344,12 @@ def _item(
     treated: bool = True,
 ) -> dict[str, Any]:
     return {
-        "finding": _cut(_said(finding)),
-        "expected": _cut(_said(expected)),
+        "finding": _said(finding),
+        "expected": _said(expected),
         "layer": layer,
         "source": source,
         "source_id": str(source_id) if source_id else None,
-        "cause": _cut(_said(cause)),
+        "cause": _said(cause),
         "severity": _severity(severity),
         "treated": bool(treated),
         "at": str(at or ""),
@@ -372,7 +374,39 @@ def accepted_by_her(entry: Mapping[str, Any]) -> bool:
     return not treated and _severity(entry.get("severity")) == MINOR_SEVERITY
 
 
-def _rewrite_items(session: Session, storyboard_id: str, scene: int) -> list[dict[str, Any]]:
+FindingEvents = Mapping[str, Sequence[DomainEvent]]
+
+
+def read_finding_events(session: Session, storyboard_id: str) -> FindingEvents:
+    """One film's history for a single read, never retained across requests or mutations."""
+    from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT  # noqa: PLC0415
+    from app.media.scene_rewrite import BRIEF_EVENT  # noqa: PLC0415
+
+    kinds = (SCENE_PROMPTS_REWRITTEN_EVENT, BRIEF_EVENT, DIRECTOR_QC_EVENT, FILM_READ_EVENT)
+    history: dict[str, list[DomainEvent]] = {kind: [] for kind in kinds}
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(
+            DomainEvent.event_type.in_(kinds),
+            or_(
+                DomainEvent.aggregate_id == storyboard_id,
+                DomainEvent.payload["storyboard_id"].as_string() == storyboard_id,
+            ),
+        )
+        .order_by(DomainEvent.sequence.desc())
+    ):
+        history[event.event_type].append(event)
+    history["rewrites"] = sorted(
+        history[SCENE_PROMPTS_REWRITTEN_EVENT] + history[BRIEF_EVENT],
+        key=lambda event: event.sequence,
+        reverse=True,
+    )
+    return history
+
+
+def _rewrite_items(
+    session: Session, storyboard_id: str, scene: int, events: FindingEvents | None = None
+) -> list[dict[str, Any]]:
     """Her review's findings on the newest rewrites by her brief: the newest that changed the
     picture for the still layer, the newest of any layer for the motion layer; the brief's
     film words only where the review kept no findings."""
@@ -382,14 +416,19 @@ def _rewrite_items(session: Session, storyboard_id: str, scene: int) -> list[dic
     picture: DomainEvent | None = None
     newest: DomainEvent | None = None
     briefs: list[DomainEvent] = []  # newest first
-    for event in session.scalars(
-        select(DomainEvent)
-        .where(
-            DomainEvent.aggregate_id == storyboard_id,
-            DomainEvent.event_type.in_((SCENE_PROMPTS_REWRITTEN_EVENT, BRIEF_EVENT)),
+    history = (
+        events["rewrites"]
+        if events is not None
+        else session.scalars(
+            select(DomainEvent)
+            .where(
+                DomainEvent.aggregate_id == storyboard_id,
+                DomainEvent.event_type.in_((SCENE_PROMPTS_REWRITTEN_EVENT, BRIEF_EVENT)),
+            )
+            .order_by(DomainEvent.sequence.desc())
         )
-        .order_by(DomainEvent.sequence.desc())
-    ):
+    )
+    for event in history:
         payload = event.payload if isinstance(event.payload, dict) else {}
         if _scene_of(payload) != int(scene):
             continue
@@ -445,7 +484,7 @@ def _rewrite_items(session: Session, storyboard_id: str, scene: int) -> list[dic
         # A film reason names no layer: the picture's rewrite checks it on the still and on
         # the clip after it, the movement's on the clip.
         on = BOTH_LAYERS if layer == STILL_LAYER else MOTION_LAYER
-        for seen in _film_seen(session, storyboard_id, brief):
+        for seen in _film_seen(session, storyboard_id, brief, events):
             items.append(_item(seen, "", on, FROM_FILM, at=rewrite.timestamp))
     return items
 
@@ -474,43 +513,64 @@ def _film_reasons(brief: DomainEvent | None) -> list[str]:
     ]
 
 
-def _film_read(session: Session, storyboard_id: str, brief_event_id: str) -> list[str] | None:
+def _film_read(
+    session: Session, storyboard_id: str, brief_event_id: str, events: FindingEvents | None = None
+) -> list[str] | None:
     """Her reading of one brief's film words (`read_film_reasons`), or None when she has not
     read it."""
-    for event in session.scalars(
-        select(DomainEvent)
-        .where(DomainEvent.event_type == FILM_READ_EVENT, DomainEvent.aggregate_id == storyboard_id)
-        .order_by(DomainEvent.sequence.desc())
-    ):
+    history = (
+        events[FILM_READ_EVENT]
+        if events is not None
+        else session.scalars(
+            select(DomainEvent)
+            .where(
+                DomainEvent.event_type == FILM_READ_EVENT, DomainEvent.aggregate_id == storyboard_id
+            )
+            .order_by(DomainEvent.sequence.desc())
+        )
+    )
+    for event in history:
         payload = event.payload if isinstance(event.payload, dict) else {}
         if payload.get("brief_event_id") == brief_event_id:
             return [_said(text) for text in payload.get("seen") or [] if _said(text)]
     return None
 
 
-def _film_seen(session: Session, storyboard_id: str, brief: DomainEvent | None) -> list[str]:
+def _film_seen(
+    session: Session,
+    storyboard_id: str,
+    brief: DomainEvent | None,
+    events: FindingEvents | None = None,
+) -> list[str]:
     """What quality control saw, from a pre-contract brief: her reading when she made one (the
     review of 5fc7468, finding 11 — a semantic question, hers to answer, free), else the
     sentences `observed` keeps."""
     reasons = _film_reasons(brief)
     if not reasons or brief is None:
         return []
-    read = _film_read(session, storyboard_id, str(brief.event_id))
+    read = _film_read(session, storyboard_id, str(brief.event_id), events)
     if read is not None:
         return read
     return [seen for seen in (observed(reason) for reason in reasons) if seen]
 
 
-def _director_qc_items(session: Session, storyboard_id: str, scene: int) -> list[dict[str, Any]]:
+def _director_qc_items(
+    session: Session, storyboard_id: str, scene: int, events: FindingEvents | None = None
+) -> list[dict[str, Any]]:
     """The newest Director QC decision that judged this scene: its REAL verdicts on it (quality
     control's text, her cause), on their own layer when the verdict names one, else on both."""
     # Her decisions are recorded on the QC report (their aggregate), the film named in the
     # payload: read newest first, as `director_qc.decisions_of_film` reads them.
-    for event in session.scalars(
-        select(DomainEvent)
-        .where(DomainEvent.event_type == DIRECTOR_QC_EVENT)
-        .order_by(DomainEvent.sequence.desc())
-    ):
+    history = (
+        events[DIRECTOR_QC_EVENT]
+        if events is not None
+        else session.scalars(
+            select(DomainEvent)
+            .where(DomainEvent.event_type == DIRECTOR_QC_EVENT)
+            .order_by(DomainEvent.sequence.desc())
+        )
+    )
+    for event in history:
         payload = event.payload if isinstance(event.payload, dict) else {}
         if str(payload.get("storyboard_id") or "") != storyboard_id:
             continue
@@ -558,7 +618,9 @@ def _ranked(items: list[dict[str, Any]], layer: str) -> list[dict[str, Any]]:
     return [item for _position, item in sorted(enumerate(items), key=key)]
 
 
-def open_items(session: Session, storyboard_id: str, scene_index: int) -> list[dict[str, Any]]:
+def open_items(
+    session: Session, storyboard_id: str, scene_index: int, *, events: FindingEvents | None = None
+) -> list[dict[str, Any]]:
     """Every open item of the scene, both layers, without paraphrases said twice: each
     {"finding", "expected", "layer", "source", "source_id", "cause", "severity", "treated",
     "at"} (``layer``: still, motion or both; ``expected`` the sentence her review said treats
@@ -566,8 +628,8 @@ def open_items(session: Session, storyboard_id: str, scene_index: int) -> list[d
     or withdraws; ``severity`` minor or serious — a minor one that persists is a warning,
     `still_gate.fix_answers`). A finding her review left untreated as minor is no item
     (`accepted_by_her`)."""
-    found = _rewrite_items(session, storyboard_id, scene_index) + _director_qc_items(
-        session, storyboard_id, scene_index
+    found = _rewrite_items(session, storyboard_id, scene_index, events) + _director_qc_items(
+        session, storyboard_id, scene_index, events
     )
     items: list[dict[str, Any]] = []
     for item in found:
@@ -597,18 +659,23 @@ def open_items(session: Session, storyboard_id: str, scene_index: int) -> list[d
 
 
 def open_findings(
-    session: Session, storyboard_id: str, scene_index: int, layer: str = STILL_LAYER
+    session: Session,
+    storyboard_id: str,
+    scene_index: int,
+    layer: str = STILL_LAYER,
+    *,
+    events: FindingEvents | None = None,
 ) -> list[dict[str, Any]]:
     """What the scene's next picture (``layer`` still) or clip (``layer`` motion) must show
-    corrected: `open_items` of that layer, ranked (`_ranked`), at most `MAX_ITEMS`. Empty when
+    corrected: every `open_items` entry of that layer, ranked (`_ranked`). Empty when
     nothing was rewritten or refused for it, or when a still approved (a clip passed) after
     it already answered."""
     items = [
         {key: value for key, value in item.items() if key != "at"}
-        for item in open_items(session, storyboard_id, scene_index)
+        for item in open_items(session, storyboard_id, scene_index, events=events)
         if _on(item, layer)
     ]
-    return _ranked(items, layer)[:MAX_ITEMS]
+    return _ranked(items, layer)
 
 
 # ----------------------------------------------------------- what a look says about the items
@@ -942,6 +1009,224 @@ def shot_second_look(
         shutil.rmtree(folder, ignore_errors=True)
 
 
+#: The words `assembler._send_still_back_for_clip` writes on a still it sends back to the gate
+#: because clip QC blamed the picture; the mark the restore below reads.
+SENT_BACK_FOR_CLIP_MARK = "Controlul clipului a găsit greșeala în imagine"
+SCENE_RESTORED_EVENT = "media.scene_restored_by_look"
+
+
+def restore_sent_back_scenes(
+    engine: Any,
+    registry: Any,
+    *,
+    storyboard_id: str,
+    correlation_id: str,
+    ffmpeg_path: str | None = None,
+) -> list[int]:
+    """Her look at every scene whose still clip QC sent back to the gate (`SENT_BACK_FOR_CLIP_MARK`)
+    and whose refused clip is still on disk, before a new still is bought for it: the clip
+    itself, with clip QC's words (`shot_second_look`). Her yes (`look_accepts`) restores the
+    still (APPROVED, hers) and the clip (PAID, hers, its note written) and nothing is bought
+    for the scene; anything else leaves the scene as it was. Returns the scenes restored.
+
+    2026-10-15, episode 2 scene 1: clip QC blamed the still (ruled papers, a zoom), nobody
+    looked at the clip, the still she had already approved went back to the gate and the
+    scene was about to buy a new still and a new clip. The Owner saw the clip: «este
+    acceptabilă, nu are nimic greșit în ea … ea poate să hotărască că imaginea este ok».
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    from app.db import lock_for_write  # noqa: PLC0415
+    from app.providers.runpod.wiring import sync_take_quality  # noqa: PLC0415
+    from app.services import append_event, utc_now  # noqa: PLC0415
+
+    if registry is None:
+        return []
+    offered: dict[int, tuple[str, str, str, str]] = {}
+    with Session(engine) as session:
+        stills = session.scalars(
+            select(SceneTake)
+            .where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.kind == "still",
+                SceneTake.status == "REJECTED",
+            )
+            .order_by(SceneTake.created_at.desc())
+        ).all()
+        for still in stills:
+            scene = int(still.scene_number)
+            if scene in offered:
+                continue
+            if not str(still.failure_detail or "").startswith(SENT_BACK_FOR_CLIP_MARK):
+                continue
+            newer = session.scalar(
+                select(SceneTake.id).where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.scene_number == still.scene_number,
+                    SceneTake.kind == "still",
+                    SceneTake.status.in_(("APPROVED", "PAID")),
+                    SceneTake.created_at > still.created_at,
+                )
+            )
+            if newer is not None:
+                continue  # the scene moved on: a later still is approved or paid
+            # (a sibling of the same round the gate refused is not «newer»: 2026-10-15
+            # 07:59Z, scenes 2 and 5 of episode 2 were skipped for one and bought again)
+            clip = session.scalar(
+                select(SceneTake)
+                .where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.scene_number == still.scene_number,
+                    SceneTake.kind.in_(("test_shot", "motion")),
+                    SceneTake.status == "REJECTED",
+                )
+                .order_by(SceneTake.created_at.desc())
+                .limit(1)
+            )
+            if clip is None or not clip.path or not Path(str(clip.path)).exists():
+                continue
+            offered[scene] = (still.id, clip.id, str(clip.path), str(clip.failure_detail or ""))
+    restored: list[int] = []
+    for scene, (still_id, clip_id, path, detail) in sorted(offered.items()):
+        look = shot_second_look(
+            engine,
+            registry,
+            storyboard_id=storyboard_id,
+            scene_index=scene,
+            clip=Path(path),
+            refusal=[detail],
+            correlation_id=correlation_id,
+            take_ids=[clip_id],
+            ffmpeg_path=ffmpeg_path,
+        )
+        if not look_accepts(look):
+            continue
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            still = session.get(SceneTake, still_id)
+            clip = session.get(SceneTake, clip_id)
+            if (
+                still is None
+                or clip is None
+                or still.status != "REJECTED"
+                or clip.status != "REJECTED"
+            ):
+                continue
+            reason = str(look.get("reason_ro") or "")[:400]
+            for take in (still, clip):
+                take.status = "APPROVED" if take.kind == "still" else "PAID"
+                take.approved_by = DIRECTOR_LOOK_APPROVER
+                take.failure_code = None
+                take.failure_detail = None
+                take.updated_at = utc_now()
+                sync_take_quality(session, take, accepted=True, reason=reason)
+            record_take_note(
+                session,
+                storyboard_id=storyboard_id,
+                scene_number=scene,
+                take_id=clip_id,
+                kind="motion",
+                approved_by=DIRECTOR_LOOK_APPROVER,
+                look=look,
+                correlation_id=correlation_id,
+            )
+            # The clip's record is what the hero gate and the sheet read (`assembler.hero_gate`:
+            # a PAID hero with a PASSED record is accepted without the Owner's look): as the
+            # motion step writes it when her look keeps a clip, PASSED as hers, the blocks
+            # kept beside her reason (2026-10-15 07:13Z: restored takes with a FAILED record
+            # sent him a letter asking for his look at the test shot).
+            from app.media.assembler import CLIP_QC_EVENT, clip_qc_of  # noqa: PLC0415
+
+            earlier = clip_qc_of(session, clip_id) or {}
+            append_event(
+                session,
+                CLIP_QC_EVENT,
+                "scene_take",
+                clip_id,
+                1,
+                {
+                    **earlier,
+                    "storyboard_id": storyboard_id,
+                    "scene_number": scene,
+                    "take_id": clip_id,
+                    "attempt": int(earlier.get("attempt") or 1) + 1,
+                    "verdict": "PASSED",
+                    "passed": True,
+                    "accepted_by": DIRECTOR_LOOK_APPROVER,
+                    "director_look": look_record(look),
+                },
+                correlation_id,
+            )
+            append_event(
+                session,
+                SCENE_RESTORED_EVENT,
+                "scene_take",
+                clip_id,
+                1,
+                {
+                    "storyboard_id": storyboard_id,
+                    "scene_number": scene,
+                    "still_take_id": still_id,
+                    "clip_take_id": clip_id,
+                    "reason": reason,
+                    "severity": look.get("severity"),
+                },
+                correlation_id,
+            )
+        restored.append(scene)
+    settle_clips_she_kept(engine, storyboard_id=storyboard_id, correlation_id=correlation_id)
+    return restored
+
+
+def settle_clips_she_kept(engine: Any, *, storyboard_id: str, correlation_id: str) -> list[str]:
+    """Every PAID clip of the film her look kept (approved_by `DIRECTOR_LOOK_APPROVER`) whose
+    latest record still says FAILED gets the PASSED record her note carries — what the hero
+    gate and the sheet read. Idempotent; returns the take ids settled. 2026-10-15 07:13Z: the
+    first restore wrote the takes but not the record, and the hero waited for the Owner's
+    look over a clip she had already kept."""
+    from app.db import lock_for_write  # noqa: PLC0415
+    from app.media.assembler import CLIP_QC_EVENT, clip_qc_of  # noqa: PLC0415
+    from app.services import append_event  # noqa: PLC0415
+
+    settled: list[str] = []
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        clips = session.scalars(
+            select(SceneTake).where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.kind.in_(("test_shot", "motion")),
+                SceneTake.status == "PAID",
+                SceneTake.approved_by == DIRECTOR_LOOK_APPROVER,
+            )
+        ).all()
+        for clip in clips:
+            earlier = clip_qc_of(session, clip.id)
+            if earlier is None or earlier.get("verdict") == "PASSED":
+                continue
+            note = take_note(session, clip.id) or {}
+            append_event(
+                session,
+                CLIP_QC_EVENT,
+                "scene_take",
+                clip.id,
+                1,
+                {
+                    **earlier,
+                    "storyboard_id": storyboard_id,
+                    "scene_number": int(clip.scene_number),
+                    "take_id": clip.id,
+                    "attempt": int(earlier.get("attempt") or 1) + 1,
+                    "verdict": "PASSED",
+                    "passed": True,
+                    "accepted_by": DIRECTOR_LOOK_APPROVER,
+                    "director_look": note.get("director_look"),
+                },
+                correlation_id,
+            )
+            settled.append(clip.id)
+    return settled
+
+
 def clip_settled(
     session: Session,
     *,
@@ -1033,8 +1318,8 @@ class FilmReasonsSeen(BaseModel):
     def _sights(cls, value: Any) -> Any:
         if not isinstance(value, list):
             return value
-        # At most what one look checks (`MAX_ITEMS`), each cut as an item is.
-        return [_cut(_said(text)) for text in value if _said(text)][:MAX_ITEMS]
+        # Complete observed findings; output formatting must not erase later defects.
+        return [_said(text) for text in value if _said(text)]
 
 
 _FILM_READ_INSTRUCTIONS = (
@@ -1129,9 +1414,9 @@ def read_film_reasons(
         for scene, brief in unread:
             reasons = _film_reasons(brief)
             prompt = _FILM_READ_INSTRUCTIONS.format(
-                scene=scene, limit=MAX_ITEMS
+                scene=scene, limit=max(1, len(reasons))
             ) + wrap_in_inert_boundary(
-                json.dumps({"film_reasons": reasons}, ensure_ascii=False)[:6000], "film-reasons"
+                json.dumps({"film_reasons": reasons}, ensure_ascii=False), "film-reasons"
             )
             parsed, first, second = structured_run(
                 engine,

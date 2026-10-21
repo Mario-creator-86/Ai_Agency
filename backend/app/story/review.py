@@ -15,7 +15,8 @@ already has for films:
   counted); cast (a v3 episode: two to four speakers, each acting in the events the episode
   cites — the Owner's rule of 2026-09-24; a v2 episode: every active roster member appears);
   structure (a v3 episode runs hook, situation, turn, payoff, button, in the studio's own
-  rooms); words per beat (a v3 beat holds 8-22 spoken words, a scene's nine seconds);
+  rooms); words per beat (a v3 beat holds 8-22 spoken words, a scene's nine seconds — since
+  2026-10-13 a recommendation: measured and shown, decided by the Director, never a refusal);
   concentration (no event carries more than half the beats unless it is the day's only
   one — the episode on his data cites one event in all eight); language (the title and every
   line in the publishing language, before any paid render); new-viewer accessibility
@@ -25,7 +26,8 @@ already has for films:
   The writer is measured by these same checks before a draft is stored (`draft_checks`).
   A check certifies only what it measured: an episode with nothing to measure (no citation,
   no line, no title) fails it rather than passing by absence.
-  Any failure is the verdict, with its reasons, and the Director is not asked.
+  Any failure of a rule is the verdict, with its reasons, and the Director is not asked; a
+  check that only recommends (``advisory``) hands her its measure, and she decides.
 - **Then the Director's verdict** (review v2, 2026-09-24), through `run_agent_task` with the
   episode as data: each beat with the events it cites (id, the record's words, who acts),
   the speakers' voices from their bibles, and the serial's memory. The facts are fitted to a
@@ -77,16 +79,43 @@ from app.agents.language import audience_language_line, looks_like_english
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
 from app.agents.services import run_agent_task
+from app.db import lock_for_write
 from app.factual.sanitizer import wrap_in_inert_boundary
+from app.media.film_length import (
+    SERIAL,
+    SHORTS_WALL_SECONDS,
+    FilmLength,
+    Timing,
+    review_ceiling_seconds,
+    serial_clips,
+    serial_film_length,
+    shot_clip_seconds,
+    timing,
+)
 from app.providers.registry import ProviderRegistry
 from app.publishing.models import ChannelRecord
 from app.services import append_event, utc_now
-from app.story.lines import NameBook, beat_lines, participants, speakers_of, spoken_text
+from app.story.duplicates import (
+    approved_sibling,
+    close_as_superseded,
+    close_superseded_drafts,
+    superseded_by,
+)
+from app.story.lines import (
+    NameBook,
+    beat_lines,
+    participants,
+    sentence_count,
+    speakers_of,
+    spoken_text,
+)
 from app.story.locations import location_id, studio_locations
 from app.story.models import ContinuityState, DailyStudioLog, StoryEpisode
+from app.story.quality_contract import QualityAnswer, director_instructions, quality_issues
 from app.story.projection import leaks
 from app.story.services import (
     EPISODE_PARTS,
+    EPISODE_SECONDS,
     MAX_BEATS,
     PREFERRED_SHOWRUNNER_ROLE,
     SERIES_KEY,
@@ -100,7 +129,7 @@ from app.story.services import (
     voice_of,
     write_episode,
 )
-from app.wording import decimal, work_status
+from app.wording import count, decimal, work_status
 
 logger = logging.getLogger("studio.story.review")
 
@@ -123,8 +152,13 @@ RUBRIC_FLOOR = 3
 FACTS_BUDGET = 14000
 #: The studio's speaking rate, the same figure the storyboard uses to time a scene.
 WORDS_PER_SECOND = 2.5
-MIN_SECONDS = 45.0
-MAX_SECONDS = 70.0
+#: The episode's length in seconds of speech (the Owner, 2026-10-16: 90-180 s, max 180), the
+#: very numbers the showrunner's brief states (`services.EPISODE_SECONDS`): the floor is a
+#: recommendation the Director weighs; the ceiling is the brief's word ceiling. The wall itself
+#: is measured on the film the montage cuts (`_length`, `film_length.serial_film_length`):
+#: 175 s of speech left 5 s for the breaths of 30-50 shots, and episodes the review passed
+#: came out at 185-195 s.
+MIN_SECONDS, MAX_SECONDS = EPISODE_SECONDS
 #: Openings that assume the viewer saw yesterday. A first beat that starts with one of these
 #: does not stand alone.
 CONTINUATION_MARKERS = (
@@ -159,6 +193,7 @@ class EpisodeVerdict(BaseModel):
     story: str = Field(default="", max_length=400)
     #: The rubric, 1-5 for each part of `RUBRIC`; only the rubric's own keys are kept.
     scores: dict[str, int | float] = Field(default_factory=dict)
+    quality: list[QualityAnswer] = Field(default_factory=list, max_length=8)
     _clip_notes = field_validator("notes", mode="before")(clipped(1200))
     _clip_story = field_validator("story", mode="before")(clipped(400))
     _one_reason = field_validator("reasons", mode="before")(
@@ -186,35 +221,16 @@ class EpisodeVerdict(BaseModel):
 
 
 _INSTRUCTIONS = (
-    "You are the Director, and this is the last read of an episode of the studio's own "
-    "serial before it is filmed. Below is the episode as data: each beat with its part, "
-    "room, scene and lines, and the events it cites (what the studio's record says "
-    "happened, and who acted in it); the voices of the people who speak, from their "
-    "character bibles; the serial's memory (the last summaries and the open threads); and "
-    "what the computed checks measured. Every computed check passed; you judge what they "
-    "cannot.\n"
-    "1. Truth. A beat may dramatise its events: jokes, pauses, reactions, compressed talk. "
-    "FAIL the episode if any beat shows an outcome that is not in the event it cites: a "
-    "decision, a verdict, a success or a failure, a publication, a hire or a departure, "
-    "money, an audience, or an ending the event leaves open; or a line that quotes what a "
-    "letter said when its event gives only the letter's subject. Name the beat and the "
-    "outcome in the reasons.\n"
-    "2. The viewer. Does the hook stand alone for someone who has never seen the serial, "
-    "with its first line heard inside the first 3 seconds and not a greeting; is there one "
-    "situation with a turn and a payoff, each beat changing something; does the button land "
-    "as the last words, ideally calling back to the hook; is the humour in the situation "
-    "rather than in explaining the studio.\n"
-    "3. Voices. Does each speaker sound like their bible (register, cadence, habits, their "
-    "own phrases) and like a person, not a status report.\n"
-    "4. Continuity. Does it continue or close the open threads it claims to.\n"
-    "A dramatisation is not a factual film: it makes no claims about the world and needs no "
-    "sources, and you do not reject it for that.\n"
-    "Score each part 1-5: 1 missing, 3 works, 5 could not be better. A PASS carries all six "
-    "scores and none below 3; a part that scores lower makes the verdict FAIL. Return only "
-    'JSON: {"verdict": "PASS" | "FAIL", "scores": {"hook": 1-5, "situation": 1-5, '
-    '"turn": 1-5, "payoff": 1-5, "voices": 1-5, "button": 1-5}, "reasons": ["..."], '
-    '"notes": "what the showrunner must change, if FAIL", "story": "one sentence: what the '
-    'viewer follows"}.\n'
+    "You are the Director and creative steward of Inside The Nexus. This is the last story read before an episode is filmed. The text inside the evidence boundary contains the actual beats, locations, stage actions, spoken lines, permitted references, character voices, permanent fictional canon, open threads, and measured recommendations. Technical checks have already passed; your task is to judge whether the script works as drama and deserves production. Do not infer quality from its JSON labels or Marcus's self-review.\n"
+    "1. Genre and audience. This is a FICTIONAL character-driven ensemble dramedy, not a factual studio diary and NOT a compulsory romance. Comedy, friendship, social embarrassment, rivalry, mystery, deception, loyalty, romance, sadness and quieter character chapters are equally eligible. Judge the episode's own dramatic promise. Do not demand a kiss, love triangle, joke, betrayal, disaster or arbitrary cliffhanger. A stranger should understand the current stakes even if this is their first episode.\n"
+    "2. Dramatic direction. Identify who wants what NOW, what or whom resists it, what personal risk makes us care, and what choices they make. Every scene should alter the situation, a person's understanding, a relationship, or a decision. Scenes should connect through BUT or THEREFORE, not a procession of AND THEN status updates. A set of labels (hook, turn, payoff) is not evidence of a real hook, turn or payoff. Reject gratuitous filler, repeated apologies and production reports with no human stakes; do not reject a quiet but consequential scene.\n"
+    "3. Performance and emotional truth. Judge motives, subtext, timing, reactions and character-specific dialogue. People reveal feelings by choices, gestures, silences, mistakes and what they avoid saying, not by reciting emotional summaries. Humor, discomfort, tension, warmth and surprise may emerge when earned. A memorable moment may be hilarious, awkward, painful or suspenseful; it does not need to be romantic. Name the exact beat and line when an emotional turn is unearned, implausible or generic.\n"
+    "4. Serialization. PREVIOUSLY, permanent character arcs, unresolved secrets and promises are binding canon. Examine character_updates against on-screen action and what each character actually knows. Do not instantly heal old betrayals, reset friendships, confuse secrets or rush milestones; not every thread needs screen time today. Resolve or advance the local conflict with a consequence and leave an earned future question when appropriate. An invented future relationship that was not earned in the shown scenes is a failure.\n"
+    "5. Narration and filmability. The opening Narrator gives two or three sentences locating us, the people and their stake; the last beat ends in one Narrator sentence after the dramatic button. Missing required narration or unintelligible stakes FAIL. The first spoken line must lead to a question or decision, not a status announcement. Camera-visible actions should carry the stakes and leave room for the Video Editor to show facial reactions and purposeful cutaways; do not mandate constant moving cameras or extra spectacle.\n"
+    "6. Fiction boundary and privacy. Invented arguments, romances, secrets, mishaps, props and fictional crises need no operational citations. Real-world assertions about publications, revenue, vendors, audience, owners, decisions or private data must not be fabricated or mislabeled as verified facts. A genuinely cited operational event must be present in the approved public projection. Reject actual privacy breaches and false real-world claims, but not fictional plot events.\n"
+    "7. Editorial feedback. If FAIL, name the first specific scene or line where the causal or emotional logic breaks, why the audience would disengage, and what the writer must KEEP, CHANGE and AVOID, without adding new off-screen canon or changing the approved format. A useful note proposes a concrete behavior, obstacle, reaction or payoff rather than asking for 'more emotion'. Do not rewrite the script yourself. If PASS, still score what is on screen, not what you hoped it would become.\n"
+    "8. Duration is a weighed recommendation. A beat outside the {WORDS_MIN}-{WORDS_MAX} spoken-word band or an episode below the recommended duration is advisory. The montage can divide a long beat. FAIL only if the viewer cannot follow the action or the episode is too thin to tell a story; cite the beat and lines. Respect the hard film-length and structural gates independently enforced by code.\n"
+    "Score the six existing criteria hook, situation, turn, payoff, voices and button from 1 to 5 (1 missing, 3 works, 5 outstanding). PASS requires all six and none below 3. Each score must reflect concrete evidence. Return JSON only: {\"verdict\": \"PASS\" | \"FAIL\", \"scores\": {\"hook\": 1-5, \"situation\": 1-5, \"turn\": 1-5, \"payoff\": 1-5, \"voices\": 1-5, \"button\": 1-5}, \"reasons\": [\"specific textual evidence\"], \"notes\": \"precise corrective directions when FAIL\", \"story\": \"one sentence describing the viewer's throughline\"}.\n"
 )
 
 
@@ -255,15 +271,12 @@ def _speaking_cast(
                 if name not in acting:
                     acting.append(name)
     low, high = SPEAKING_CAST
-    outsiders = [name for name in speakers if name not in acting] if len(acting) >= low else []
-    silent = [name for name in acting if name not in speakers] if len(acting) < low else []
+    # Since 2026-10-16 the story is the showrunner's and the day its backdrop: who speaks is
+    # the story's choice among the roster (the narrator, speaker None, is never counted);
+    # only the two-to-four rule stands. Who acts in the cited events is measured and shown.
     problems = []
     if not low <= len(speakers) <= high:
         problems.append(f"vorbesc {len(speakers)} personaje; episodul cere între {low} și {high}")
-    if outsiders:
-        problems.append("vorbesc fără să acționeze în evenimentele citate: " + ", ".join(outsiders))
-    if silent:
-        problems.append("nu vorbesc deși acționează în evenimentele citate: " + ", ".join(silent))
     return {
         "passed": not problems,
         "speakers": speakers,
@@ -299,6 +312,122 @@ def _structure(beats: list[dict], locations: list[dict]) -> dict[str, Any]:
     return {"passed": not problems, "parts": parts, "reason": "; ".join(problems)}
 
 
+def _length(
+    beats: list[dict],
+    seconds: float,
+    film: FilmLength | None = None,
+    when: Timing | None = None,
+    wall: float = SHORTS_WALL_SECONDS,
+) -> dict[str, Any]:
+    """The episode's beats, seconds of speech and the film the montage cuts from them. The
+    ceilings refuse: MAX_BEATS, MAX_SECONDS of speech (the brief's own words), and the film's
+    estimate (``film``, `film_length.serial_film_length`: since «pauza vocii» each speaker's
+    words at their own voice's rate and the pauses the storyboard will freeze between them, a
+    speaker change, a beat's end, a marked beat) past the Short's wall, held against it with
+    the estimate's margin (`film_length.review_ceiling_seconds`), against ``wall``: the serial
+    channel's own Shorts maximum, never past the rules' cap (`pause_plan.channel_wall`), the
+    wall its storyboard is frozen and its render fitted under, and quality control holds it to.
+    The floor (MIN_SECONDS) is a recommendation the Director weighs (``advisory``), as the
+    words-per-beat band is (2026-10-16)."""
+    ceiling = review_ceiling_seconds(wall, when)
+    words_fit = 0 < len(beats) <= MAX_BEATS and seconds <= MAX_SECONDS
+    fits_wall = film is None or film.against_wall <= ceiling + 1e-9
+    within_cap = words_fit and fits_wall
+    short = within_cap and seconds < MIN_SECONDS
+    reason = ""
+    if not within_cap:
+        problems = []
+        if not words_fit:
+            problems.append(
+                f"{len(beats)} beat-uri și {seconds:.0f} secunde de vorbire; cel mult "
+                f"{MAX_BEATS} beat-uri și {MAX_SECONDS:.0f} secunde (zidul Short-ului)"
+            )
+        if film is not None and not fits_wall and film.wall_seconds is not None:
+            problems.append(
+                f"tăiat în {count(film.rows, 'cadru', 'cadre')}, cu vocea fiecăruia în ritmul "
+                f"ei și pauzele dintre replici, filmul ar dura {film.seconds:.0f} secunde "
+                f"({film.against_wall:.0f} cu marja estimării), peste zidul de "
+                f"{ceiling:.0f} s al Short-ului: mai puține cuvinte"
+            )
+        elif film is not None and not fits_wall:
+            problems.append(
+                f"tăiat în {count(film.rows, 'cadru', 'cadre')}, fiecare cu respirația lui, "
+                f"filmul ar dura {film.seconds:.0f} secunde, peste cele {ceiling:.0f} pe care le "
+                f"primește zidul Short-ului ({min(wall, SHORTS_WALL_SECONDS):.0f} s, minus o "
+                "marjă pentru "
+                "estimare): mai puține cuvinte, sau mai puține replici și mai lungi"
+            )
+        reason = "; ".join(problems)
+    elif short:
+        reason = (
+            f"{seconds:.0f} secunde de vorbire, sub recomandarea de {MIN_SECONDS:.0f}; "
+            "decide Directoarea"
+        )
+    return {
+        "passed": within_cap and not short,
+        "advisory": short,
+        "beats": len(beats),
+        "words": round(seconds * WORDS_PER_SECOND),
+        "seconds": seconds,
+        "recommended_seconds": [MIN_SECONDS, MAX_SECONDS],
+        # The film as the montage will cut and time it, against the wall it must stay under.
+        "film_seconds": film.seconds if film is not None else None,
+        "wall_seconds": film.against_wall if film is not None else None,
+        "shots": film.rows if film is not None else None,
+        "ceiling_seconds": ceiling,
+        "reason": reason,
+    }
+
+
+def _sentences(text: str) -> int:
+    # A title's stop ("Dr. Aris"), an abbreviation's or a decimal's point ends no sentence
+    # (`lines.sentence_count`): the roster's "Dr. Aris" counted as two, 2026-10-16.
+    return sentence_count(text)
+
+
+def _narration(lines_by_beat: list[list[dict[str, Any]]], v3: bool) -> dict[str, Any]:
+    """The narrator's opening and closing (the Owner, 2026-10-16): the first beat opens with
+    NARRATION_OPENING_SENTENCES sentences spoken by nobody in the room (speaker None), the
+    last beat ends with NARRATION_CLOSING_SENTENCES. Measured and shown; the Director
+    decides (``advisory``): an episode written before the rule is not refused for it."""
+    from app.story.services import (  # noqa: PLC0415 - services imports the review
+        NARRATION_CLOSING_SENTENCES,
+        NARRATION_OPENING_SENTENCES,
+    )
+
+    first = lines_by_beat[0] if lines_by_beat else []
+    last = lines_by_beat[-1] if lines_by_beat else []
+    opening = 0
+    for line in first:
+        if line.get("speaker"):
+            break
+        opening += _sentences(str(line.get("text") or ""))
+    closing = 0
+    for line in reversed(last):
+        if line.get("speaker"):
+            break
+        closing += _sentences(str(line.get("text") or ""))
+    low, high = NARRATION_OPENING_SENTENCES
+    problems = []
+    if not low <= opening <= high:
+        problems.append(
+            f"naratorul deschide cu {opening} propoziții; episodul cere {low}-{high} "
+            "(unde suntem, cine e în cameră, ce e în joc)"
+        )
+    if closing != NARRATION_CLOSING_SENTENCES:
+        problems.append(
+            f"naratorul închide cu {closing} propoziții; episodul cere "
+            f"{NARRATION_CLOSING_SENTENCES}, ultimele cuvinte auzite"
+        )
+    return {
+        "passed": not problems or not v3,
+        "advisory": True,
+        "opening_sentences": opening,
+        "closing_sentences": closing,
+        "reason": "; ".join(problems) if v3 else "",
+    }
+
+
 def _beat_numbers(beats: list[dict]) -> list[int]:
     return [int(beat.get("beat_number") or index + 1) for index, beat in enumerate(beats)]
 
@@ -306,13 +435,20 @@ def _beat_numbers(beats: list[dict]) -> list[int]:
 def _words_per_beat(
     beats: list[dict], lines_by_beat: list[list[dict[str, Any]]], v3: bool
 ) -> dict[str, Any]:
-    """Spoken words in each beat, inside the brief's `WORDS_PER_BEAT`.
+    """Spoken words in each beat, against the brief's `WORDS_PER_BEAT` — a recommendation.
 
     A scene is at most nine seconds on the storyboard, and 22 words are 8.8 seconds at the
     studio's rate; a beat of 40 words is either cut off or read too fast to follow. Only the
     spoken words count: a name, a label or an acting note is never said. A v2 episode was
     never told the rule and is measured but not held to it; a beat with no line fails, since
     nothing in it was measured.
+
+    Since 2026-10-13 the band is ``advisory`` (the Owner: «nu trebuie să fie ceva fix, este
+    ceva recomandat, dar nici să respingi serialul de la asta»): a beat outside it is measured
+    and shown, the writer is not asked again for it (`services._ask_again`), and the Director
+    reads the episode and decides (`review_episode`). Until then a 23-word beat was REJECTED
+    before she read it («The Ninth Rewrite», 13.10.2026). The clip's own limit stays the
+    `filmable` rule.
     """
     per_beat = [_words(spoken_text(lines)) for lines in lines_by_beat]
     low, high = WORDS_PER_BEAT
@@ -321,7 +457,12 @@ def _words_per_beat(
         for number, words in zip(_beat_numbers(beats), per_beat, strict=True)
         if not low <= words <= high
     ]
-    measured: dict[str, Any] = {"per_beat": per_beat, "outside": outside}
+    measured: dict[str, Any] = {
+        "per_beat": per_beat,
+        "outside": outside,
+        "advisory": True,
+        "recommended": [low, high],
+    }
     if not beats:
         return {**measured, "passed": False, "reason": "episodul nu are niciun beat de măsurat"}
     if not v3:
@@ -331,12 +472,25 @@ def _words_per_beat(
         **measured,
         "passed": not outside,
         "reason": (
-            f"beat-urile {', '.join(map(str, outside))} nu au între {low} și {high} cuvinte "
-            f"rostite (au {', '.join(map(str, counted))})"
+            f"beat-urile {', '.join(map(str, outside))} ies din recomandarea de {low}-{high} "
+            f"cuvinte rostite (au {', '.join(map(str, counted))}); decide Directoarea"
             if outside
             else ""
         ),
     }
+
+
+def failed_rules(checks: dict[str, dict[str, Any]]) -> list[str]:
+    """The checks that refuse the episode on their own: failed, and not a recommendation."""
+    return [
+        name for name, check in checks.items() if not check["passed"] and not check.get("advisory")
+    ]
+
+
+def outside_recommendations(checks: dict[str, dict[str, Any]]) -> list[str]:
+    """The recommendations the episode is outside of: measured and shown, the Director's to
+    decide (2026-10-13)."""
+    return [name for name, check in checks.items() if not check["passed"] and check.get("advisory")]
 
 
 def motion_clip_limit(session: Session) -> dict[str, Any] | None:
@@ -386,30 +540,23 @@ def motion_clip_limit(session: Session) -> dict[str, Any] | None:
     }
 
 
-def beat_clip_seconds(lines: list[dict[str, Any]]) -> float:
-    """The clip one beat's lines need, sized as the motion plan sizes a clip for words not
-    yet voiced (`assembler.clip_plan`, an ESTIMATED narration): the words as the voice says
-    them (`spoken_words`: a number is said in words) at SECONDS_PER_SPOKEN_WORD, a
-    SPEAKER_GAP_SECONDS breath between two speakers' takes (`speaker_segments`), the
-    estimate's margin and the scene's closing breath. A serial scene cuts to the next one
-    (`storyboard_from_episode`), so no dissolve is added.
+def beat_clip_seconds(lines: list[dict[str, Any]], *, when: Timing | None = None) -> float:
+    """The clip one shot's lines need on their own, sized as the motion plan sizes a clip for
+    words not yet voiced (the one estimate, `film_length.shot_clip_seconds`): each speaker's
+    words at their voice's high rate with the estimate's margin, the pauses between their runs
+    (a speaker change, an interruption), and the longest pause that can follow the shot (a
+    beat's end), on whole frames. A serial scene cuts to the next one
+    (`storyboard_from_episode`), so no dissolve is added. With the pause rules off, the legacy
+    SECONDS_PER_SPOKEN_WORD, SPEAKER_GAP_SECONDS and the closing breath.
     """
-    from app.media.assembler import (  # noqa: PLC0415 - the assembler is heavy; read when measured
-        NARRATION_ESTIMATE_MARGIN,
-        SECONDS_PER_SPOKEN_WORD,
-        SPOKEN_TAIL_SECONDS,
-        spoken_words,
-    )
-    from app.media.speaker_voices import SPEAKER_GAP_SECONDS, speaker_segments  # noqa: PLC0415
-
-    takes = speaker_segments(lines)
-    said = sum(spoken_words(take["text"]) for take in takes) * SECONDS_PER_SPOKEN_WORD
-    said += SPEAKER_GAP_SECONDS * max(0, len(takes) - 1)
-    return round(said * (1 + NARRATION_ESTIMATE_MARGIN) + SPOKEN_TAIL_SECONDS, 2)
+    return shot_clip_seconds(lines, when=when)
 
 
 def _filmable(
-    beats: list[dict], lines_by_beat: list[list[dict[str, Any]]], limit: dict[str, Any]
+    beats: list[dict],
+    lines_by_beat: list[list[dict[str, Any]]],
+    limit: dict[str, Any],
+    when: Timing | None = None,
 ) -> dict[str, Any]:
     """Every beat said within one clip of the serial's motion model (`motion_clip_limit`).
 
@@ -418,7 +565,12 @@ def _filmable(
     the camera can film: a beat longer than its clip slowed by a quarter is refused at
     assembly after its stills, clip and voice were bought (2026-10-10, LTX-2.5 at 10 s).
     """
-    needed = [beat_clip_seconds(lines) for lines in lines_by_beat]
+    # Since 2026-10-16 the montage cuts a beat into shots of its own (`montage.serial_shots`):
+    # what must fit one clip is the longest shot of the beat, not the beat; with the montage
+    # off, the beat as before. Each shot is sized in the episode, as the storyboard will
+    # freeze its pauses (`film_length.serial_clips`).
+    clips = serial_clips(lines_by_beat, [beat.get("part") for beat in beats], when=when)
+    needed = [max(shots) if shots else 0.0 for shots in clips]
     ceiling = float(limit["limit_seconds"])
     numbers = _beat_numbers(beats)
     outside = [n for n, s in zip(numbers, needed, strict=True) if s > ceiling + 1e-6]
@@ -464,15 +616,17 @@ def _concentration(beats: list[dict], day_events: int) -> dict[str, Any]:
     problems = []
     if not beats:
         problems.append("episodul nu are niciun beat de măsurat")
-    if uncited:
-        problems.append(f"beat-urile {', '.join(map(str, uncited))} nu citează niciun eveniment")
+    # Since 2026-10-16 a beat may cite nothing (the story's own beat) and one event may carry
+    # more of the story: crowding is measured and shown for the Director, not refused.
     if crowded:
         problems.append(
-            f"un singur eveniment este citat în {most} din {len(beats)} beat-uri; cel mult "
-            "jumătate, afară de ziua care are un singur eveniment"
+            f"un singur eveniment este citat în {most} din {len(beats)} beat-uri; "
+            "decide Directoarea"
         )
     return {
         "passed": not problems,
+        "advisory": bool(beats),
+        "uncited": uncited,
         "beats": len(beats),
         "citations": citations,
         "most_cited": most,
@@ -532,7 +686,8 @@ def episode_checks(
     beats = list(episode.beats_json or [])
     cited = list(episode.grounded_event_ids_json or [])
     roster_rows = list(log.roster_json or [])
-    names = NameBook(roster_rows, bibles_for_roster(session, roster_rows))
+    roster_bibles = bibles_for_roster(session, roster_rows)
+    names = NameBook(roster_rows, roster_bibles)
     # A v3 beat has its lines; a v2 beat's free dialogue is read into lines the same way the
     # storyboard reads it, so a name or a stage direction is never counted as speech.
     lines_by_beat = [beat_lines(beat, names) for beat in beats]
@@ -571,6 +726,9 @@ def episode_checks(
     carried = [str(continuity.get("summary") or "")]
     carried += [str(t) for t in (continuity.get("threads_opened") or [])]
     carried += [str(r) for r in (continuity.get("recurring") or [])]
+    for update in continuity.get("character_updates") or []:
+        if isinstance(update, dict):
+            carried.extend([str(update.get("key") or ""), str(update.get("state") or "")])
     # The plan for the next episode (S6) reaches the next writer's brief the same way.
     plan = continuity.get("next_episode")
     if isinstance(plan, dict):
@@ -582,6 +740,9 @@ def episode_checks(
 
     words = sum(_words(spoken_text(lines)) for lines in lines_by_beat)
     seconds = round(words / WORDS_PER_SECOND, 1)
+    # The film is estimated in the voices the render would speak it in (database reads only):
+    # each speaker's own rate and pauses, the narrator's («pauza vocii», 2026-10-16).
+    when = _serial_timing(session, roster_bibles)
 
     roster = [str(m.get("display_name")) for m in roster_rows if m.get("lifecycle") == "ACTIVE"]
     if v3:
@@ -611,14 +772,13 @@ def episode_checks(
 
     checks: dict[str, dict[str, Any]] = {
         "grounding": {
-            # An episode that cites nothing is not grounded: nothing was measured.
-            "passed": bool(cited) and not missing,
+            # Since 2026-10-16 the story may cite nothing (the day is its backdrop); what is
+            # cited must be in the day's log.
+            "passed": not missing,
             "cited": len(cited),
             "missing": missing,
             "reason": (
-                f"{len(missing)} evenimente citate nu sunt în jurnalul zilei"
-                if missing
-                else ("episodul nu citează niciun eveniment" if not cited else "")
+                f"{len(missing)} evenimente citate nu sunt în jurnalul zilei" if missing else ""
             ),
         },
         "privacy": {
@@ -652,21 +812,14 @@ def episode_checks(
                 if part
             ),
         },
-        "length": {
-            "passed": 0 < len(beats) <= MAX_BEATS and MIN_SECONDS <= seconds <= MAX_SECONDS,
-            "beats": len(beats),
-            "words": words,
-            "seconds": seconds,
-            "reason": (
-                ""
-                if 0 < len(beats) <= MAX_BEATS and MIN_SECONDS <= seconds <= MAX_SECONDS
-                else (
-                    f"{len(beats)} beat-uri și {seconds:.0f} secunde de dialog; "
-                    f"ținta este cel mult {MAX_BEATS} beat-uri și "
-                    f"{MIN_SECONDS:.0f}-{MAX_SECONDS:.0f} secunde"
-                )
-            ),
-        },
+        "length": _length(
+            beats,
+            seconds,
+            serial_film_length(lines_by_beat, [beat.get("part") for beat in beats], when=when),
+            when,
+            _serial_wall(session, when),
+        ),
+        "narration": _narration(lines_by_beat, v3),
         "words_per_beat": _words_per_beat(beats, lines_by_beat, v3),
         "concentration": _concentration(beats, len(projected)),
         "cast": cast_check,
@@ -690,8 +843,30 @@ def episode_checks(
     # A v2 episode is filmed whole by one voice and was never told the rule; a studio with
     # no motion model, or one whose longest clip nothing states, has nothing to measure.
     if v3 and (limit := motion_clip_limit(session)) is not None:
-        checks["filmable"] = _filmable(beats, lines_by_beat, limit)
+        checks["filmable"] = _filmable(beats, lines_by_beat, limit, when)
     return checks
+
+
+def _serial_wall(session: Session, when: Timing | None) -> float:
+    """The serial channel's wall, as its storyboard is frozen and its render fitted under it
+    (`pause_plan.channel_wall`: the OFFICE_SERIAL channel's Shorts maximum, never past the
+    rules' cap, or YouTube's limit with the rules off)."""
+    from app.media.pause_plan import channel_wall  # noqa: PLC0415
+
+    return channel_wall(session, "OFFICE_SERIAL", when.rules if when is not None else None)
+
+
+def _serial_timing(session: Session, bibles: Any) -> Timing:
+    """The serial estimate's timing: the pause rules, the serial's knobs, the measured voices,
+    and the narrator's and each speaker's voice as the render would resolve them
+    (`pause_plan.serial_voice_keys`); with the rules off, the legacy timing."""
+    from app.media import pauses as pause_rules  # noqa: PLC0415
+    from app.media.pause_plan import serial_voice_keys  # noqa: PLC0415
+
+    if pause_rules.active_rules() is None:
+        return timing(SERIAL)
+    narrator, speakers = serial_voice_keys(session, bibles if isinstance(bibles, dict) else {})
+    return timing(SERIAL, narrator=narrator, speakers=speakers)
 
 
 def draft_checks(
@@ -791,6 +966,7 @@ def review_facts(
                 "threads_closed",
                 "threads_opened",
                 "recurring",
+                "character_updates",
             )
         },
         "previously": {
@@ -806,11 +982,29 @@ def review_facts(
                 for thread in (state.threads_json if state else None) or []
             ],
             "recurring": list((state.recurring_json if state else None) or []),
+            "character_arcs": [
+                str(value)[len("CHARACTER_ARC|"):].replace("|", ": ", 1)
+                for value in (state.recurring_json if state else None) or []
+                if str(value).startswith("CHARACTER_ARC|")
+            ],
         },
         "measured": {
             name: {k: v for k, v in check.items() if k != "reason"}
             for name, check in checks.items()
         },
+        # What the checks only recommend and this episode is outside of (2026-10-13): hers to
+        # decide, with the measure in words. Never shed by `fit_to_budget`: a few short lines.
+        "recommendations": [
+            {
+                "check": name,
+                **{
+                    key: value
+                    for key, value in checks[name].items()
+                    if key not in ("reason", "passed", "advisory")
+                },
+            }
+            for name in outside_recommendations(checks)
+        ],
     }
 
 
@@ -913,21 +1107,28 @@ def _held_to_her_rubric(verdict: EpisodeVerdict, director_name: str) -> EpisodeV
             + (f" (în afara 1-5: {', '.join(outside)})" if outside else "")
         )
     low = [f"{part} {scores[part]}/5" for part in RUBRIC if scores[part] < RUBRIC_FLOOR]
-    if not low:
+    narrative_issues = quality_issues(verdict.quality)
+    if not low and not narrative_issues:
         return verdict
-    because = f"notele Directorului sub {RUBRIC_FLOOR}: {', '.join(low)}"
+    issues = (
+        ([f"notele Directorului sub {RUBRIC_FLOOR}: {', '.join(low)}"] if low else [])
+        + narrative_issues[:4]
+    )
     return verdict.model_copy(
         update={
             "verdict": "FAIL",
-            "reasons": [because, *verdict.reasons][:8],
-            "notes": (verdict.notes or f"Rescrie părțile notate slab ({', '.join(low)}).")[:1200],
+            "reasons": [*issues, *verdict.reasons][:8],
+            "notes": (verdict.notes or "Rescrie: " + "; ".join(issues))[:1200],
         }
     )
 
 
 def _approve(session: Session, episode: StoryEpisode, story: str, correlation: str) -> None:
     """The approval a PASS gets under the channel's policy: APPROVED as the Director's, her
-    one-sentence story as the note, the event, and the serial's canon advanced."""
+    one-sentence story as the note, the event, and the serial's canon advanced. The day's
+    other drafts are closed as superseded by it (`duplicates.close_superseded_drafts`): one
+    left standing was approved again the next morning (2026-10-16 23:15Z). The callers have
+    made sure the day has no approved episode yet (`duplicates.approved_sibling`)."""
     episode.status = "APPROVED"
     episode.reviewed_by = "director"
     episode.notes = (story or None) and story[:2000]
@@ -941,6 +1142,46 @@ def _approve(session: Session, episode: StoryEpisode, story: str, correlation: s
         correlation,
     ).event_id
     advance_continuity(session, episode, correlation)
+    close_superseded_drafts(session, episode, correlation)
+
+
+#: What the approval under the drafts cap writes as the episode's note.
+DRAFTS_CAP_NOTE = (
+    "Aprobat sub plafonul ciornelor zilei (Proprietarul, 2026-10-15: «publicăm ce avem»): "
+    "cea mai nouă ciornă, cu observațiile Directoarei ca lecție pentru episodul următor."
+)
+
+
+def approve_under_drafts_cap(
+    engine: Engine, episode_id: str, notes: str, correlation: str
+) -> dict[str, Any] | None:
+    """The day's newest draft, refused by the Director's reading alone, approved when the
+    day's drafts are spent: the Owner, 2026-10-15 («Nu putem să ne învârtim la nesfârșit
+    la același subiect … publicăm ce avem»). None — nothing changes — when the draft was
+    refused by the computed checks (a stranger cast, an event that did not happen: not
+    hers to wave through), or when the channel's policy does not let her approve alone.
+    Returns {"episode_id", "status": "APPROVED", "note"}."""
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        episode = session.get(StoryEpisode, episode_id)
+        if episode is None or str(episode.reviewed_by or "") != "director":
+            return None
+        if episode.status != "REJECTED" or not director_may_approve_episodes(session):
+            return None
+        if approved_sibling(session, episode) is not None:
+            return None  # the day has its approved episode: one day, one film
+        note = f"{DRAFTS_CAP_NOTE} Observațiile ei: {' '.join(str(notes or '').split())[:600]}"
+        _approve(session, episode, note, correlation)
+        append_event(
+            session,
+            "story.episode_approved_under_cap",
+            "story_episode",
+            episode.id,
+            4,
+            {"log_id": episode.log_id, "notes": str(notes or "")[:600]},
+            correlation,
+        )
+        return {"episode_id": episode.id, "status": "APPROVED", "note": note}
 
 
 def review_episode(
@@ -975,20 +1216,22 @@ def review_episode(
         facts = review_facts(session, episode, checks)
         title = episode.title
 
-    failed = [name for name, check in checks.items() if not check["passed"]]
+    failed = failed_rules(checks)
+    advised = outside_recommendations(checks)
     run_id: str | None = None
     if failed:
         reasons = [checks[name]["reason"] for name in failed if checks[name]["reason"]]
         verdict = EpisodeVerdict(
             verdict="FAIL",
-            reasons=reasons[:8],
-            notes="; ".join(reasons)[:1200],
+            reasons=reasons,
+            notes="; ".join(reasons),
             story="",
         )
     elif registry is not None and registry.registered_ids():
         prompt = (
             audience_language_line(language)
             + _INSTRUCTIONS
+            + director_instructions()
             + wrap_in_inert_boundary(
                 # A line or a scene could hold the boundary's closing tag and end the data
                 # early; it is broken up, as the showrunner's brief does with its events.
@@ -1006,7 +1249,7 @@ def review_episode(
             prompt,
             TEMPLATE_VERSION,
             correlation,
-            summary=f"Citesc episodul «{title[:80]}» înainte de filmare.",
+            summary=f"Citesc episodul «{title}» înainte de filmare.",
             max_tokens=3000,
             temperature=0.1,
             emit_message=False,
@@ -1026,8 +1269,11 @@ def review_episode(
         raise ReviewError("Niciun model de limbaj: Directorul nu poate citi episodul")
 
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         episode = session.get(StoryEpisode, episode_id)
         assert episode is not None  # read above, in this same process
+        if episode.status != "DRAFT" or episode.review_json:
+            raise ReviewError("Episodul a fost decis în timp ce Directorul îl citea")
         may_approve = (
             verdict.verdict == "PASS" and approve and director_may_approve_episodes(session)
         )
@@ -1039,6 +1285,8 @@ def review_episode(
             "notes": verdict.notes,
             "story": verdict.story,
             "scores": dict(verdict.scores),
+            "quality": [item.model_dump() for item in verdict.quality],
+            "quality_missing": not bool(verdict.quality),
             "template_version": TEMPLATE_VERSION,
             "run_id": run_id,
             "model_used": run_id is not None,
@@ -1058,21 +1306,26 @@ def review_episode(
                 "log_id": episode.log_id,
                 "verdict": verdict.verdict,
                 "checks_failed": failed,
+                "recommendations_outside": advised,
                 "model_used": run_id is not None,
             },
             correlation,
         ).event_id
         if verdict.verdict == "FAIL":
             episode.status = "REJECTED"
-            episode.notes = (verdict.notes or "; ".join(verdict.reasons))[:2000] or None
-            episode.reviewed_by = "director"
+            episode.notes = (verdict.notes or "; ".join(verdict.reasons)) or None
+            # A FAIL the computed rules gave without her reading is signed by the checks
+            # (2026-10-13): the cover and the list said «respins de Director» for a verdict
+            # she never gave («The Ninth Rewrite», 9 din 10 verificări, fără rubrică).
+            by = "director" if run_id is not None else "checks"
+            episode.reviewed_by = by
             episode.event_id = append_event(
                 session,
                 "story.episode_rejected",
                 "story_episode",
                 episode.id,
                 3,
-                {"log_id": episode.log_id, "reviewed_by": "director"},
+                {"log_id": episode.log_id, "reviewed_by": by},
                 correlation,
             ).event_id
             showrunner = agent_for_role(session, PREFERRED_SHOWRUNNER_ROLE)
@@ -1080,24 +1333,27 @@ def review_episode(
                 post_message(
                     session,
                     intent="HANDOFF",
-                    subject=f"Rescris: {title[:110]}"[:200],
+                    subject=f"Rescris: {title}",
                     body={"episode_id": episode.id, "verdict": "FAIL"},
-                    body_text=f"{episode.notes} — {director_name}"[:4000],
+                    body_text=f"{episode.notes} — {director_name}",
                     from_agent_id=director_id,
                     to_agent_id=showrunner.id,
                     # The run is on the episode's review record; the letter is the note.
                     run_id=None,
                     correlation_id=correlation,
                 )
+        elif may_approve and (kept := approved_sibling(session, episode)) is not None:
+            # The day already has its approved episode: a second would be a second film.
+            close_as_superseded(session, episode, kept, correlation)
         elif may_approve:
             _approve(session, episode, verdict.story, correlation)
         remember(
             session,
             memory_class="AGENT_OPINION",
             content=(
-                f"{verdict.verdict} for the episode “{title[:120]}”"
+                f"{verdict.verdict} for the episode “{title}”"
                 + (f": {'; '.join(verdict.reasons)}" if verdict.reasons else ".")
-            )[:600],
+            ),
             source_type="run" if run_id else "system",
             source_id=run_id or episode.id,
             agent_id=director_id,
@@ -1112,6 +1368,8 @@ def review_episode(
         "notes": verdict.notes,
         "story": verdict.story,
         "scores": dict(verdict.scores),
+        "quality": [item.model_dump() for item in verdict.quality],
+        "quality_missing": not bool(verdict.quality),
         "run_id": run_id,
         "model_used": run_id is not None,
         "approved_by_policy": status == "APPROVED",
@@ -1173,9 +1431,16 @@ def approve_reviewed_episode(engine: Engine, episode_id: str, correlation_id: st
     chose it: under the channel's policy it is APPROVED as the Director's and canon advances;
     without the policy it stays a DRAFT with its review, for the Owner's `decide_episode`.
     Returns ``{"episode_id", "status", "approved_by_policy"}``; an episode that is not a held
-    PASS is left as it is."""
+    PASS is left as it is.
+
+    A superseded PASS is never approved (2026-10-17, `duplicates.superseded_by`): one whose day
+    already has its approved episode is closed as superseded by it (REJECTED, with the
+    reason); one a newer standing version of it replaced is left as it is, for that version.
+    Measured 2026-10-16 23:15Z: an older held PASS, rewritten and approved the evening before,
+    was approved again here and became a second film of the same day."""
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         episode = session.get(StoryEpisode, episode_id)
         if episode is None:
             raise ReviewError("Episodul nu există")
@@ -1185,6 +1450,16 @@ def approve_reviewed_episode(engine: Engine, episode_id: str, correlation_id: st
                 "episode_id": episode_id,
                 "status": episode.status,
                 "approved_by_policy": bool(review.get("approved_by_policy")),
+            }
+        newer = superseded_by(session, episode)
+        if newer is not None:
+            if newer.status == "APPROVED":
+                close_as_superseded(session, episode, newer, correlation)
+            return {
+                "episode_id": episode_id,
+                "status": episode.status,
+                "approved_by_policy": False,
+                "superseded_by": newer.id,
             }
         may_approve = director_may_approve_episodes(session)
         episode.review_json = {
@@ -1347,7 +1622,7 @@ def judged_review(
         first=first,
         rewrite=rewrite,
         correlation_id=correlation,
-        rounds=rounds,
+        rounds=2 if rounds is None else min(rounds, 2),
     )
     shipped = outcome.shipped
     shipped_id = shipped.version.id
@@ -1366,7 +1641,7 @@ def judged_review(
                     session,
                     row,
                     f"Judecata editorială a ales versiunea {shipped.number} "
-                    f"(«{shipped.version.title[:80]}», {chosen}) în locul acesteia ({scored}).",
+                    f"(«{shipped.version.title}», {chosen}) în locul acesteia ({scored}).",
                     correlation,
                     superseded_by=shipped_id,
                 )
@@ -1383,5 +1658,6 @@ def judged_review(
         "episode_id": shipped_id,
         "status": approval["status"],
         "approved_by_policy": approval["approved_by_policy"],
+        "superseded_by": approval.get("superseded_by"),
         "editorial": outcome.record(),
     }

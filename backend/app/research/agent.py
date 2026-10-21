@@ -37,7 +37,7 @@ from pydantic import (
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.agents.identity import blocker_of, clipped, parse_structured
+from app.agents.identity import blocker_of, clipped, complete_schema, parse_structured
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
 from app.agents.services import run_agent_task
@@ -492,7 +492,10 @@ def propose_topics(
     rejected: list[dict[str, str]] = []
     for raw in loose.candidates[:MAX_CANDIDATES]:
         try:
-            candidates.append(TopicCandidate.model_validate(raw))
+            # The complete answer, never refused for a long field (2026-10-14/15: the
+            # validators keep the text whole, so the schema's caps are lifted the same way
+            # `read_structured` lifts them; `clipped` is kept for the field order).
+            candidates.append(complete_schema(TopicCandidate).model_validate(raw))
         except ValidationError as exc:
             field = ".".join(str(x) for x in exc.errors()[0]["loc"]) if exc.errors() else "?"
             rejected.append(
@@ -641,6 +644,17 @@ def search_queries(title: str, topic: str = "") -> list[str]:
     three or more words is also asked as its first two; at most six searches.
     """
     queries: list[str] = []
+    # A capital that opens a sentence is not a name: «Discovery that the universe's
+    # expansion is accelerating…» (2026-10-14, d7d80450) searched Wikipedia for «Discovery»,
+    # found the album, the channel and the shuttle, and the studio read those instead of
+    # the Researcher's right pages. A word is a name at a sentence's start only when it is
+    # also capitalised inside a sentence, is an acronym, or starts a run of names.
+    inside: set[str] = set()
+    for text in (title, topic):
+        for index, word in enumerate(str(text).split()):
+            bare = re.sub(r"[’']s$", "", word.strip("'\"“”‘’(),.:;!?"))
+            if index and bare and bare[0].isupper():
+                inside.add(bare.lower())
     for text in (title, topic):
         words = [w.strip("'\"“”‘’(),.:;!?") for w in str(text).split()]
         run: list[str] = []
@@ -658,12 +672,24 @@ def search_queries(title: str, topic: str = "") -> list[str]:
         if run:
             runs.append(run)
         for group in runs:
+            if (
+                len(group) == 1
+                and words
+                and group[0] == re.sub(r"[’']s$", "", words[0])
+                and group[0].lower() not in inside
+                and not (group[0].isupper() and len(group[0]) >= 3)
+            ):
+                continue  # the sentence's first word, capitalised for that reason alone
             queries.append(" ".join(group[:4]))
             if len(group) >= 3:
                 queries.append(" ".join(group[:2]))
+            if len(group) >= 5:
+                # A title-case title is one long «run» («How Distant Explosions Revealed
+                # Dark Energy», 2026-10-15): its last two words are what it is about.
+                queries.append(" ".join(group[-2:]))
             if group[0].isupper() and len(group[0]) >= 3:
                 queries.append(group[0])  # an acronym is a name on its own: UNESCO, CERN, LHC
-    ordered: list[str] = []
+    ordered: list[str] = list(designations(title, topic))  # the subject's own name first
     for query in sorted(queries, key=lambda q: -len(q)):
         if query and query not in ordered and len(query) >= 3:
             ordered.append(query)
@@ -698,6 +724,133 @@ _FOUND_INSTRUCTIONS = (
     "not in this list is a guess and is not fetched today:\n"
 )
 #: Why a guessed address is set aside when real pages exist; shown in the run's record.
+#: Words that say nothing about a topic (a page is relevant by its other words).
+_PAGE_STOPWORDS = frozenset(
+    {
+        "about",
+        "after",
+        "before",
+        "being",
+        "between",
+        "could",
+        "every",
+        "first",
+        "from",
+        "their",
+        "there",
+        "these",
+        "thing",
+        "things",
+        "those",
+        "through",
+        "under",
+        "where",
+        "which",
+        "while",
+        "with",
+        "would",
+        "wikipedia",
+        "other",
+        "should",
+        "still",
+        "never",
+        "always",
+        "during",
+        "against",
+        "without",
+    }
+)
+
+
+#: A catalogue designation — HD 189733b, NGC 4993, PSR 1913, Kepler 452b — is the one word
+#: of a topic no other page shares: a page about the subject carries it, a page about a
+#: band called Glass Animals does not.
+_DESIGNATION = re.compile(r"\b([A-Z]{1,6})[\s\u202f\u2011\-]?(\d{2,}[A-Za-z]?)\b")
+
+
+def designations(*texts: str) -> list[str]:
+    """The catalogue designations in the texts, as written («HD 189733b»), each once."""
+    found: list[str] = []
+    for text in texts:
+        for letters, digits in _DESIGNATION.findall(str(text or "")):
+            said = f"{letters} {digits}"
+            if said not in found:
+                found.append(said)
+    return found
+
+
+def _squeeze(text: str) -> str:
+    return re.sub(r"[\s\u202f\u2011\-]+", "", str(text or "")).casefold()
+
+
+def page_is_about(text: str, title: str, topic: str = "", core_fact: str = "") -> str | None:
+    """Why a fetched page is NOT about the topic (Romanian, for the record), or None when it
+    is. 2026-10-15, 89101f50 «Glass Rain on a Distant Hot Jupiter»: the suggestion search for
+    «Glass Rain» and «Distant Hot» found Glass Animals (a band) and Distant Origin (a Star
+    Trek episode), both read and «verified» into 24 claims the writer rightly refused; the
+    same day Supernova's «Discovery» found the channel. A title shares a word with anything;
+    the page's own text does not: a page about the subject carries its designation (HD
+    189733b) when the subject has one, and otherwise several of the subject's own words."""
+    body = _squeeze(text)
+    if not body:
+        return "pagina nu are text"
+    names = designations(title, topic, core_fact)
+    if names:
+        if any(_squeeze(name) in body for name in names):
+            return None
+        return f"pagina nu numește subiectul ({', '.join(names[:3])})"
+    wanted = _topic_words(topic, core_fact)
+    if len(wanted) < 4:
+        wanted |= _topic_words(title)  # a thin subject line: the title's words count too
+    if not wanted:
+        return None
+    low = str(text or "").casefold()
+    present = {word for word in wanted if word in low}
+    # A rich subject (a thesis sentence) is matched on several of its words; a thin one
+    # («internet», «Example domains») on any one of them.
+    needed = 4 if len(wanted) >= 8 else (3 if len(wanted) >= 4 else 1)
+    if len(present) >= needed:
+        return None
+    return (
+        f"pagina spune doar {len(present)} din cuvintele subiectului "
+        f"({', '.join(sorted(wanted)[:6])}…)"
+    )
+
+
+def _topic_words(*texts: str) -> set[str]:
+    words: set[str] = set()
+    for text in texts:
+        for word in re.findall(r"[A-Za-zÀ-ž]+", str(text or "")):
+            low = word.lower()
+            if len(low) >= 5 and low not in _PAGE_STOPWORDS:
+                words.add(low)
+                if low.endswith("s"):
+                    words.add(low[:-1])
+    return words
+
+
+def relevant_pages(
+    found: list[dict[str, Any]], title: str, topic: str = "", thesis: str = ""
+) -> list[dict[str, Any]]:
+    """The found pages whose title shares a word of substance with the topic. 2026-10-15,
+    d7d80450: the suggestion search for «Type Ia» returned Type Ia supernova — and Type Iax
+    supernova, Type Ia sensory fiber and Type O Negative, read and «verified» into 40 claims
+    about a metal band; the day before, «Discovery» found the channel, the album and the
+    ship. A page with no word of the topic in its title is not read. With no words to
+    compare (an empty topic), every page stays."""
+    wanted = _topic_words(title, topic, thesis)
+    if not wanted:
+        return list(found)
+    kept: list[dict[str, Any]] = []
+    for page in found:
+        name = " ".join(
+            (str(page.get("title") or ""), str(page.get("url") or "").rsplit("/", 1)[-1])
+        ).replace("_", " ")
+        if _topic_words(name) & wanted:
+            kept.append(page)
+    return kept
+
+
 GUESS_SET_ASIDE = (
     "adresă ghicită, nefolosită: studioul a găsit pagini reale pentru subiect și citește "
     "doar dintre ele"
@@ -736,6 +889,9 @@ def gather_sources(
             raise NoResearcher("Niciun cercetător activ")
         researcher_id = researcher.id
         title, angle = topic.title, topic.angle
+        thesis = topic.thesis_json if isinstance(topic.thesis_json, dict) else {}
+        core_fact = " ".join(str(v) for v in thesis.values() if isinstance(v, str))
+        subject_line = str(topic.topic or "")
         planned = [h for h in (topic.source_plan_json or []) if h in hosts]
         already = {
             row.url
@@ -750,11 +906,13 @@ def gather_sources(
     # plan that starts from them is read. `found_via` says which way found what and how
     # many engine results fell outside the allowlist.
     found_via: dict[str, Any] = {}
-    found = [
+    found_all = [
         p
-        for p in find_pages(settings, engine, search_queries(title, topic.topic), report=found_via)
+        for p in find_pages(settings, engine, search_queries(title, subject_line), report=found_via)
         if p["url"] not in already
     ]
+    found = relevant_pages(found_all, title, subject_line, core_fact)
+    found_via["set_aside_irrelevant"] = [p["url"] for p in found_all if p not in found]
     payload = json.dumps({"title": title, "angle": angle}, ensure_ascii=False)
     prompt = _SOURCE_INSTRUCTIONS.format(limit=limit, hosts=", ".join(shortlist[:12]))
     if found:
@@ -792,7 +950,16 @@ def gather_sources(
 
     def read(url: str) -> None:
         try:
-            stored = retrieve_and_ingest(engine, settings, url, str(uuid4()), topic_id=topic_id)
+            stored = retrieve_and_ingest(
+                engine,
+                settings,
+                url,
+                str(uuid4()),
+                topic_id=topic_id,
+                # A page that is not about the subject is not a source: not stored, not
+                # read into claims (`page_is_about`).
+                accept=lambda source: page_is_about(source.text, title, subject_line, core_fact),
+            )
             fetched.append(
                 {
                     "url": stored["source"]["url"],
@@ -813,9 +980,12 @@ def gather_sources(
         url = candidate.url.strip()
         if url.rstrip("/") in {u.rstrip("/") for u in already}:
             continue
-        if found and url.rstrip("/") not in found_urls:
-            # Real pages exist for this topic: a guess is not fetched, and its being set
-            # aside is recorded so the Director can see the plan and the choice.
+        if len(found) >= limit and url.rstrip("/") not in found_urls:
+            # Enough real pages exist for this topic: a guess is not fetched, and its
+            # being set aside is recorded so the Director can see the plan and the choice.
+            # Fewer relevant pages than the limit (2026-10-15: one of four, the rest a
+            # metal band and a nerve fibre): the Researcher's own addresses are read too —
+            # a wrong guess answers 404 and costs nothing.
             failed.append({"url": url, "why": GUESS_SET_ASIDE})
             continue
         read(url)

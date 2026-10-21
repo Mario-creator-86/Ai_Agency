@@ -59,7 +59,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from app.agents.identity import clipped, cut_at_word
+from app.agents.identity import clipped
 from app.agents.memory import agent_for_role
 from app.agents.messages import post_message
 from app.agents.models import AgentMessage
@@ -351,11 +351,28 @@ _KIND_NOTES = {
         "not to any story.\n"
     ),
     SERIAL_EPISODE: (
-        "This is an episode of the studio's own workplace serial, a dramatisation: it needs no "
-        "sources and you do not judge it for being about the studio. A status meeting with "
-        "clean lines is not a story: without a stake, a conflict and a change of register, the "
-        "hook, the moment and the punchline score low, however neat the lines. Every line must "
-        "stand alone for someone who has never seen the serial and knows nobody in the room.\n"
+        "Inside The Nexus is fictional workplace satire expressed as an ongoing "
+        "CHARACTER-DRIVEN ENSEMBLE SERIAL, not a factual report. Its audience should "
+        "laugh, cringe, worry, sympathize or feel suspense, and want the next chapter. "
+        "The chosen episode may be comedy, friendship, mystery, rivalry, betrayal, "
+        "social embarrassment, revenge, romance, or a believable combination. "
+        "Romance is optional: never reward or demand it merely as a genre checkbox. "
+        "Score what THIS episode promises, not whether it matches a romantic template. "
+        "Reward a clear desire and stakes, distinctive characters, believable choices, "
+        "a meaningful before/after change in each scene, earned surprise and humor "
+        "when appropriate. Scene transitions should follow BUT or THEREFORE, not "
+        "a sequence of unrelated AND THEN events. If a beat could be removed without "
+        "changing the episode or its future, it is filler. Dialogue should express "
+        "personalities without turning professional traits into forced verbal tics. "
+        "A concrete local resolution with a naturally consequential next question "
+        "beats a generic cliffhanger or moral speech. Enforce continuity over "
+        "dozens of episodes: no forgotten promises, effortless forgiveness or "
+        "sudden contradiction of permanent character canon. Not every existing "
+        "plot thread must appear in every chapter. Operational events are optional "
+        "background only; never demand a log-based scene. Protect privacy and "
+        "do not portray invented production or owner decisions as factual. "
+        "The narrator's opening and ending are a form requirement, not a "
+        "replacement for a dramatic hook or compelling final button.\n"
     ),
 }
 _SHAPE = (
@@ -390,10 +407,8 @@ def judgement_prompt(
     """
     if kind not in KINDS:
         raise ValueError(f"unknown kind {kind!r}; one of {KINDS}")
-    shown = cut_at_word(text, TEXT_BUDGET)
+    shown = text
     payload: dict[str, Any] = {"text": shown, "context": context}
-    if len(shown) < len(text):
-        payload["text_cut_at"] = len(shown)
     data = json.dumps(payload, ensure_ascii=False, default=str).replace(
         "</untrusted_source_evidence", "<\\/untrusted_source_evidence"
     )
@@ -438,7 +453,7 @@ def judge(
         logger.info("editorial_judgement_without_director", extra={"kind": kind})
         return None
     what = "short-ul" if kind == FACTUAL_SHORT else "episodul"
-    title = str(context.get("title") or "")[:60]
+    title = str(context.get("title") or "")
     parsed, first, second = structured_run(
         engine,
         registry,
@@ -790,7 +805,7 @@ def letter_to_owner(
     what = "short-ul" if outcome.kind == FACTUAL_SHORT else "episodul"
     times = "o dată" if len(outcome.rounds) == 1 else f"de {len(outcome.rounds)} ori"
     body_text = (
-        f"Am citit {what} «{title[:120]}» {times} și am trimis scenaristului câte un brief la "
+        f"Am citit {what} «{title}» {times} și am trimis scenaristului câte un brief la "
         f"fiecare versiune sub prag; {_stopped_ro(outcome)}. "
         f"Pleacă versiunea {outcome.shipped.number}, cea mai bine notată: {judgement.total}/50 "
         f"(pragul este {PASS_TOTAL}/50, niciun criteriu sub {CRITERION_FLOOR}). Notele: {scored}. "
@@ -801,9 +816,9 @@ def letter_to_owner(
         session,
         intent="STATUS",
         subject=(
-            f"Judecata editorială: «{title[:70]}» pleacă sub prag, {judgement.total}/50 după "
+            f"Judecata editorială: «{title}» pleacă sub prag, {judgement.total}/50 după "
             f"{count(len(outcome.rounds), 'versiune', 'versiuni')}"
-        )[:200],
+        ),
         body={
             "kind": outcome.kind,
             "version_id": outcome.shipped.version.id,
@@ -816,7 +831,7 @@ def letter_to_owner(
             "threshold": {"total": PASS_TOTAL, "floor": CRITERION_FLOOR},
             "stopped": outcome.stopped,
         },
-        body_text=body_text[:4000],
+        body_text=body_text,
         from_agent_id=director_id,
         to_owner=True,
         correlation_id=correlation_id,

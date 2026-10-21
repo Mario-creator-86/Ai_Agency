@@ -47,6 +47,40 @@ OWNER_REPEAT_DAYS = 7
 #: that again did not confirm its stop, the worker failing again. They are his by the rule of
 #: 2026-10-12 (accounts, authorisations, security) and must reach him each time they happen.
 OWNER_ASKING_INTENTS = frozenset({"REQUEST_INFO", "REQUEST_REVIEW", "CHALLENGE", "ESCALATE"})
+#: Letters written «to the Owner» that are the Director's own matter under his rule of
+#: 2026-10-12 («nu trebuie să ajungă la mine, este la Director»: only accounts, authorisations
+#: and security are his; money goes through cards): a day the studio cut and resumes itself, the
+#: GPU guard's own off, a film continuation or purchase the studio itself interrupted and takes
+#: up again, her acceptance or refusal of pictures and films after quality control, her
+#: editorial judgement of a script. 2026-10-15 19:30Z he counted fifteen open letters and one
+#: real card; fourteen were these. Such a letter goes to the Director's inbox instead.
+DIRECTOR_MATTER_KINDS = frozenset(
+    {
+        "day_interrupted",
+        "runpod_gpu_guard_off",
+        "film_continue_interrupted",
+        "film_purchase_abandoned",
+        "owner_director_qc",
+        "owner_director_look",
+        "factual_short",
+    }
+)
+#: The shooting-sheet letter is his only when the film waits on HIS decision (a paid step
+#: above his cap: NEEDS_APPROVAL); a film that waits on the studio's own walk is hers.
+SHEET_LETTER_DIRECTOR_STATUSES = frozenset({"WAITING", "STOPPED", "SKIPPED"})
+
+
+def directors_matter(body: dict[str, Any] | None) -> bool:
+    """Whether a letter meant for the Owner is, by his letters rule, the Director's."""
+    data = body if isinstance(body, dict) else {}
+    kind = str(data.get("kind") or "")
+    if kind in DIRECTOR_MATTER_KINDS:
+        return True
+    return kind == "owner_shooting_sheet" and str(data.get("status") or "") in (
+        SHEET_LETTER_DIRECTOR_STATUSES
+    )
+
+
 #: The letters each of which is money that went out (`economy.accountant._letter_each_time`:
 #: «none may be folded into another»): a second one with the same words is a second purchase,
 #: so neither the week's rule nor a new text over the open one applies to them; they keep the
@@ -86,13 +120,23 @@ def post_message(
     (`OWNER_ASKING_INTENTS`). Either way the letter returned is the one he reads."""
     if intent not in MESSAGE_INTENTS:
         raise MessageError(f"Unknown message intent {intent!r}")
+    if to_owner and directors_matter(body):
+        from app.agents.memory import agent_for_role  # noqa: PLC0415 - memory imports us
+
+        director = agent_for_role(session, "Director")
+        if director is not None:
+            # His letters rule (2026-10-12): the Director's matter goes to her inbox, in
+            # the same words, and never counts among what waits for him.
+            to_owner = False
+            to_agent_id = director.id
+            body = {**dict(body or {}), "to": "Director", "redirected_from": "Owner"}
     if to_owner:
         to_agent_id = None
         body = {**dict(body or {}), "to": "Owner", "owner_attention": True}
-    title = " ".join(str(subject).split())[:200]
+    title = " ".join(str(subject).split())
     if not title:
         raise MessageError("A message needs a subject")
-    letter = str(body_text or "").strip()[:8000] or None
+    letter = str(body_text or "").strip() or None
     if to_owner:
         each_time = str(dict(body or {}).get("kind") or "") in OWNER_LETTERS_EACH_TIME
         # One open letter per matter. The same subject already waiting for the Owner's answer
@@ -211,7 +255,7 @@ def repeated_letter(
     open or closed, or None: a letter that would say again what was said. ``to_owner`` looks
     among the letters to the Owner; otherwise among the other letters ``from_agent_id`` wrote
     (of ``kind`` when given)."""
-    title = " ".join(str(subject).split())[:200]
+    title = " ".join(str(subject).split())
     since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     query = select(AgentMessage).where(
         AgentMessage.subject == title, AgentMessage.created_at >= since
@@ -307,7 +351,7 @@ def forward_message(
     return post_message(
         session,
         intent="HANDOFF",
-        subject=("Fwd: " + original.subject)[:200],
+        subject=("Fwd: " + original.subject),
         body={"forwarded_message_id": original.id, "original_intent": original.intent},
         body_text=note,
         from_agent_id=from_agent_id,
@@ -334,7 +378,7 @@ def thread_view(engine: Engine, thread_id: str) -> dict[str, Any]:
         rows = thread_messages(session, thread_id)
         return {
             "thread_id": thread_id,
-            "subject": rows[0].subject if rows else "",
+            "subject": message_view(rows[0], names)["subject"] if rows else "",
             "messages": [message_view(r, names) for r in rows],
         }
 
@@ -356,7 +400,7 @@ def resolve_message(
     if row.status == "RESOLVED":
         raise MessageError("Message is already resolved")
     row.status = status
-    row.resolution = " ".join(str(resolution).split())[:2000] or None
+    row.resolution = str(resolution).strip() or None
     row.resolved_by = resolved_by[:100]
     row.resolved_at = utc_now()
     event, _ = append_event_with_outbox(
@@ -365,7 +409,14 @@ def resolve_message(
         "agent_message",
         row.id,
         2,
-        {"intent": row.intent, "subject": row.subject, "resolved_by": row.resolved_by},
+        {
+            "intent": row.intent,
+            "subject": row.subject,
+            "resolved_by": row.resolved_by,
+            # The register draws this event: an ask the studio's sweep closed with nobody's
+            # answer is never «a răspuns» there (STUB-006, 2026-10-16).
+            "expired": closed_unanswered(row),
+        },
         correlation_id or str(uuid4()),
     )
     row.event_id = event.event_id
@@ -407,8 +458,30 @@ def letters_for_owner(engine: Engine, *, open_only: bool = True, limit: int = 50
         return [message_view(r, names) for r in rows if is_for_owner(r)][:limit]
 
 
+#: Who closes an ask the studio's sweep expires (`agents.inbox.expire_stale_asks`). The sweep
+#: closes it ANSWERED, never RESOLVED — the sheet repair resolves its own report later, and a
+#: RESOLVED letter cannot be resolved again — so this name is what tells such a letter from
+#: one an employee answered (STUB-006, 2026-10-16: the page showed it as «răspuns»).
+EXPIRED_BY = "Studioul (cereri expirate)"
+
+
+def closed_unanswered(row: AgentMessage) -> bool:
+    """Whether the studio's sweep closed this letter with nobody's answer (`EXPIRED_BY`)."""
+    return row.status == "ANSWERED" and row.resolved_by == EXPIRED_BY
+
+
 def message_view(row: AgentMessage, names: dict[str, str] | None = None) -> dict[str, Any]:
     names = names or {}
+    body = row.body_json if isinstance(row.body_json, dict) else {}
+    subject = row.subject
+    if (
+        row.intent == "STATUS"
+        and body.get("kind") == "owner_director_qc"
+        and body.get("outcome") == "BOUGHT_WAITING"
+    ):
+        subject = subject.replace(
+            "așteaptă aprobarea preluării noi", "studioul verifică și continuă refacerea"
+        )
     return {
         "id": row.id,
         "intent": row.intent,
@@ -421,10 +494,15 @@ def message_view(row: AgentMessage, names: dict[str, str] | None = None) -> dict
             else (names.get(row.to_agent_id or "", None) if row.to_agent_id else "Director")
         ),
         "for_owner": is_for_owner(row),
-        "subject": row.subject,
+        "requires_owner_response": is_for_owner(row)
+        and row.status == "OPEN"
+        and (row.intent in OWNER_ASKING_INTENTS or (row.body_json or {}).get("outcome") == "ASKED"),
+        "subject": subject,
         "body_json": row.body_json,
         "run_id": row.run_id,
         "status": row.status,
+        # Closed by the studio's sweep, unanswered: the page says so instead of «răspuns».
+        "expired": closed_unanswered(row),
         "resolution": row.resolution,
         "resolved_by": row.resolved_by,
         "created_at": row.created_at,

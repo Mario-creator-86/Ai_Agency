@@ -118,14 +118,21 @@ def test_a_line_nobody_speaks_and_a_speaker_with_no_bible_are_the_narrators():
         {KAEL: "kael-bible"},
     )
 
+    # Each take carries how it is said (2026-10-15): nothing here, so empty.
     assert takes == [
         {
             "speaker": None,
             "character_id": None,
             "text": "The render bay, before anyone arrives. Still quiet.",
+            "direction": "",
         },
-        {"speaker": "The Owner", "character_id": None, "text": "Morning."},
-        {"speaker": KAEL, "character_id": "kael-bible", "text": "What is the runtime?"},
+        {"speaker": "The Owner", "character_id": None, "text": "Morning.", "direction": ""},
+        {
+            "speaker": KAEL,
+            "character_id": "kael-bible",
+            "text": "What is the runtime?",
+            "direction": "",
+        },
     ]
 
 
@@ -195,7 +202,7 @@ def test_a_model_that_ignores_the_look_cannot_restyle_the_shot(engine, staffed, 
         # What the model said about the shot's action is kept. Its camera sentence is read
         # for the move only (48bbcd1): the still's framing is the look's shot size, so a lens
         # the model named never reaches the picture.
-        assert "swivels his chair" in prompt
+        assert "stands beside the office desk" in prompt
         assert "35mm lens" not in prompt
         assert scene.prompt_json["from_model"] is True
 
@@ -308,9 +315,12 @@ def test_the_brief_asks_for_a_three_second_hook_and_a_button_that_calls_back(
     write_episode(engine, registry(), log["id"], str(uuid4()))
 
     brief = seen[0]
-    assert "first 3 seconds" in brief and "never a greeting" in brief
-    assert "at most 8 words" in brief
-    assert "calls back" in brief and "nothing is said after it" in brief
+    # Since 2026-10-16 the Narrator opens (where we are, who, what is at stake) and closes.
+    assert "OPENS WITH THE NARRATOR" in brief and "where we are" in brief
+    assert "ONE closing sentence of the NARRATOR" in brief
+    assert "calls back" in brief
     assert "every beat changes something" in brief.casefold()
-    assert "only by its subject" in brief
+    # Real letters cannot acquire fabricated quotations, but fiction may parody them.
+    assert "A real letter whose text is not provided" in brief
     assert "never invent what it said" in brief
+    assert "fictional" in brief and "parody letter" in brief

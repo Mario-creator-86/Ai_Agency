@@ -388,6 +388,9 @@ test('a bought shot shows its clip QC: passed, failed with the reasons, or waiti
   assert.equal(clipQcWords(report('PASSED')), 'Controlul clipului: trecut.');
   assert.equal(clipQcWords(report('FAILED', ['clipul stă pe loc', 'o tăietură la 2,1 s'])), 'Controlul clipului: picat — clipul stă pe loc; o tăietură la 2,1 s.');
   assert.equal(clipQcWords(report('UNCHECKED', ['nicio vedere disponibilă'])), 'Controlul clipului: neverificat (nicio vedere disponibilă) — așteaptă privirea ta.');
+  // A clip kept under his renders cap did not pass, and is not waiting for his look either.
+  assert.equal(clipQcWords({ ...report('ACCEPTED_UNDER_CAP', ['o față spre cameră']), chosen_by: 'director' }), 'Controlul clipului: picat — o față spre cameră; rămâne sub plafonul tău de randări, ales de Directoare.');
+  assert.equal(clipQcWords({ ...report('ACCEPTED_UNDER_CAP'), chosen_by: 'studio' }), 'Controlul clipului: picat; rămâne sub plafonul tău de randări, păstrat de studio.');
   const s = withHero('PAID');
   s.scenes[0].shots[0].clip_qc = report('FAILED', ['o față spre cameră']);
   const html = sheetHtml(s, { escape: e });
@@ -1229,4 +1232,18 @@ test('every status a take can have has its own words (backend SCENE_TAKE_STATUSE
     }
   }
   assert.equal(takeStatusWords('LOST', 'RunPod'), 'Pierdută: rezultatul nu a mai putut fi ridicat de la furnizor');
+});
+
+
+test('deferred redo is a read-only option with unknown price, never a purchase confirmation', () => {
+  const sheet = structuredClone(SHEET);
+  sheet.scenes[0].redo = { still: { deferred: true }, motion: { deferred: true } };
+  sheet.footer.audio_redo = { deferred: true };
+  const button = redoButtons(sheet.scenes[0])[0];
+  assert.equal(button.deferred, true);
+  assert.equal(button.plan_hash, null);
+  assert.match(button.price_ro, /la cerere/);
+  const html = sheetHtml(sheet, { escape: e });
+  assert.match(html, /data-sheet-action="load-redo"/);
+  assert.equal(redoConfirmHtml(sheet, redoKey('still', sheet.scenes[0].scene_index), { escape: e }), '');
 });

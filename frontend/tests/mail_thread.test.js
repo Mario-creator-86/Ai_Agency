@@ -58,7 +58,7 @@ test('a letter to the Owner is marked as waiting for the Owner while it is open'
 
 // PAGE_OWNER_DAY (PAGE-02): a sheet letter is a key to the film's sheet, never a raw API path.
 test('a sheet letter shows «Deschide foaia de filmare» and never prints the /api/v1 path', () => {
-  const id = '00000000-0000-4000-8000-00000000008e';
+  const id = '3ec1740c-0000-4000-8000-000000000001';
   const html = renderThread(
     {
       thread_id: 't-5',
@@ -108,4 +108,20 @@ test('a report the studio wrote by itself is not shown as written by the Owner',
   );
   assert.ok(html.includes('Studioul (verificare automată)'), html);
   assert.equal((html.match(/Proprietar/g) || []).length, 1, "only the Owner's own letter is his");
+});
+
+
+test('an Owner status report does not ask for an answer', () => {
+  const html = renderThread({ thread_id: 'notice', subject: 'Refacerea continuă', messages: [
+    { id: 'n', intent: 'STATUS', to_name: 'Owner', for_owner: true, status: 'OPEN', body_json: { outcome: 'BOUGHT_WAITING' }, body_text: 'Studioul verifică refacerea.' }
+  ] }, options);
+  assert.ok(!html.includes('așteaptă răspunsul tău'));
+  assert.ok(!html.includes('is-owner'));
+});
+
+test('an actual paid approval still asks the Owner even in a status envelope', () => {
+  const html = renderThread({ thread_id: 'approval', subject: 'Aprobă', messages: [
+    { id: 'a', intent: 'STATUS', to_name: 'Owner', for_owner: true, status: 'OPEN', body_json: { outcome: 'ASKED', approval_id: 'paid-1' } }
+  ] }, options);
+  assert.ok(html.includes('așteaptă răspunsul tău'));
 });

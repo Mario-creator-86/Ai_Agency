@@ -80,7 +80,9 @@ def _runway(monkeypatch, tmp_path, *, balance: float = 10_000) -> dict[str, Any]
 
     The stills are real 1080x1920 pictures with nobody in them; the clips a real h264 test
     pattern; the account a balance that each purchase lowers by its catalogue price."""
+    from app.media import prompt_lint
     from app.runbook import stages
+    from runpod_worker.contract import MAX_PROMPT
     from test_daily_run_stages import _noise_stills
     from test_film_costing import SEEDANCE, Account, Models, SpyVideo
     from test_stills_stage import SpyStills
@@ -88,6 +90,11 @@ def _runway(monkeypatch, tmp_path, *, balance: float = 10_000) -> dict[str, Any]
     stills = _noise_stills(tmp_path)
     account = Account(balance)
     images = SpyStills(pictures=lambda prompt, call: list(stills), balance=balance)
+    # The stills route allows what the GPU worker allows, as the studio's own does (Qwen on
+    # RunPod since 2026-10-08): a serial's complete prompt is never cut to fit (2026-10-14)
+    # and fits there as in production; still priced as seedream, so the staircase's figures
+    # stay what the docstrings say.
+    monkeypatch.setitem(prompt_lint.ALLOWANCES, images.model, MAX_PROMPT)
 
     class TimedVideo(SpyVideo):
         """A clip of exactly the seconds the shot asked for, as the vendor delivers it."""
@@ -117,65 +124,10 @@ def _runway(monkeypatch, tmp_path, *, balance: float = 10_000) -> dict[str, Any]
     return {"images": images, "models": models, "account": account}
 
 
-#: A shot plan with a different frame and subject per scene, as a real Video Editor writes
-#: one: the end-to-end stand-in answers every scene alike, which the sheet's lint rightly
-#: BLOCKs in PRODUCTION ("every filmed scene has the same framing").
-VARIED_SHOTS = (
-    (
-        "a wide, low angle, 24mm lens",
-        "the observatory dome on a cold hillside at night",
-        "the dome turns slowly, its shutter opening",
-    ),
-    (
-        "a medium shot, eye-level, 50mm lens",
-        "the segmented golden mirror of a telescope",
-        "a faint reflection drifts across the segments",
-    ),
-    (
-        "a detail shot, macro, 85mm lens",
-        "a cloud of red dust around a young star",
-        "the dust thins slowly and light shows through",
-    ),
-    (
-        "an aerial shot, high angle",
-        "an empty field under a clear starry sky",
-        "the stars wheel slowly overhead",
-    ),
-)
-
-
 def _varied_shot_plan(studio_, monkeypatch) -> None:
-    import json
-    import re
+    from e2e_shots import make_shot_plan
 
-    def shots(prompt: str) -> str:
-        indices = sorted({int(n) for n in re.findall(r'"scene_index":\s*(\d+)', prompt)}) or [1]
-        planned = []
-        for index in indices:
-            camera, subject, action = VARIED_SHOTS[(index - 1) % len(VARIED_SHOTS)]
-            planned.append(
-                {
-                    "scene_index": index,
-                    "story_purpose": "EVIDENCE",
-                    "subject": subject,
-                    "action": action,
-                    "environment": "a remote observatory far from any city",
-                    "camera": camera,
-                    "lighting": "moonlight from the left, one warm lamp behind",
-                    "composition": "vertical, the subject in the lower third",
-                    "motion": action,
-                    "emotion": "quiet anticipation",
-                    "background": "stars, unmoving",
-                    "continuity": "the same night sky as the previous shot",
-                    "ending_frame": f"{subject}, centred",
-                    "audio_intent": "wind, distant",
-                    "transition": "cut",
-                    "avoid": ["text of any kind"],
-                }
-            )
-        return json.dumps({"shots": planned})
-
-    monkeypatch.setattr(studio_["model"], "_shots", shots)
+    monkeypatch.setattr(studio_["model"], "_shots", make_shot_plan)
 
 
 def _judges_pass(monkeypatch) -> None:
@@ -541,10 +493,11 @@ def test_under_every_paid_step_each_yes_continues_the_film_the_same_day_to_a_pri
 def _stage_world(engine, settings, monkeypatch, tmp_path, *, rule="MODE", balance=10_000.0):
     """One film at the bottom of its staircase and the media stage alone, run three times."""
     from app.runbook import stages
-    from test_daily_run_stages import _bottom_of_the_staircase
+    from test_daily_run_stages import _bottom_of_the_staircase, _fixture_sarah_approves
     from test_daily_run_stages import _production as stage_production
 
     stage_production(engine)
+    _fixture_sarah_approves(monkeypatch)
     world = _runway(monkeypatch, tmp_path, balance=balance)
     monkeypatch.setattr(stages, "story_gate", lambda session, script_id: (True, ""))
     _judges_pass(monkeypatch)
@@ -615,13 +568,15 @@ def test_a_day_stopped_by_money_writes_once_buys_nothing_and_holds_nothing(
 
 @requires_ffmpeg
 @pytest.mark.parametrize("case", ["stills_rejected", "clip_fails_twice"])
-def test_a_failing_still_or_hero_is_bought_once_over_three_days_with_one_letter(
+def test_a_failing_still_or_hero_is_bought_once_over_three_days_and_waits_for_the_director(
     engine, settings, monkeypatch, tmp_path, case
 ):
-    """(d) The judge rejects every still, or clip QC fails the hero and its one retry: over
-    three days the stills are requested once (and re-rolled twice) or the hero bought once
-    (and retried once), then the scene waits for him with one letter, every purchase is in
-    the books once, and no hold is left standing."""
+    """(d) The judge rejects every still, or clip QC fails the hero: over three days the
+    stills are requested once, or the hero bought once, and nothing is bought again — a
+    quality refusal is the Director's (2026-10-12): her ladder re-rolls or retries from her
+    brief, which this world cannot run (no shot plan, no registry), so the scene waits for
+    her and no letter reaches the Owner; every purchase is in the books once, and no hold
+    is left standing."""
     from app.economy.budget import BudgetCommand, set_budget
     from app.media import qc as clip_qc
     from test_daily_run_stages import _judge_rejects_every_still
@@ -650,12 +605,17 @@ def test_a_failing_still_or_hero_is_bought_once_over_three_days_with_one_letter(
 
     film = outcomes[-1]["artefacts"]["films"][0]
     assert film["refusal"] == "NEEDS_OWNER", film
-    assert len(_sheet_letters(engine)) == 1
+    # No sheet letter: quality stays with the Director (75f2267; the Owner hears of money,
+    # accounts and security). This fixture film's scene carries no shot plan, so her ladder
+    # cannot rewrite it yet and each day's register says she holds it; nothing is bought
+    # again meanwhile.
+    assert _sheet_letters(engine) == []
+    assert all("Directoarea preia remedierea" in o["reason"] for o in outcomes)
     assert all(hold.status != "RESERVED" for hold in _holds(engine))
     steps = sorted((c.attribution_json or {}).get("step") for c in _costs(engine))
     if case == "stills_rejected":
-        assert len(world["images"].asked) == 3 and world["models"].posts() == 0
+        assert len(world["images"].asked) == 1 and world["models"].posts() == 0
         assert steps == ["stills"]
     else:
-        assert len(world["images"].asked) == 2 and world["models"].posts() == 2
+        assert len(world["images"].asked) == 2 and world["models"].posts() == 1
         assert steps == ["stills", "test_shot"]

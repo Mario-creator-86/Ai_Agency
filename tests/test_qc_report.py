@@ -1,6 +1,6 @@
 """The Owner's quality-control report, written from what was measured and nothing else.
 
-Pure tests on the Nepal film's real report (tests/fixtures/factual_sample/qc_report.json,
+Pure tests on the Nepal film's real report (tests/fixtures/nepal_1d530880/qc_report.json,
 copied from the scratchpad copy of the database; the original is never opened). No provider,
 no database, no network. What is asserted: the summary names the measured true peak, the two
 scenes that failed and the credits the balance actually moved; a spend nobody measured reads
@@ -25,7 +25,7 @@ from app.media.qc_report import (
     redo_proposals,
 )
 
-FIXTURE = Path(__file__).parent / "fixtures" / "factual_sample" / "qc_report.json"
+FIXTURE = Path(__file__).parent / "fixtures" / "nepal_1d530880" / "qc_report.json"
 
 
 @pytest.fixture(scope="module")
@@ -114,8 +114,8 @@ def test_nepal_summary_names_the_peak_the_two_scenes_and_the_measured_credits(ne
     assert "Scena 6" in text
     # The looker's own words are quoted as the evidence.
     assert "Black screen was requested" in text
-    assert "123 de credite" in text
-    assert "1,23 USD" in text
+    assert "966 de credite" in text
+    assert "9,66 USD" in text
     assert "0,25" in text
     # The measured side is the measured one: no "necunoscut" for Runway.
     credits_line = next(line for line in text.splitlines() if line.startswith("Credite"))
@@ -129,7 +129,7 @@ def test_an_unmeasured_spend_reads_necunoscut(nepal):
         text = qc_summary_ro(nepal["report"], spend)
         credits_line = next(line for line in text.splitlines() if line.startswith("Credite"))
         assert UNKNOWN in credits_line
-        assert "123" not in text
+        assert "966" not in text
 
 
 def test_an_estimate_is_never_shown_as_a_cost(nepal):
@@ -147,9 +147,9 @@ def test_an_estimate_is_never_shown_as_a_cost(nepal):
 
 def test_measured_spend_reads_the_balance_delta_not_the_spent_field(nepal):
     spend = measured_spend(nepal["credits_measured"])
-    assert spend["runway_credits"] == 123.0
-    assert spend["runway_usd"] == 1.23
-    assert spend["voice_characters"] == 240.0
+    assert spend["runway_credits"] == 966.0
+    assert spend["runway_usd"] == 9.66
+    assert spend["voice_characters"] == 220.0
     # A record whose "spent" disagrees with its own balances is not trusted.
     lying = {
         "r": {"kind": "runway", "unit": "credits", "before": 100.0, "after": 90.0, "spent": 3.0}

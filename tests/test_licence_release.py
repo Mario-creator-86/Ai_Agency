@@ -1,6 +1,13 @@
-"""Offline regression tests for test licence release.
+"""Uploads held private for their licence alone are made public once it is confirmed (2026-10-10).
 
-Providers are faked; all data is synthetic."""
+Film babcf272 went up private to «Main Channel A - Factual Shorts» (YouTube IxQIzIulLBU): its
+narrations came from ElevenLabs and the connection had no commercial-use evidence, so its
+licence was NEEDS_REVIEW and the gate's rights check lets such a film up private only. The Owner
+upgrades his plan and the studio records the licence; the watchdog then makes the film public,
+under the channel's policy as it is then (YouTube faked here, never the network). Nothing else is
+touched: an upload private for another reason, a channel whose policy is private or unlisted, a
+stopped studio, safe mode, a mode that asks him, public not permitted on the channel.
+"""
 
 from __future__ import annotations
 
@@ -39,7 +46,7 @@ from test_daily_run_stages import _bound, _connected, _seeded_channels
 from test_phase6_publishing import _create_verified_asset_bundle
 from test_publish_policy import _to_production
 
-VIDEO = "fixture0001"
+VIDEO = "IxQIzIulLBU"
 VOICE_MISSING = "narațiunea scenei 1 (elevenlabs): nicio confirmare de folosire comercială"
 
 

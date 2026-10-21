@@ -1,6 +1,77 @@
-"""Faces: existing local-first media checks.
+"""Counting faces in a still before a credit is spent on moving it.
 
-Private production traces omitted; implementation unchanged."""
+The Nepal visual bible said "No human faces appear". The prompts never carried the rule,
+three of the six stills came back with faces, and nobody looked before the clips were
+bought. The vision model that judges a still is one eye; this module is the other, and it
+does not share the first one's bias towards yes: YuNet (OpenCV Zoo's 2023 face detector, a
+233 kB ONNX network) counts faces with a fixed threshold and no opinion.
+
+What this module certifies is only what it measured. It reports NOT_RUN — never "0 faces" —
+when opencv is not installed, when the model file is missing, when the file is not the one
+pinned below (a swapped network is not the detector these thresholds were chosen for), or
+when the picture cannot be read. What NOT_RUN costs a still is decided by the stills gate
+(`app.media.still_gate`): it blocks in PRODUCTION and warns in TEST.
+
+The model is pinned by the SHA256 that Hugging Face publishes for
+opencv/face_detection_yunet face_detection_yunet_2023mar.onnx (read 2026-09-27); the same
+file is in github.com/opencv/opencv_zoo under models/face_detection_yunet. Its own licence is
+MIT (Shiqi Yu, 2020: the model folder's LICENSE in opencv_zoo, read 2026-10-02; the zoo as a
+whole is Apache-2.0). The file IS bundled, at YUNET_MODEL_PATH, with its licence beside it
+(models/LICENSE-YuNet) and its entry in THIRD_PARTY_NOTICES.md. Without opencv installed, or
+with another file in its place, every count is NOT_RUN.
+
+YuNet misses small and profile faces. That is why a face from EITHER this detector or the
+vision model blocks a still, and why the Owner's look at the contact sheet stays the last
+gate.
+
+The strict count (2026-10-12). Still 4be4364e of the cyclotron film aa170155 (scene 1,
+stills/scene_01_3bc31f47_c1.png) shows four people at a table behind the device; a bald man
+and a blonde woman show part of their faces, blurred by the depth of field. `count_faces`
+looks once, at 1080 px, with a 0.6 bar: it scored the bald man's face 0.35 and the stills
+gate approved the still. Six clips were then bought from it (motion prompt_hash b2a94fcd, 22
+credits each); on their first frame, which is the still as the video model received it, the
+same face scored 0.56-0.69, and clip QC refused every clip for faces. The gate was not
+stricter than clip QC: it was the same check reading other pixels. A blurred face looks
+sharper, and scores higher, when the picture is made smaller: the same still scores 0.630 at
+720 px and 0.634 at 540 px. `strict_faces` looks at every size in STRICT_SIZES and counts a
+face that ANY of them finds, so the still is refused for 7 credits before a 22-credit clip is
+bought (the Owner's order of 2026-10-12, 22:00: never buy the same thing again after a
+refusal; a new still before another clip). `count_faces` keeps its single reading, because
+other modules and their tests read it as it is.
+
+STRICT_SIZES and STRICT_THRESHOLD were chosen by calibration on real files (2026-10-12, read
+only, every picture looked at by eye), with YuNet's own score per size:
+- 20 pictures that must be refused: the six scene-1 stills of aa170155 (all show people;
+  the strict count refuses 6, today's count 2, one of those on a reflection in the table
+  rather than a face), the first frames of the six scene-1 clips (strict 6, today 4), the
+  scene-4 stills 657f2627, faf0d555 and 7471cabb with partial faces (strict 3, today 0) and
+  the first frames of the five clips bought from two of them (strict 5, today 1).
+- 77 other pictures with nobody in them: the nine APPROVED stills of aa170155 and 1c038a99
+  «The Particle That Shouldn't Exist (And Briefly Didn't)», which all show no person; the
+  other stills of those films and of babcf272 and 6fe6a577 that show no person; the first
+  frames of the clips made from them; Nepal scenes 1 and 2. None reaches 0.6 at any of the
+  four sizes; the highest is 0.538 (0.522 on an approved still, 1c038a99 scene 2, a wall
+  lamp at 720 px). 0.55 would keep 0.012 of margin, so the bar stays at 0.6.
+- 1080, 720 and 540 px refuse 19 of the 20; the 20th (c9f3fa83, a head turned
+  three-quarters away from the camera) scores 0.690 at 360 px and at most 0.322 above it.
+- The two pictures today's check already refuses wrongly, the blurred brass lamp column of
+  scene-4 still 306a6cad (0.668) and a rock in 1c038a99's 610342e8 (0.649), are found by the
+  same 1080 px look and by no other size: not made worse, still wrong.
+- A crop of the upper half at twice the density, where background figures sit, refused
+  nothing the four sizes missed and scored a 7 x 8 px speck of an approved still at 0.635;
+  it is not measured.
+
+PEOPLE_STRICT is the one check that decides "a face where the bible forbids faces" for both
+money gates: the stills gate on the still, before a clip is bought, and clip QC on the
+clip's frames (the first frame is the still as the video model received it). One function
+in both places means the gate can never be looser than clip QC. It counts faces only. There
+is no person detector here: opencv-python-headless 5.0 (uv.lock) has no HOG people detector
+and no cascade classifier, and no person network is pinned beside YuNet. People seen only
+from behind, or in a reflection, mostly score under the bar (14 of 16 such pictures in the
+calibration; the two caught are backs of heads at 540 px), so they are kept out by the
+prompt (a film whose bible forbids faces names no person at all) and by the vision
+question, not by this module.
+"""
 
 from __future__ import annotations
 

@@ -56,7 +56,7 @@ from test_scene_takes import nepal_like
 from test_stills_stage import SpyStills, still_prompt
 from test_stills_stage import a_film as film_without_stills
 
-FIXTURES = Path(__file__).parent / "fixtures" / "factual_sample"
+FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
 PROMPTS = json.loads((FIXTURES / "prompts.json").read_text(encoding="utf-8"))
 #: The day the published table was read is 2026-09-27; the sheet is read four days later.
 TODAY = date(2026, 10, 1)
@@ -69,7 +69,7 @@ requires_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not i
 def nepal_film(engine, tmp_path: Path) -> str:
     """The Nepal storyboard: its six scenes as the new writer marks them (four LIVE, the
     chart as a DATA_CARD, the black screen as BLACK), with the prompts exactly as they were
-    sent on 2026-09-26 (tests/fixtures/factual_sample/prompts.json) and its visual bible."""
+    sent on 2026-09-26 (tests/fixtures/nepal_1d530880/prompts.json) and its visual bible."""
     storyboard_id = nepal_like(engine, tmp_path)
     by_index = {scene["scene_index"]: scene for scene in PROMPTS["scenes"]}
     with Session(engine) as session, session.begin():
@@ -971,7 +971,7 @@ def test_a_repeated_command_id_returns_the_stored_result_and_buys_nothing(
 
 
 @requires_ffmpeg
-def test_two_films_against_one_budget_hold_their_caps_and_the_second_is_refused(engine, tmp_path):
+def test_two_films_against_one_budget_hold_their_rounds_and_the_second_is_refused(engine, tmp_path):
     from app.economy.models import SpendReservation
 
     (tmp_path / "a").mkdir()
@@ -979,8 +979,9 @@ def test_two_films_against_one_budget_hold_their_caps_and_the_second_is_refused(
     first_film = film_with_stills(engine, tmp_path / "a", scenes=3)
     second_film = film_with_stills(engine, tmp_path / "b", scenes=3)
     mode_studio(engine)
-    # Each hero holds its cap of 680 credits (6.80 USD); together they do not fit in 10.
-    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="10"))
+    # Each hero holds its next round, 340 credits (3.40 USD), not its cap of 680: the retry
+    # is held only when it is bought (`StepHold`, 2026-10-16). Together they do not fit in 5.
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="5"))
     account = Account(10_000)
     spy = HeldVideo("seedance2_5", account)
     first_models = Models(spy)
@@ -1003,10 +1004,49 @@ def test_two_films_against_one_budget_hold_their_caps_and_the_second_is_refused(
     assert second_models.posts() == 0 and first_models.posts() == 1
     with Session(engine) as session:
         holds = list(session.scalars(select(SpendReservation)))
-    # The first hold was settled by its booking; the refused one held nothing.
+    # The first hold was settled by its booking; the refused one held nothing. The first
+    # never grew for a retry it did not buy, and one that does not fit is never half-held.
     assert [h.status for h in holds] == ["SETTLED"]
-    assert holds[0].usd_micros == 6_800_000
+    assert holds[0].usd_micros == 3_400_000
     assert holds[0].purpose == "sheet:test_shot"
+
+
+@requires_ffmpeg
+def test_a_quote_above_the_price_is_held_the_moment_it_is_committed(engine, tmp_path, monkeypatch):
+    # Review of 8f5c6ec: a vendor's quote above the shot's price is committed whole, while the
+    # step's hold stayed at the price until the books settled the step; the money the step
+    # already owed read as free to every other step meanwhile (its clip QC, minutes).
+    from app.economy.models import SpendReservation
+    from app.media import assembler
+
+    storyboard_id = film_with_stills(engine, tmp_path, scenes=3)
+    mode_studio(engine)
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="20"))
+    account = Account(10_000)
+
+    class Dearer(SpyVideo):
+        async def create_generation(self, prompt, **kwargs):
+            task = await super().create_generation(prompt, **kwargs)
+            self.last_estimated_credits = float(self.last_estimated_credits or 0) + 100.0
+            return task
+
+    paid: list[tuple[float, int]] = []
+    record = assembler.record_take
+
+    def recorded(engine_, **kwargs):
+        if kwargs.get("status") == "PAID" and not paid:
+            with Session(engine) as session:
+                (hold,) = session.scalars(select(SpendReservation)).all()
+                paid.append((float(kwargs["credits_quoted"]), int(hold.usd_micros)))
+        return record(engine_, **kwargs)
+
+    monkeypatch.setattr(assembler, "record_take", recorded)
+
+    _sheet_step(engine, storyboard_id, Models(Dearer("seedance2_5", account)), account, tmp_path)
+
+    ((quoted, usd_micros),) = paid
+    # The shot's quote (its price and 100 credits more) is held the moment it is committed.
+    assert usd_micros == round(quoted * 10_000)
 
 
 @requires_ffmpeg
@@ -1070,3 +1110,47 @@ def test_a_step_that_failed_after_paying_answers_409_with_his_words_not_500(
     assert detail["status"] == "SPENT_AND_STOPPED"
     assert "nu se reia automat" in detail["message"]
     assert detail["booked"] is True
+
+
+def test_fast_sheet_defers_redo_calculations_but_keeps_prices_hash_and_live_balance(
+    engine, tmp_path, monkeypatch
+):
+    from app.media import shooting_sheet
+
+    board = nepal_film(engine, tmp_path)
+    full = build_sheet(engine, board, capabilities=[SEEDANCE], account=Account(900))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Opening the fast sheet must not calculate every redo")
+
+    monkeypatch.setattr(shooting_sheet, "_redo_plans", forbidden)
+    fast = build_sheet(
+        engine, board, capabilities=[SEEDANCE], account=Account(900), include_redos=False
+    )
+    assert fast["sheet_hash"] == full["sheet_hash"]
+    assert fast["steps"] == full["steps"]
+    assert fast["footer"]["balance"] == full["footer"]["balance"]
+    assert fast["scenes"][0]["redo"] == {"still": {"deferred": True}, "motion": {"deferred": True}}
+    assert fast["scenes"][4]["redo"] == {"card": {"deferred": True}}
+    assert fast["footer"]["audio_redo"] == {"deferred": True}
+
+
+def test_fast_sheet_route_accepts_deferred_redos(client, engine, headers, tmp_path, monkeypatch):
+    from app.media import shooting_sheet
+
+    board = nepal_film(engine, tmp_path)
+    wire(client, tmp_path, runway_account=Account(900))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Fast route must not calculate redos")
+
+    monkeypatch.setattr(shooting_sheet, "_redo_plans", forbidden)
+    response = client.get(sheet_url(board) + "?include_redos=false", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["scenes"][0]["redo"]["motion"] == {"deferred": True}
+    quote = client.get(
+        f"/api/v1/media/storyboards/{board}/redo-plan?kind=still&scene=1", headers=headers
+    )
+    assert quote.status_code == 200, quote.text
+    assert len(quote.json()["plan_hash"]) == 64
+    assert quote.json()["credits"] > 0

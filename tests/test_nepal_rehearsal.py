@@ -1,6 +1,27 @@
-"""Offline regression tests for test nepal rehearsal.
+"""The zero-credit Nepal rehearsal: the film rebuilt from the files already paid for.
 
-Providers are faked; all data is synthetic."""
+The Nepal film cost over 1,000 credits and failed quality control. Its stills, one usable
+clip and its narration are on disk, paid for. The first step of the fix costs nothing: adopt
+those files as takes, compose the chart and the black screen locally from the verified numbers,
+master the sound and encode again, and run quality control on what comes out.
+
+What is asserted here, with no provider reachable (conftest refuses every non-loopback socket,
+and every place a vendor could be reached from is replaced by a spy that fails when asked):
+  - adopting a copy of the media folder writes one take per paid file, each with its sha256:
+    the clean stills APPROVED, the clip that starts from its still PAID, the clip that starts
+    from a picture no longer on disk REJECTED, the stills of the two card scenes REJECTED;
+  - the film is then assembled from those takes with zero vendor calls; scenes 5 and 6 are
+    composed cards, the chart carrying the claim numbers 100 and 83;
+  - a still with faces (the bible forbids them) is not approved: the sheet lists its scene as
+    'necesită o imagine nouă (9 credite)' and nothing is bought;
+  - only a copy is written: the original folder and data/studio.db are never touched;
+  - POST /api/v1/media/storyboards/{id}/adopt-existing-files is the Owner's and costs 0.
+
+The stills are the delivered Nepal pictures (tests/fixtures/nepal_1d530880, 540x960), scaled to
+1080x1920 and lightly sharpened so the sharpness floor reads them as the full-size originals
+read (592-893); the face detector is the real YuNet, which counts 3 faces in scene 3 and 1 in
+scene 4 here, as it does on the delivered PNGs.
+"""
 
 from __future__ import annotations
 
@@ -24,21 +45,22 @@ from app.media.models import (
 from app.media.toolchain import find_ffmpeg, find_ffprobe
 from app.models import DomainEvent, OwnerPolicy
 from app.services import utc_now
+from pause_timing import freeze_film, pause
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 ROOT = Path(__file__).resolve().parents[1]
 LIVE_DB = ROOT / "data" / "studio.db"
-FIXTURES = Path(__file__).parent / "fixtures" / "factual_sample"
+FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
 SCRIPT = json.loads((FIXTURES / "script.json").read_text(encoding="utf-8"))
 PROMPTS = json.loads((FIXTURES / "prompts.json").read_text(encoding="utf-8"))
-NEPAL_ID = "00000000-0000-4000-8000-00000000003f"
+NEPAL_ID = "1d530880-c94a-48a1-baf5-6ad7c1796a6d"
 #: The chart the new writer gives scene 5: 100 promised, 83 delivered, each from its claim.
 CARD = SCRIPT["writer_answer"]["scenes"][4]["card"]
 #: Short scenes, so a test film renders in seconds; the shape is the Nepal film's.
 PLANNED_SECONDS = 2.0
 VOICE_SECONDS = 1.6
-STILL_REDO = "necesită o imagine nouă (18 credite)"
+STILL_REDO = "necesită o imagine nouă (9 credite)"
 
 requires_ffmpeg = pytest.mark.skipif(
     find_ffmpeg() is None or find_ffprobe() is None, reason="ffmpeg/ffprobe not installed"
@@ -499,8 +521,8 @@ def test_the_film_is_assembled_from_the_takes_with_no_vendor_and_cards_carry_100
         bars = chart.card_json["bars"]
         assert [(b["value"], b["unit"]) for b in bars] == [(100, "mld. USD"), (83, "mld. USD")]
         assert [b["claim_id"] for b in bars] == [
-            "00000000-0000-4000-8000-000000000196",
-            "00000000-0000-4000-8000-0000000001aa",
+            "c4a0e6c8-c71f-48d4-93c3-089148a27790",
+            "d3561aea-dcaa-4f19-aa4a-23b80a1c52ef",
         ]
         asset = session.get(MediaAsset, film["output_asset_id"])
         assert asset is not None
@@ -533,7 +555,8 @@ def test_a_paid_clip_shorter_than_its_scene_is_named_and_never_claimed_used(
 
     2026-10-01 (TIMELINE_24_CAPTIONS): a scene lasts its words plus a breath, not its plan,
     so the fixture's 3.0 s clip is made shorter than its scene by the scene's words: a 4.2 s
-    narration on scene 1."""
+    narration on scene 1. Since «pauza vocii» (2026-10-16) the film is rebuilt with its pauses
+    frozen, and the breath is the narrator's own pause after the HOOK (a change of part)."""
     import re
 
     from app.media.rehearsal import rehearse
@@ -558,6 +581,7 @@ def test_a_paid_clip_shorter_than_its_scene_is_named_and_never_claimed_used(
             )
         ).one()
         scene.duration_seconds = 4.0
+    freeze_film(engine, storyboard_id)
 
     result = rehearse(
         engine,
@@ -574,10 +598,12 @@ def test_a_paid_clip_shorter_than_its_scene_is_named_and_never_claimed_used(
     assert hero.get("reused_take") is not True
     row = result["adoption"]["sheet"]["scenes"][0]
     assert row["motion"]["used"] is False
-    # The shot the clip had to fill: the scene's words (4.2 s) on whole frames.
+    # The shot the clip had to fill: the scene's words (4.2 s) and the narrator's pause after
+    # them (a change of part, 0.767 s), on a frame of the timeline.
     shot = re.search(r"e mai scurt decât scena \((\d+),(\d\d) s\)", row["line_ro"])
     assert shot is not None, row["line_ro"]
-    assert 4.2 <= float(f"{shot.group(1)}.{shot.group(2)}") <= 4.4
+    held = 4.2 + pause("PARAGRAPH")
+    assert held - 1 / 24 <= float(f"{shot.group(1)}.{shot.group(2)}") <= held + 0.2
     assert "se folosește" not in row["line_ro"]
 
 
@@ -641,7 +667,7 @@ def test_stills_failing_the_face_check_are_listed_for_a_new_still_and_nothing_is
     for n in (3, 4):
         assert STILL_REDO in rows[n]["line_ro"]
         assert rows[n]["still"]["status"] == "PAID"
-        assert rows[n]["credits_needed"] == 18
+        assert rows[n]["credits_needed"] == 9
         assert any("față" in reason or "fețe" in reason for reason in rows[n]["still"]["reasons"])
     for n in (1, 2):
         assert STILL_REDO not in rows[n]["line_ro"]
@@ -651,7 +677,7 @@ def test_stills_failing_the_face_check_are_listed_for_a_new_still_and_nothing_is
         assert rows[n]["credits_needed"] == 0
     assert sheet["needs_new_still"] == [3, 4]
     assert sheet["credits_spent"] == 0
-    assert sheet["credits_needed_for_stills"] == 36
+    assert sheet["credits_needed_for_stills"] == 18
 
     before = takes_of(engine, storyboard_id)
     # Without the Owner's choice to see them anyway, the film is not assembled around them.
@@ -761,7 +787,7 @@ def test_a_chart_without_its_verified_numbers_is_refused_before_anything_is_writ
         )
     wrong = json.loads(json.dumps(CARD))
     wrong["bars"][1]["value"] = 89
-    wrong["bars"][1]["claim_id"] = "00000000-0000-4000-8000-000000000196"
+    wrong["bars"][1]["claim_id"] = "c4a0e6c8-c71f-48d4-93c3-089148a27790"
     with pytest.raises(RehearsalError, match="Scena 5"):
         adopt_existing_files(
             engine,
@@ -915,10 +941,12 @@ def test_the_sheet_before_a_render_measures_a_clip_against_the_timelines_own_spa
     engine, tmp_path, vendors
 ):
     """Before a render the sheet foresaw a clip's span as max(plan, words) + 0.4 s, the
-    formula from before the 24 fps timeline. The film lasts each scene's words plus a breath
-    (scene_spans), so a 3 s hero clip under a 5 s plan and 1.6 s of words fills its scene,
-    and the sheet must not call it too short before the render proves otherwise."""
-    from app.media.assembler import scene_joins, scene_spans, shot_spans
+    formula from before the 24 fps timeline. The film lasts each scene's words plus the pause
+    frozen after them (scene_spans; «pauza vocii», the narrator's own pause at that boundary),
+    so a 3 s hero clip under a 5 s plan and 1.6 s of words fills its scene, and the sheet must
+    not call it too short before the render proves otherwise."""
+    from app.media.assembler import scene_joins, scene_spans, scene_view, shot_spans
+    from app.media.film_length import frozen_rows
     from app.media.rehearsal import adopt_existing_files
 
     folder = media_folder(tmp_path / "media")
@@ -930,6 +958,18 @@ def test_the_sheet_before_a_render_measures_a_clip_against_the_timelines_own_spa
             )
         ).one()
         scene.duration_seconds = 5.0
+    freeze_film(engine, storyboard_id)
+    with Session(engine) as session:
+        views = [
+            scene_view(row)
+            for row in session.scalars(
+                select(StoryboardScene)
+                .where(StoryboardScene.storyboard_id == storyboard_id)
+                .order_by(StoryboardScene.scene_index)
+            )
+        ]
+    plans = frozen_rows(views)
+    assert plans is not None
 
     adopted = adopt_existing_files(
         engine,
@@ -943,7 +983,7 @@ def test_the_sheet_before_a_render_measures_a_clip_against_the_timelines_own_spa
     rows = {row["scene_index"]: row for row in adopted["sheet"]["scenes"]}
     spoken = [float(rows[n]["voice"]["seconds"]) for n in range(1, 7)]
     planned = [5.0] + [PLANNED_SECONDS] * 5
-    spans = scene_spans(planned, spoken)
+    spans = scene_spans(planned, spoken, pauses=[plan.share for plan in plans])
     scenes = [
         {"scene_index": n, "duration_seconds": span, "transition_in": "CUT"}
         for n, span in enumerate(spans, start=1)
@@ -952,8 +992,10 @@ def test_the_sheet_before_a_render_measures_a_clip_against_the_timelines_own_spa
     hero = rows[1]["motion"]
     assert hero["scene_seconds"] == pytest.approx(round(spans[0], 3))
     assert hero["span"] == pytest.approx(round(shots[0], 3))
-    # The old formula's 5.4 s would have left the paid clip out.
-    assert hero["span"] < 2.0
+    # 1.6 s of words and the 0.767 s pause after the HOOK: the 3 s clip covers it. The old
+    # formula's 5.4 s would have left the paid clip out.
+    assert hero["span"] == pytest.approx(round(round((1.6 + pause("PARAGRAPH")) * 24) / 24, 3))
+    assert hero["span"] < 3.0
     assert hero["used"] is True
     assert "(seedance2_5, 3,00 s) se folosește" in rows[1]["line_ro"]
     assert vendors == []

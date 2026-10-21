@@ -31,6 +31,9 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.montage import FACTUAL_SHOT_TYPES, beat_tag, factual_shots
+from app.media.pause_plan import RowSpec, factual_side, freeze_rows
+from app.media.pauses import active_rules as active_pause_rules
 from app.media.production_policy import estimate_cost_usd
 from app.media.schemas import (
     CharacterBibleView,
@@ -674,6 +677,11 @@ NO_CAST_ONLY_GUESSED = (
     "guess, and a guessed name draws nobody's portrait and refuses no film"
 )
 
+#: How a board's creation event keys its ``guessed_cast`` since the montage (2026-10-16): by
+#: the storyboard's rows. A board recorded without it was keyed by the writer's scenes, which
+#: were its rows until the montage cut them into shots.
+GUESSED_CAST_BY_ROW = "row"
+
 
 def _character_keys(canonical_name: str) -> tuple[str, tuple[str, ...]] | tuple[()]:
     """A canonical name as a scene may write it: the whole name, and the given name alone.
@@ -728,6 +736,23 @@ def _characters_named_in(
         if hits:
             found.append((min(hits), character_id))
     return [character_id for _, character_id in sorted(found)]
+
+
+def _montage_rows(
+    scenes_data: list[dict[str, Any]], kinds: list[dict[str, Any]]
+) -> list[tuple[int, dict[str, Any], dict[str, Any]]]:
+    """The storyboard's scenes as the montage cuts the writer's: ``(beat, scene, shot)`` per
+    row, a LIVE scene in shots of about four seconds (`montage.factual_shots`), a composed
+    scene (a card, black) one row as it was."""
+    rows: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    for beat, scene in enumerate(scenes_data, start=1):
+        narration = str(
+            scene.get("voiceover_segment") or scene.get("voiceover") or scene.get("narration") or ""
+        ).strip()
+        live = str(kinds[beat - 1].get("kind") or "LIVE").upper() == "LIVE"
+        for shot in factual_shots(narration, beat, live=live):
+            rows.append((beat, scene, shot))
+    return rows
 
 
 def _scene_visual(scene: dict, index: int) -> str:
@@ -1326,16 +1351,6 @@ def generate_storyboard_from_script(
             for index, scene in enumerate(scenes_data, start=1)
         ]
         scenes_with_cast = sum(1 for stated, _ in casts if stated)
-        # What the prose suggested and the board refused to cast on, by scene index as a
-        # string because this is a JSON payload. Kept so the gate can look at a suggested
-        # face without the film ever depending on it, and so the reading that produced a
-        # cast is readable afterwards rather than re-derived from the prose by a second
-        # regex that could disagree with this one.
-        guessed_cast = {
-            str(index): guessed
-            for index, (_stated, guessed) in enumerate(casts, start=1)
-            if guessed
-        }
 
         # Each scene's own kind, decided before anything is written. A card whose numbers no
         # SUPPORTED claim carries fails here, as the Content Gate: nothing is stored. A chart
@@ -1350,6 +1365,23 @@ def generate_storyboard_from_script(
             )
         cards_missing = [index for index, kind in enumerate(kinds, start=1) if kind["card_missing"]]
         board_style = (visual_style or "").strip() or PER_SCENE_STYLE
+        # The montage (the Owner, 2026-10-16): a filmed scene cut into shots of about four
+        # seconds, each an ordinary storyboard scene tagged with the writer's scene it came
+        # from; a card stays one scene. The script itself is never rewritten.
+        rows = _montage_rows(scenes_data, kinds)
+        # What the prose suggested and the board refused to cast on, by the storyboard's own
+        # scene index (a shot of the montage) as a string because this is a JSON payload:
+        # every shot of a writer's scene carries that scene's guesses, since the picture
+        # check reads it by the row it looks at (2026-10-16: keyed by the writer's scene, a
+        # guess was asked about on another scene's shot). Kept so the gate can look at a
+        # suggested face without the film ever depending on it, and so the reading that
+        # produced a cast is readable afterwards rather than re-derived from the prose by a
+        # second regex that could disagree with this one.
+        guessed_cast = {
+            str(idx): casts[beat - 1][1]
+            for idx, (beat, _s, _shot) in enumerate(rows, start=1)
+            if casts[beat - 1][1]
+        }
 
         event = append_event(
             session,
@@ -1363,6 +1395,8 @@ def generate_storyboard_from_script(
                 "visual_style": board_style,
                 "aspect_ratio": aspect_ratio,
                 "scene_count": len(scenes_data),
+                # The storyboard's scenes once the montage cut the writer's into shots.
+                "shot_count": len(rows),
                 # Each scene's kind; where the words overruled the writer, the words that did;
                 # and the charts that still wait for their numbers (never made up here).
                 "scene_kinds": [kind["kind"] for kind in kinds],
@@ -1380,6 +1414,8 @@ def generate_storyboard_from_script(
                 # spelled a name was refused a cast it could not be sure of.
                 "scenes_with_cast": scenes_with_cast,
                 "guessed_cast": guessed_cast,
+                # How `guessed_cast` is keyed: by the storyboard's rows (`storyboard_cast_record`).
+                "guessed_cast_keys": GUESSED_CAST_BY_ROW,
                 "cast_note": (
                     None
                     if scenes_with_cast
@@ -1398,32 +1434,34 @@ def generate_storyboard_from_script(
             aspect_ratio=aspect_ratio,
             target_duration_seconds=script.target_duration_seconds,
             status="APPROVED",
-            total_scenes=len(scenes_data),
+            total_scenes=len(rows),
             created_at=now,
             event_id=event.event_id,
         )
         session.add(sb)
         session.flush()
 
-        # Create individual StoryboardScenes
-        for idx, s in enumerate(scenes_data, start=1):
+        # Create individual StoryboardScenes: one per shot of the montage (`_montage_rows`),
+        # each reading the writer's scene (``beat``) it was cut from.
+        pause_rules = active_pause_rules()
+        pause_rows: list[RowSpec] = []
+        for idx, (beat, s, shot) in enumerate(rows, start=1):
             scene_id = str(uuid4())
-            # The script writer's scenes say "narration" and "visual_description"; the demo
-            # fixture said "voiceover_segment" and "visual_prompt". Reading only the latter
-            # built a storyboard of eight silent scenes called "Scene 1"… "Scene 8" from a
-            # real script, and the voice artist passed it: nothing to pronounce.
-            vo = str(
-                s.get("voiceover_segment") or s.get("voiceover") or s.get("narration") or ""
-            ).strip()
-            vp = _scene_visual(s, idx)
+            # The shot's own words: the writer's narration, or the fragment of it the
+            # montage gave this shot (cut on a clause end, the sentence carried on).
+            vo = str(shot["narration"] or "").strip()
+            vp = _scene_visual(s, beat)
             # Without a stated duration a scene lasts as long as its words take to say
-            # (about 2.5 a second), within what a short's scene can hold.
-            dur = float(s.get("duration_seconds") or 0) or min(
+            # (about 2.5 a second), within what a short's scene can hold. A shot of a cut
+            # scene lasts as long as its own words.
+            dur = (float(s.get("duration_seconds") or 0) if int(shot["of"]) <= 1 else 0.0) or min(
                 9.0, max(3.0, round(len(vo.split()) / 2.5, 1))
             )
-            st = str(s.get("shot_type", "MEDIUM"))
-            tr = str(s.get("transition_in", "CUT"))
-            kind = kinds[idx - 1]
+            st = FACTUAL_SHOT_TYPES.get(str(shot.get("size") or ""), "") or str(
+                s.get("shot_type", "MEDIUM")
+            )
+            tr = str(s.get("transition_in", "CUT")) if int(shot["shot"]) <= 1 else "CUT"
+            kind = kinds[beat - 1]
             claims = list(s.get("claim_ids", script.claim_ids_json))
             # The claims a card's bars stand on are claims this scene uses.
             claims += [cid for cid in kind["card_claims"] if cid not in claims]
@@ -1447,11 +1485,40 @@ def generate_storyboard_from_script(
                 # it to the render, the factory turns it into the vendor's referenceImages,
                 # and a locked look with no reference refuses the scene from it. A guess
                 # may do none of those, so it stays on the creation event.
-                character_ids_json=casts[idx - 1][0],
+                character_ids_json=casts[beat - 1][0],
                 claim_ids_json=claims,
+                # The montage's tag (`montage.beat_tag`): the prompt agent keeps it on every
+                # package it writes for the scene.
+                prompt_json=(
+                    {"beat": beat_tag(beat, int(shot["shot"]), int(shot["of"]), shot.get("size"))}
+                    if int(shot["of"]) > 1
+                    else None
+                ),
                 created_at=now,
             )
             session.add(scene_rec)
+            if pause_rules is not None:
+                pause_rows.append(
+                    RowSpec(
+                        row=scene_rec,
+                        sides=[
+                            factual_side(
+                                vo,
+                                scene=beat,
+                                purpose=s.get("purpose") or s.get("story_purpose"),
+                                kind=kind["kind"],
+                                planned_seconds=dur,
+                                rules=pause_rules,
+                            )
+                        ],
+                    )
+                )
+        # «Pauza vocii» (the Owner, 2026-10-16): every row's pause classed, timed from the
+        # narrator's own measured pauses, fitted under the channel's wall and frozen on its
+        # beat tag before anything is bought (`pause_plan.freeze_rows`). The rows of one
+        # writer's scene are said in one take, the montage cutting the picture on its words.
+        if pause_rules is not None:
+            freeze_rows(session, sb, pause_rows, serial=False, rules=pause_rules)
 
     return get_storyboard(engine, storyboard_id) or {}
 
@@ -1494,11 +1561,12 @@ def storyboard_cast_record(session: Session, storyboard_id: str) -> dict:
     The storyboard's own record is its creation event: `media.storyboard_created` carries
     what the builder decided about the cast, the way `agent.model_assigned` carries who chose
     an employee's model. Returned as ``{"note": str | None, "guessed": {scene: [id, ...]}}``
-    with scene indices as strings, exactly as the payload holds them.
+    with the storyboard's scene indices (its rows) as strings, exactly as the payload holds them.
 
     A board written before any of this was recorded answers the empty record, which is
     "nobody said" — not "nobody is in it". The two must not read the same, because a check
     that reports the second on the evidence of the first certifies something nobody measured.
+    So does a board the montage cut before its guesses were keyed by row (`GUESSED_CAST_BY_ROW`).
     """
 
     payload = session.scalar(
@@ -1513,6 +1581,12 @@ def storyboard_cast_record(session: Session, storyboard_id: str) -> dict:
     payload = payload if isinstance(payload, dict) else {}
     note = payload.get("cast_note")
     written = payload.get("guessed_cast")
+    montage_cut = payload.get("shot_count") not in (None, payload.get("scene_count"))
+    if montage_cut and payload.get("guessed_cast_keys") != GUESSED_CAST_BY_ROW:
+        # A board the montage cut before its guesses were keyed by row (2026-10-16): its
+        # numbers are the writer's scenes, not its rows, and would name another shot. Nobody
+        # said which row a guess is on, which is the empty record, not a wrong one.
+        written = None
     guessed: dict[str, list[str]] = {}
     if isinstance(written, dict):
         for index, ids in written.items():

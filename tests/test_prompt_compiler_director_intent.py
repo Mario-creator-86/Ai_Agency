@@ -11,7 +11,7 @@ from app.media.prompt_lint import BLOCK, LintScene, camera_moves, lint_film, utf
 from app.media.scene_rewrite import MOTION, STILL, rewritten_package
 
 EVIDENCE = json.loads(
-    (Path(__file__).parent / "fixtures/director_intent_sample/corrected_intent.json").read_text(
+    (Path(__file__).parent / "fixtures/cyclotron_aa170155/corrected_intent.json").read_text(
         encoding="utf-8"
     )
 )

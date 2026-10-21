@@ -1,6 +1,22 @@
-"""Offline regression tests for test serial continuation.
+"""An approved episode of the serial is filmed by itself, the same day (2026-10-11).
 
-Providers are faked; all data is synthetic."""
+Measured on a copy of the Owner's database on 2026-10-11: the first episode the Director ever
+approved under his policy (043317d3, «The Zero Script Club», canon episode 1, 12:46 UTC) had
+no storyboard. The stage that approved it (`serial_next`, the run's last) built none by
+design, so the next morning's run was the first thing that would film it, and the serial had
+never made one public episode. The Owner: «Agenția trebuie să fie autonomă».
+
+What is held here, with every provider faked and no network:
+
+- the evening's stage readies the episode it approves (storyboard, shots) and, in PRODUCTION,
+  queues the one FILM_CONTINUE that walks it tonight under his money rules; in TEST nothing
+  continues and the next run films it; a same-day re-run queues nothing twice and finishes an
+  approved episode an older run left with no storyboard;
+- the watchdog pass `serial_unfilmed` builds the storyboard of an episode approved longer than
+  its grace with none, queues the same continuation once, and walks a standing serial
+  storyboard once after each start, unless the day's own run or a walk already took it, or its
+  last walk stopped on the Owner's money.
+"""
 
 from __future__ import annotations
 
@@ -200,8 +216,8 @@ def test_a_same_day_rerun_queues_the_continuation_once(engine, staffed, settings
 
     again = run_serial_next(engine, registry(), settings)
 
-    assert again["artefacts"]["written"] == 0 and "deja scris" in again["reason"], again
-    assert again["artefacts"]["storyboard_id"] is None
+    assert again["status"] == "SKIPPED", again
+    assert first["artefacts"]["storyboard_id"] in again["artefacts"]["unfinished_storyboards"]
     assert storyboard_count(engine) == 1 and len(written_) == 1
     (task,) = continuations(engine)
     assert task.id == first["artefacts"]["film_continue_task_id"]
@@ -242,9 +258,8 @@ def test_the_morning_after_writes_nothing_and_the_film_is_that_days(
 
     morning = run_serial_stage(engine, registry(), settings)
 
-    assert morning["status"] == "COMPLETED", morning
-    assert morning["artefacts"]["resumed"] is None and morning["artefacts"]["written"] == 0
-    assert "Ultima zi povestită" in morning["reason"]
+    assert morning["status"] == "SKIPPED", morning
+    assert first["artefacts"]["storyboard_id"] in morning["artefacts"]["unfinished_storyboards"]
     assert storyboard_count(engine) == 1 and len(written_) == 1 and len(reviewed) == 1
     assert films_due(engine, tomorrow) == [first["artefacts"]["storyboard_id"]]
 

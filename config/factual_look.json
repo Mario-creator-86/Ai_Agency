@@ -53,13 +53,21 @@
       "grain": 0
     },
     "second_framing": {
-      "enabled": true,
+      "enabled": false,
       "min_spoken_seconds": 3.2,
-      "zoom": 1.15
+      "zoom": 1.15,
+      "note": "Off since 2026-10-16 (the Owner: «de ce se taie cadrul?»): the cuts come from the montage's own shots now, never from a 15% crop in the middle of a scene."
     },
     "cover": {
       "compose": true
     },
     "editorial_qc_blocking": false
+  },
+  "pauses": {
+    "tempo": 1.0,
+    "cut_in_pause": 1.0,
+    "picture_slide_words": 0,
+    "end_class": "PARAGRAPH",
+    "note": "The Owner's pause knobs for the factual shorts (config/pause_rules.json holds the rules and the defaults; 2026-10-16). tempo scales every pause (1.0: the narrator's own rhythm); cut_in_pause is where the picture cut falls inside a pause (1.0: the outgoing shot holds it all, as before); picture_slide_words lets the picture flow over the next words (0: no L-cut); end_class is the hold after the film's last word (PARAGRAPH: the narrator's section pause, about 0.77 s)."
   }
 }

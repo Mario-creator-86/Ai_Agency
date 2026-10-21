@@ -557,10 +557,10 @@ def test_a_run_that_produced_no_text_is_not_recorded_as_a_success(seeded):
 @pytest.mark.parametrize(
     ("role_name", "requested", "expected"),
     [
-        ("Director", 6000, 12000),
-        ("Director", 24000, 48000),
+        ("Director", 6000, 120000),
+        ("Director", 24000, 480000),
         ("Director", None, None),
-        ("Research", 6000, 6000),
+        ("Research", 6000, 60000),
     ],
 )
 def test_director_token_budget_is_doubled_by_role_and_recorded(
@@ -633,7 +633,7 @@ def test_director_token_multiplier_uses_configuration(seeded, monkeypatch, multi
         max_tokens=6000,
     )
     assert result["status"] == "SUCCEEDED"
-    assert seen == [6000 * multiplier]
+    assert seen == [6000 * multiplier * 10]
 
 
 @pytest.mark.parametrize("invalid", [0, 5])
@@ -708,7 +708,7 @@ def test_director_qc_both_attempts_send_doubled_limit_to_ollama(seeded, monkeypa
     )
     assert result["decision"] == "REPAIR"
     assert len(bodies) == 2
-    assert [body["options"]["num_predict"] for body in bodies] == [12000, 12000]
+    assert [body["options"]["num_predict"] for body in bodies] == [120000, 120000]
     assert [body["think"] for body in bodies] == [False, True]
     assert "400 characters" in bodies[0]["prompt"]
     assert "800 characters" in bodies[0]["prompt"]

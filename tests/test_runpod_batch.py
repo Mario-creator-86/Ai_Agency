@@ -929,6 +929,30 @@ def test_a_scene_a_cut_left_out_goes_before_the_rerolls_when_room_comes_back(
     assert meter.committed == 40.0
 
 
+def test_a_cut_the_next_round_made_up_is_no_stop(engine, tmp_path, fake_session):
+    # Review of 8f5c6ec: the cut of round 1 stayed in the summary after round 2 sent what it
+    # had left out (an unsent item's refund made room), so a step that sent everything it was
+    # asked for ended «stopped at the cap», or on the budget under a step's budget hold.
+    cloud = Cloud()
+    # One item per job (a 300 s execution cap): scene 2's /run never leaves the studio.
+    cloud.run_answers = [None, MediaProviderError("no network", unsent=True)]
+    made = adapter(engine, tmp_path, cloud, execution_timeout_cap_seconds=300)
+    made.core.transport = made.core.client.transport = finishing(cloud)
+
+    summary, meter, _seen = rounds(
+        engine, made, [request(str(n), 0) for n in (1, 2, 3, 4)], cap=40.0
+    )
+
+    # Round 1 (45) is cut to scenes 1-3 (35); scene 2's 10 credits come back, so scene 4,
+    # which the cut left out, goes out whole in round 2 (15).
+    sent = [
+        it["scene_id"] for job in sorted(cloud.jobs) for it in cloud.jobs[job]["input"]["items"]
+    ]
+    assert sent == ["1", "3", "4"] and summary["rounds"] == 2
+    assert meter.committed == 40.0
+    assert summary["cap_stop"] is None and summary["stopped"] is None
+
+
 def test_a_stop_mid_round_cancels_and_gives_back_what_was_not_made(engine, tmp_path, fake_session):
     cloud = Cloud()
     made = adapter(engine, tmp_path, cloud)
@@ -936,7 +960,7 @@ def test_a_stop_mid_round_cancels_and_gives_back_what_was_not_made(engine, tmp_p
 
     def stopped():
         reads.append(1)
-        return "Proprietarul a oprit autonomia." if len(reads) > 1 else None
+        return "Proprietarul a oprit autonomia." if cloud.jobs else None
 
     summary, meter, seen = rounds(engine, made, [request("1", 0), request("1", 1)], stopped=stopped)
     assert summary["stopped"] == "Proprietarul a oprit autonomia."
@@ -1597,6 +1621,144 @@ def test_a_request_the_worker_contract_refuses_is_never_booked(
     assert not cloud.posts() and only_row(engine).error_code == "UNSENT"
 
 
+def test_a_bad_late_chunk_refuses_the_whole_bundle_before_any_run(engine, tmp_path):
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud, execution_timeout_cap_seconds=300)
+    # One item per chunk; the later invalid prompt previously failed after job 1 was sent.
+    with pytest.raises(batch_module.BatchRefused) as refused:
+        made.submit_batch(
+            [request("1"), request("2", prompt="x" * (contract.MAX_PROMPT + 1))],
+            session=Session_(),
+            on_submitted=lambda item: None,
+        )
+    assert refused.value.code == "REQUEST_INVALID"
+    assert not cloud.posts()
+
+
+def test_later_chunks_and_source_urls_include_the_work_ahead(engine, tmp_path):
+    from urllib.parse import parse_qs
+
+    cloud = Cloud()
+    made = adapter(
+        engine,
+        tmp_path,
+        cloud,
+        cls=RunPodVideoAdapter,
+        execution_timeout_cap_seconds=2400,
+        model_source="cache",
+        model_cache_wait_seconds=3600,
+    )
+    made.submit_batch(
+        [request(str(n), operation="video") for n in range(1, 7)],
+        session=Session_(),
+        on_submitted=lambda item: None,
+    )
+    bodies = list(cloud.jobs.values())
+    assert len(bodies) == 3
+    assert bodies[1]["policy"]["ttl"] >= (
+        bodies[0]["policy"]["executionTimeout"] + bodies[0]["policy"]["ttl"]
+    )
+    assert bodies[2]["policy"]["ttl"] > bodies[1]["policy"]["ttl"]
+    url = bodies[-1]["input"]["items"][-1]["source_image"]["url"]
+    ttl = int(parse_qs(urlsplit(url).query)["X-Amz-Expires"][0])
+    assert ttl * 1000 >= bodies[-1]["policy"]["ttl"]
+
+
+def test_bundle_is_uploaded_and_validated_before_gpu_on(engine, tmp_path, fake_session):
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud, cls=RunPodVideoAdapter)
+    made.core.transport = made.core.client.transport = finishing_video(cloud)
+    # If the first frame is unusable, opening a GPU would only waste its cold start.
+    with pytest.raises(batch_module.BatchRefused):
+        rounds(engine, made, [request(operation="video", source_image=b"not a picture")])
+    assert not fake_session
+    assert not cloud.posts()
+
+
+def test_prepared_rows_are_proven_unsent_when_gpu_cannot_open(engine, tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    from app.media import gpu_batch
+    from app.providers.runpod.gpu_session import GpuSessionRefused
+
+    @contextmanager
+    def cannot_open(*args, **kwargs):
+        raise GpuSessionRefused("OFF", "GPU nu poate porni.")
+        yield
+
+    monkeypatch.setattr(gpu_batch, "gpu_session", cannot_open)
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    with pytest.raises(GpuSessionRefused):
+        rounds(engine, made, [request()])
+    row = only_row(engine)
+    assert row.status == "FAILED" and row.error_code == "UNSENT" and row.cost_value == "0"
+    assert not cloud.posts()
+    # An edited prompt can now use the next attempt; no fake open purchase blocks it.
+    made.submit_batch(
+        [request(prompt="the corrected picture")],
+        session=Session_(),
+        on_submitted=lambda item: None,
+    )
+    assert len(cloud.posts()) == 1
+
+
+def test_a_stop_during_preparation_keeps_gpu_off_and_releases_new_rows(
+    engine, tmp_path, fake_session, monkeypatch
+):
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    prepare = made.prepare_batch
+    stopped = []
+
+    def prepare_then_stop(requests):
+        ready = prepare(requests)
+        stopped.append(True)
+        return ready
+
+    monkeypatch.setattr(made, "prepare_batch", prepare_then_stop)
+    summary, meter, _seen = rounds(
+        engine, made, [request()], stopped=lambda: "STOP" if stopped else None
+    )
+    assert summary["stopped"] == "STOP" and meter.committed == 0
+    assert not fake_session and not cloud.posts()
+    assert only_row(engine).error_code == "UNSENT"
+
+
+def test_discarding_prepared_work_never_clears_a_previous_uncertain_purchase(engine, tmp_path):
+    cloud = Cloud()
+    cloud.run_answers = [MediaProviderError("lost", unanswered=True)]
+    made = adapter(engine, tmp_path, cloud)
+    made.submit_batch([request()], session=Session_(), on_submitted=lambda item: None)
+    assert only_row(engine).error_code == batch_module.UNCERTAIN
+    ready = made.prepare_batch([request()])
+    made.discard_prepared(ready)
+    assert only_row(engine).error_code == batch_module.UNCERTAIN
+    assert only_row(engine).cost_value != "0"
+
+
+def test_ready_work_is_contiguous_by_model_and_callbacks_keep_their_scene(engine, tmp_path):
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    sent = []
+    made.submit_batch(
+        [
+            request("1"),
+            request("2", model="Qwen-Image-Edit-2511", references=(png(),)),
+            request("3"),
+        ],
+        session=Session_(),
+        on_submitted=lambda item: sent.append(item.request.scene_id),
+    )
+    items = cloud.jobs["job-1"]["input"]["items"]
+    assert [i["model"] for i in items] == [
+        "Qwen-Image-2512",
+        "Qwen-Image-2512",
+        "Qwen-Image-Edit-2511",
+    ]
+    assert [i["scene_id"] for i in items] == sent == ["1", "3", "2"]
+
+
 def test_a_lone_pod_submit_answered_429_keeps_its_key_reusable(engine):
     from test_runpod_generation import FakeTransport, provider
     from test_runpod_generation import request as pod_request
@@ -1655,7 +1817,7 @@ def stills_table():
     )
 
 
-def test_stills_on_runpod_are_rounds_every_scene_first_then_the_rerolls(
+def test_stills_on_runpod_buy_first_candidates_then_wait_for_prompt_review(
     engine, tmp_path, fake_session
 ):
     # Qwen-Image-2512 binds no reference picture, so no scene waits for scene 1's still (its
@@ -1700,17 +1862,18 @@ def test_stills_on_runpod_are_rounds_every_scene_first_then_the_rerolls(
 
     jobs = [cloud.jobs[j]["input"]["items"] for j in sorted(cloud.jobs)]
     scenes = [[int(item["scene_id"]) for item in items] for items in jobs]
-    assert scenes == [[1, 1, 2, 2, 3, 3, 4, 4], [2, 2], [2, 2]]
+    assert scenes == [[1, 1, 2, 2, 3, 3, 4, 4]]
     assert len(fake_session) == 1 and fake_session[0]["closed"]
     by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
     assert all(by_scene[n]["status"] == "APPROVED" for n in (1, 3, 4))
-    assert by_scene[2]["status"] == "NEEDS_OWNER" and by_scene[2]["rerolls"] == 2
-    assert result["gpu"]["rounds"] == 3
-    # 12 images x 7 credits + 3 GPU starts x 14 credits.
-    assert result["spent_credits_quoted"] == 12 * 7 + 3 * 14  # GPU starts in whole credits
+    assert by_scene[2]["status"] == "NEEDS_OWNER" and by_scene[2]["rerolls"] == 0
+    assert by_scene[2]["rewrite"] is True
+    assert result["gpu"]["rounds"] == 1
+    # Eight initial images and one GPU start; no unreviewed regeneration.
+    assert result["spent_credits_quoted"] == 8 * 7 + 14
     with Session(engine) as s:
         rows = s.scalars(select(SceneTake).where(SceneTake.storyboard_id == storyboard_id)).all()
-        assert len(rows) == 12 and all(r.remote_task_id.startswith("job-") for r in rows)
+        assert len(rows) == 8 and all(r.remote_task_id.startswith("job-") for r in rows)
         assert sorted({r.status for r in rows if r.scene_number == 2}) == ["REJECTED"]
 
 
@@ -1781,7 +1944,7 @@ def proving_session(monkeypatch):
     return opened
 
 
-def test_a_film_whose_scene_one_is_resent_buys_every_scene_first_and_its_rerolls_after(
+def test_a_resent_scene_one_is_not_rerolled_without_prompt_review(
     engine, tmp_path, proving_session
 ):
     """2026-10-09, «The Particle That Shouldn't Exist (But Does)»: scene 1's /run failed with
@@ -1862,15 +2025,13 @@ def test_a_film_whose_scene_one_is_resent_buys_every_scene_first_and_its_rerolls
     jobs = [cloud.jobs[j]["input"]["items"] for j in sorted(cloud.jobs)]
     assert [[int(item["scene_id"]) for item in items] for items in jobs] == [
         [1, 1, 2, 2, 3, 3, 4, 4, 5, 5],
-        [1, 1],
-        [1, 1],
     ]
     assert {item["idempotency_key"] for item in jobs[0][:2]} == first_keys
     by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
     assert all(by_scene[n]["status"] == "APPROVED" for n in (2, 3, 4, 5))
-    assert by_scene[1]["status"] == "NEEDS_OWNER" and by_scene[1]["rerolls"] == 2
-    # 14 images x 7 credits + 3 GPU starts x 14 credits, inside the approved cap.
-    assert result["spent_credits_quoted"] == 14 * 7 + 3 * 14 <= result["cap_credits"]
+    assert by_scene[1]["status"] == "NEEDS_OWNER" and by_scene[1]["rerolls"] == 0
+    assert by_scene[1]["rewrite"] is True
+    assert result["spent_credits_quoted"] == 10 * 7 + 14 <= result["cap_credits"]
 
 
 # ------------------------------------------------------------------------ the motion step
@@ -1885,7 +2046,7 @@ def motion_table():
     )
 
 
-def test_motion_on_runpod_one_round_per_step_and_the_clip_qc_retry_is_the_next_round(
+def test_motion_on_runpod_requires_prompt_review_after_refusal_and_batches_accepted_scenes(
     engine, tmp_path, fake_session
 ):
     from app.media.assembler import MotionStepRefused, decide_take, motion_plan, run_motion_step
@@ -1929,12 +2090,14 @@ def test_motion_on_runpod_one_round_per_step_and_the_clip_qc_retry_is_the_next_r
     assert hero["cost_credits"] == 14 + 14 and hero["cap_credits"] == 2 * 14 + 2 * 14
 
     result = approved("test_shot", ScriptedCheck("FAILED", "PASSED"))
-    assert [len(cloud.inner.jobs[j]["input"]["items"]) for j in sorted(cloud.inner.jobs)] == [1, 1]
-    first, retry = (cloud.inner.jobs[j]["input"]["items"][0] for j in sorted(cloud.inner.jobs))
-    assert retry["seed"] == first["seed"] + 1 and retry["prompt"] != first["prompt"]
+    assert [len(cloud.inner.jobs[j]["input"]["items"]) for j in sorted(cloud.inner.jobs)] == [1]
     scene = {e["scene_index"]: e for e in result["scenes"]}[1]
-    assert scene["status"] == "PAID" and scene["clip_qc"]["attempts"] == 2
-    assert result["gpu"]["rounds"] == 2 and len(fake_session) == 1
+    assert scene["status"] == "NEEDS_OWNER" and scene["clip_qc"]["attempts"] == 1
+    assert scene["clip_qc"]["status"] == "ESCALATED"
+    assert result["gpu"]["rounds"] == 1 and len(fake_session) == 1
+    # A different film whose hero passes can proceed to its other scenes normally.
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    approved("test_shot", ScriptedCheck("PASSED"))
     with Session(engine) as s:
         (paid,) = s.scalars(
             select(SceneTake).where(
@@ -1950,4 +2113,4 @@ def test_motion_on_runpod_one_round_per_step_and_the_clip_qc_retry_is_the_next_r
     assert [it["scene_id"] for it in cloud.inner.jobs[third]["input"]["items"]] == ["2", "3"]
     assert all(e["status"] == "PAID" for e in result["scenes"] if e["scene_index"] in (2, 3))
     assert result["spent_credits_quoted"] == 2 * 14 + 14
-    assert len(fake_session) == 2 and all(s["closed"] for s in fake_session)
+    assert len(fake_session) == 3 and all(s["closed"] for s in fake_session)

@@ -1,6 +1,6 @@
 """Scene kinds, per scene (SCENE_KINDS, 2026-09-27).
 
-The Nepal film (storyboard 0000003f) was one storyboard-wide ``MOTION_GRAPHIC`` copied onto
+The Nepal film (storyboard 1d530880) was one storyboard-wide ``MOTION_GRAPHIC`` copied onto
 every scene, and every scene went to a photographic image model. Scene 5 asked for "two
 vertical bars side by side" (100 vs 83 billion dollars) and got a woman beside two abstract
 bars; scene 6 asked for "a black screen" and got a woman in a landscape. Both were paid for.
@@ -43,10 +43,10 @@ from app.services import append_event, utc_now
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-FIXTURE = Path(__file__).parent / "fixtures" / "factual_sample" / "script.json"
-PROMISED = "00000000-0000-4000-8000-000000000196"
-DELIVERED = "00000000-0000-4000-8000-0000000001aa"
-EMISSIONS = "00000000-0000-4000-8000-0000000000eb"
+FIXTURE = Path(__file__).parent / "fixtures" / "nepal_1d530880" / "script.json"
+PROMISED = "c4a0e6c8-c71f-48d4-93c3-089148a27790"
+DELIVERED = "d3561aea-dcaa-4f19-aa4a-23b80a1c52ef"
+EMISSIONS = "701883c4-24e8-4295-976e-6c04c5ceceee"
 
 
 def nepal() -> dict[str, Any]:
@@ -278,7 +278,7 @@ def test_two_comparable_numbers_from_the_scenes_claims_make_a_chart():
     assert classify_scene_kind("LIVE", "A terraced field.", said, ["No numbers."])[0] == "LIVE"
     # Numbers of different kinds do not compare: a year is not an amount.
     flood = "In 2018 floods cost Nepal US$600 million."
-    flood_claim = [nepal_claims()["00000000-0000-4000-8000-000000000085"][0]]
+    flood_claim = [nepal_claims()["3ab56ae3-1d30-458c-9a66-b0edb953a838"][0]]
     assert classify_scene_kind("LIVE", "Mudslides.", flood, flood_claim)[0] == "LIVE"
     # The Nepal narration says its numbers in words: its kind comes from the picture asked.
     scene4 = nepal()["stored_scenes"][3]

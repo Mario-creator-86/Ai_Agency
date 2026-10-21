@@ -54,7 +54,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agents.models import Agent, AgentRun, Role
+from app.agents.models import Agent, AgentMessage, AgentRun, Role
 from app.media.models import Storyboard
 from app.models import DomainEvent
 from app.wording import count, decimal, provider_name
@@ -77,6 +77,7 @@ ROLE_WORDS_RO: dict[str, str] = {
 #: A RunPod session opened for a step, and a round sent to it, are the Video Editor's work
 #: (the stills and the motion are his); the GPU going off is the studio's own housekeeping.
 _ROLE_BY_PREFIX: tuple[tuple[str, str], ...] = (
+    ("media.delivery_retry_authorized", "Director"),
     ("media.director_", "Director"),
     ("media.scene_take", "VideoEditor"),
     ("media.still", "VideoEditor"),
@@ -100,6 +101,8 @@ _ROLE_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("story.episode_approved", "Director"),
     ("editorial.judged", "Director"),
     ("story.episode_rejected", "Director"),
+    ("story.episode_superseded", "Director"),
+    ("story.continuity_corrected", "Director"),
     ("story.", "ScriptWriter"),
     ("factual.script", "ScriptWriter"),
     ("factual.claim_verified", "FactChecker"),
@@ -249,7 +252,7 @@ _OUTCOME_RO = {
     "ACCEPT_REFUSED": "acceptarea refuzată (nu era a ei de trecut cu vederea)",
     "REPAIRED": "refăcut, din nou la control",
     "ASKED": "refacerea așteaptă răspunsul tău",
-    "BOUGHT_WAITING": "s-a cumpărat, așteaptă aprobarea preluării",
+    "BOUGHT_WAITING": "s-a cumpărat; studioul verifică refacerea",
     "NOTHING_DONE": "nimic din lista ei nu se putea face",
     "CLOSED": "închis",
 }
@@ -300,6 +303,27 @@ _FAMILY_RO = {
     "editorial": "Redacția",
     "director": "Directoarea",
 }
+#: The studio closing a stale ask (`agents.inbox.EXPIRED_EVENT`), and the answer event
+#: `messages.resolve_message` writes beside it with ``expired`` (before 2026-10-16 only its
+#: closer, `messages.EXPIRED_BY`, said so). The page draws no row for either (`ledger.js`
+#: isBookkeeping, 2026-10-17); these words are for any place that still lists them, which read
+#: «Angajați: ask expired.» on the Owner's register at 00:50:56.
+_ASK_EXPIRED_EVENT = "agent.ask_expired"
+_ANSWERED_EVENT = "agent.message_answered"
+#: Why the sweep closed an ask (`agents.inbox`'s reasons, the payload's ``reason``).
+_ASK_FILM_CLOSED = "FILM_CLOSED"
+_ASK_EPISODE_CLOSED = "EPISODE_CLOSED"
+_ASK_TOPIC_REJECTED = "TOPIC_REJECTED"
+_ASK_DUPLICATE = "DUPLICATE"
+_ASK_EXPIRED = "EXPIRED"
+_ASK_ANSWER_FAILED = "ANSWER_FAILED"
+#: The «Storyboard: » the media stage writes before a film's title, inside an ask's subject.
+_SUBJECT_STORYBOARD = re.compile(r"\bStoryboard:\s*", re.IGNORECASE)
+#: The episode and the topic the sweep's own resolution names in quotes (`inbox._Subjects`).
+_RESOLUTION_EPISODE = re.compile(r"episodul\s+«([^»]+)»")
+_RESOLUTION_TOPIC = re.compile(r"subiectul\s+«([^»]+)»")
+#: Who answered a letter, when the answer's closer is not an employee's name.
+_CLOSER_RO = {"Owner": "Proprietarul", "Director": "Directoarea"}
 #: The cause the still gate wrote in its parentheses («… nu trece (cauza). Decide …»).
 _CAUSE = re.compile(r"\((.+)\)\.?\s*(?:Decide\b|$)")
 #: How long a word the office shows may be, and a sentence of the register.
@@ -481,6 +505,156 @@ def _fallback(kind: str, scene: Any, title: str | None) -> str:
     return f"{head}: {said}{placed}." if head else f"{said.capitalize()}{placed}."
 
 
+# ------------------------------------------------------------------ the studio's stale asks
+
+
+def _closed_by_studio(payload: Mapping[str, Any]) -> bool:
+    """Whether an answer event is the studio's sweep closing an ask nobody answered: the event
+    says ``expired`` since 2026-10-16, an older one only by its closer (`messages.EXPIRED_BY`)."""
+    from app.agents.messages import EXPIRED_BY  # noqa: PLC0415 - the feed reads models only
+
+    return payload.get("expired") is True or payload.get("resolved_by") == EXPIRED_BY
+
+
+def _closed_asks(
+    session: Session,
+    events: list[dict[str, Any]],
+    staff: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, str]]:
+    """The asks the studio's closings on the page name, read for the whole page at once:
+    {message_id: {"subject", "to", "reason"}}. The subject and the addressee come from the
+    letters (one query); why it was closed, from its closing on the page, else from the record
+    (one more query, only for an answer event whose closing is not on the page: the socket
+    sends the answer alone, and a page may end between the two)."""
+    reasons: dict[str, str] = {}
+    answered: dict[str, str] = {}
+    for event in events:
+        kind = str(event.get("event_type") or "")
+        message_id = str(event.get("aggregate_id") or "")
+        if not message_id:
+            continue
+        if kind == _ASK_EXPIRED_EVENT:
+            reasons[message_id] = str(_payload(event).get("reason") or "")
+        elif kind == _ANSWERED_EVENT and _closed_by_studio(_payload(event)):
+            answered[message_id] = str(event.get("timestamp") or "")
+    wanted = sorted(set(reasons) | set(answered))
+    if not wanted:
+        return {}
+    asks = {message_id: {"subject": "", "to": "", "reason": ""} for message_id in wanted}
+    rows = session.execute(
+        select(AgentMessage.id, AgentMessage.subject, AgentMessage.to_agent_id).where(
+            AgentMessage.id.in_(wanted)
+        )
+    )
+    for row in rows:
+        addressee = staff.get(str(row.to_agent_id or "")) or {}
+        asks[str(row.id)]["subject"] = str(row.subject or "")
+        asks[str(row.id)]["to"] = str(addressee.get("name") or "")
+    for message_id, reason in reasons.items():
+        asks[message_id]["reason"] = reason
+    missing = sorted(set(answered) - set(reasons))
+    if missing:
+        query = select(DomainEvent.aggregate_id, DomainEvent.payload).where(
+            DomainEvent.event_type == _ASK_EXPIRED_EVENT, DomainEvent.aggregate_id.in_(missing)
+        )
+        # The closing is written after its answer, in the same transaction.
+        since = min((answered[message_id] for message_id in missing), default="")
+        if since:
+            query = query.where(DomainEvent.timestamp >= since)
+        for message_id, payload in session.execute(query):
+            if isinstance(payload, Mapping) and str(message_id) in asks:
+                asks[str(message_id)]["reason"] = str(payload.get("reason") or "")
+    return asks
+
+
+def _plain_in(part: str, whole: str) -> bool:
+    """Whether ``part`` is already said in ``whole`` (case and spacing aside)."""
+    said = " ".join(part.casefold().split())
+    return bool(said) and said in " ".join(whole.casefold().split())
+
+
+def _ask_words(
+    kind: str, payload: Mapping[str, Any], ask: Mapping[str, str], title: str | None
+) -> str:
+    """The studio closing a stale ask, by its reason, with the ask's subject and addressee
+    (`agents.inbox.expire_stale_asks`): its closing (``agent.ask_expired``) and the answer
+    event written beside it. A repeated ask is never said closed unanswered: its newest copy
+    stays open."""
+    subject = _SUBJECT_STORYBOARD.sub("", str(ask.get("subject") or payload.get("subject") or ""))
+    subject = " ".join(subject.split())
+    quoted = f"«{_short(subject, 90)}»" if subject else ""
+    to = str(ask.get("to") or "")
+    toward = f" către {to}" if to else ""
+    the_ask = (f"cererea {quoted}" if quoted else "o cerere") + toward
+    reason = str(payload.get("reason") or ask.get("reason") or "")
+    if kind == _ANSWERED_EVENT:
+        if reason == _ASK_DUPLICATE:
+            of_ask = (f"a cererii {quoted}" if quoted else "a unei cereri") + toward
+            return f"Studioul a închis o copie veche {of_ask}; cea mai nouă rămâne deschisă."
+        return f"Studioul a închis fără răspuns {the_ask}."
+    resolution = str(payload.get("resolution") or "")
+    if reason == _ASK_DUPLICATE:
+        head = (f"Cererea {quoted}" if quoted else "O cerere") + toward
+        return (
+            f"{head} a venit din nou; studioul a închis copia veche, rămâne deschisă cea mai nouă."
+        )
+    if reason == _ASK_FILM_CLOSED:
+        film = f"filmul «{title}»" if title and not _plain_in(title, subject) else "filmul ei"
+        return f"Studioul a închis {the_ask}: {film} s-a încheiat (publicat sau închis)."
+    if reason == _ASK_EPISODE_CLOSED:
+        found = _RESOLUTION_EPISODE.search(resolution)
+        named = found.group(1).strip() if found else ""
+        episode = (
+            f"episodul «{named}»" if named and not _plain_in(named, subject) else "episodul ei"
+        )
+        if "rescriere" in resolution:
+            why = f"{episode} a fost înlocuit de o rescriere"
+        elif "filmul încheiat" in resolution:
+            why = f"{episode} are filmul încheiat"
+        else:
+            why = f"{episode} a fost înlocuit sau are filmul încheiat"
+        return f"Studioul a închis {the_ask}: {why}."
+    if reason == _ASK_TOPIC_REJECTED:
+        found = _RESOLUTION_TOPIC.search(resolution)
+        named = found.group(1).strip() if found else ""
+        topic = (
+            f"subiectul «{named}»" if named and not _plain_in(named, subject) else "subiectul ei"
+        )
+        return f"Studioul a închis {the_ask}: {topic} a fost respins."
+    if reason == _ASK_EXPIRED:
+        days = payload.get("days")
+        if isinstance(days, int) and not isinstance(days, bool) and days > 0:
+            how_long = f"mai mult de {count(days, 'zi', 'zile')}"
+        else:
+            how_long = "prea mult"
+        return (
+            f"Studioul a închis {the_ask}: a stat deschisă {how_long} fără să țină de un film "
+            "în lucru."
+        )
+    if reason == _ASK_ANSWER_FAILED:
+        tries = payload.get("answer_attempts")
+        tried = ""
+        if isinstance(tries, int) and not isinstance(tries, bool) and tries > 0:
+            tried = f" ({count(tries, 'încercare eșuată', 'încercări eșuate')})"
+        plain = f"cererea {quoted}" if quoted else "o cerere"
+        whose = f"lui {to}" if to else "destinatarului"
+        return (
+            f"Studioul a închis fără răspuns {plain}: modelul {whose} a încercat să răspundă "
+            f"și n-a reușit{tried}."
+        )
+    return f"Studioul a închis {the_ask}."
+
+
+def _answer_words(payload: Mapping[str, Any]) -> str:
+    """A letter answered by an employee or the Owner (``agent.message_answered`` without
+    ``expired``): who answered, and the letter by its subject."""
+    closer = " ".join(str(payload.get("resolved_by") or "").split())
+    who = _CLOSER_RO.get(closer, closer)
+    subject = " ".join(_SUBJECT_STORYBOARD.sub("", str(payload.get("subject") or "")).split())
+    letter = f"«{_short(subject, 90)}»" if subject else "o scrisoare"
+    return f"{who} a răspuns la {letter}." if who else f"S-a răspuns la {letter}."
+
+
 #: The editorial judgement's five criteria, short, for the register (the letter has the long
 #: names, `editorial_judgement.CRITERIA_RO`).
 _CRITERIA_RO: dict[str, str] = {
@@ -582,6 +756,17 @@ def _brief_words(payload: Mapping[str, Any], name: str, film: str, editor: str) 
     """The Director's brief for one scene (`media.director_scene_brief`): which layer she
     opened, whether the editor's rewrite landed, or came back with the same words."""
     scene = payload.get("scene_index") or payload.get("scene_number")
+    if payload.get("action") == "retry_delivery":
+        if payload.get("resumed"):
+            return (
+                f"{name} a cerut lui {editor} reluarea livrării scenei {scene}{film}; "
+                "promptul aprobat se păstrează, rezultatul urmează să fie verificat.",
+                f"{editor}, reia livrarea scenei {scene}.",
+            )
+        return (
+            f"{name} verifică livrarea scenei {scene}{film}; nu s-a autorizat o nouă cumpărare.",
+            "Verific livrarea înainte de reluare.",
+        )
     layer = str(payload.get("layer") or "")
     asked = str(payload.get("asked_layer") or "")
     layer_ro = _LAYER_RO.get(layer, "")
@@ -711,9 +896,16 @@ def _rewrite_words(
     reason = str(payload.get("reason") or "")
     layer = str(payload.get("layer") or "")
     if reason == "serial_recompose":
+        # On the motion layer only the clip's words changed: the picture stays as it was
+        # bought (`scene_rewrite.recomposed_layer`, 2026-10-16).
+        what = (
+            "imaginea rămâne, se reface doar mișcarea"
+            if layer == "motion"
+            else "imaginea se reface"
+        )
         return (
             f"Scena {scene} a serialului {named} a fost compusă din nou cu cuvintele de azi; "
-            "imaginea se reface.",
+            f"{what}.",
             f"Scena {scene} e compusă din nou.",
         )
     if reason == "serial_reroll":
@@ -1126,11 +1318,13 @@ def _words(
     title: str | None,
     staff: Mapping[str, Mapping[str, Any]] | None = None,
     places: Mapping[str, Mapping[str, Any]] | None = None,
+    asks: Mapping[str, Mapping[str, str]] | None = None,
 ) -> tuple[str | None, str | None]:
     """(words_ro, bubble_ro) for one event; a kind nobody has words for is said by its name
     (`_fallback`), never by its fields. ``staff`` is the register's employee per role, for a
     sentence that names a second employee (the Director's brief names the editor). ``places``
-    is where the page's runs worked (`_run_places`): a run of one scene names it and its film."""
+    is where the page's runs worked (`_run_places`): a run of one scene names it and its film.
+    ``asks`` are the asks the studio's closings on the page name (`_closed_asks`)."""
     kind = str(event.get("event_type") or "")
     payload = _payload(event)
     name = str(actor["name"]) if actor else "Studioul"
@@ -1142,6 +1336,12 @@ def _words(
 
     if kind == "media.scene_take_recorded":
         return _take_words(payload, name, where, film)
+    if kind == "media.delivery_retry_authorized":
+        return (
+            f"{name} a autorizat reluarea livrării scenei {scene}{film}; "
+            "pasul urmează verificările de buget și aprobare.",
+            f"Reluăm livrarea scenei {scene}.",
+        )
     if kind == "media.still_needs_owner":
         tries = int(payload.get("rerolls") or 0)
         cause = _cause(payload)
@@ -1177,6 +1377,9 @@ def _words(
         said = f"Pasul «{step}» pentru {named} s-a încheiat: {bought_ro}"
         said += f", {reused} refolosite" if reused else ""
         return said + (f"; {why}" if why else "") + ".", None
+    if kind == "runbook.film_retired":
+        why = _short(payload.get("reason"), 160)
+        return f"Filmul {named} a fost închis." + (f" {_end(why.rstrip('.'))}" if why else ""), None
     if kind == "runbook.film_continued":
         status = str(payload.get("status") or "")
         reason = _FILM_LEAD.sub("", str(payload.get("reason") or "").replace("Oprit: ", ""), 1)
@@ -1285,6 +1488,23 @@ def _words(
         again = f" la încercarea {attempt}" if isinstance(attempt, int) and attempt > 1 else ""
         if str(payload.get("accepted_by") or "") == "director_look":
             return _kept_clip_words(payload, where, film)
+        from app.media.assembler import is_legacy_cap_pass  # noqa: PLC0415 - a large module
+
+        if payload.get("accepted_under_cap") and (
+            not payload.get("passed") or is_legacy_cap_pass(payload)
+        ):
+            # Kept under the Owner's renders cap: clip QC refused it, it stays (STUB-003); the
+            # old cap-keep wrote such a clip as passed, with nobody choosing it.
+            who = (
+                "Directoarea l-a ales"
+                if payload.get("chosen_by") == "director"
+                else "studioul l-a păstrat"
+            )
+            return (
+                f"Clipul{where}{film} nu a trecut controlul, dar rămâne sub plafonul de "
+                f"randări: {who}.",
+                f"Clipul{where} rămâne sub plafon.",
+            )
         if payload.get("passed"):
             return (
                 f"Clipul{where}{film} a trecut controlul{again}.",
@@ -1444,11 +1664,33 @@ def _words(
     if kind == "story.episode_approved":
         return "Episodul serialului e aprobat; se pregătește filmarea.", "Episodul e aprobat!"
     if kind == "story.episode_rejected":
+        if payload.get("reviewed_by") == "checks":
+            return "Episodul serialului nu a trecut verificările calculate; se rescrie.", None
         return "Episodul serialului nu a trecut; se rescrie.", None
+    if kind == "story.episode_superseded":
+        # A day of the serial has one approved episode and one film (2026-10-17).
+        title = _short(payload.get("title"), 80)
+        kept_title = _short(payload.get("superseded_by_title"), 80)
+        what = "Aprobarea dublă a episodului" if payload.get("was") == "APPROVED" else "Ciorna"
+        said = f"{what} «{title}» a fost retrasă: ziua are deja episodul aprobat «{kept_title}»"
+        return said + "; o zi a serialului are un singur film.", None
+    if kind == "story.continuity_corrected":
+        number = payload.get("canon_episode_number")
+        return (
+            f"Numărătoarea serialului a fost corectată: episodul curent este {number}, "
+            "fără dublura retrasă.",
+            None,
+        )
     if kind == "story.daily_log_closed":
         safe = int(payload.get("public_safe_events") or 0)
         told = count(safe, "întâmplare", "întâmplări")
         return f"Jurnalul zilei s-a închis: {told} bune de povestit.", None
+    if kind == _ASK_EXPIRED_EVENT or (kind == _ANSWERED_EVENT and _closed_by_studio(payload)):
+        # The studio's bookkeeping: words for any place that lists it, no bubble in the office.
+        ask = (asks or {}).get(str(event.get("aggregate_id") or "")) or {}
+        return _ask_words(kind, payload, ask, title), None
+    if kind == _ANSWERED_EVENT:
+        return _answer_words(payload), None
     return (_fallback(kind, scene, title) if kind else None), None
 
 
@@ -1464,11 +1706,16 @@ def enrich(session: Session, events: list[dict[str, Any]]) -> list[dict[str, Any
     except Exception as exc:  # noqa: BLE001 - a run's place is an addition; it never costs the page
         logger.warning("run_places_unavailable", extra={"error": type(exc).__name__})
         places = {}
+    try:
+        asks = _closed_asks(session, events, actors.by_id)
+    except Exception as exc:  # noqa: BLE001 - an ask's subject is an addition; it never costs the page
+        logger.warning("closed_asks_unavailable", extra={"error": type(exc).__name__})
+        asks = {}
     for event in events:
         actor = actors.for_event(event)
         storyboard_id = _storyboard_of(event)
         title = titles.get(storyboard_id) if storyboard_id else None
-        words, bubble = _words(event, actor, title, actors.by_role, places)
+        words, bubble = _words(event, actor, title, actors.by_role, places, asks)
         if actor is not None:
             event["actor"] = dict(actor)
         if title:

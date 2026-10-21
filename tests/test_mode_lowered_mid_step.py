@@ -278,7 +278,8 @@ def test_a_mode_lowered_during_an_unasked_still_redo_buys_no_reroll(engine, tmp_
     )
 
     assert len(images.asked) == 1, "a re-roll was bought after the mode was lowered"
-    assert "restul nu s-a cumpărat" in result["still"]["reason"]
+    # A rejected frame also requires Sarah to approve replacement words before a reroll.
+    assert "Directoarea le rescrie" in result["still"]["reason"]
     (event,) = stopped_events(engine)
     assert event["step"] == "scene_redo"
 

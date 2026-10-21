@@ -50,6 +50,7 @@ from sqlalchemy.orm import Session
 from app.agents.director import DirectorError, director_review, threads_decided_since
 from app.agents.ensemble import agreement
 from app.agents.identity import blocker_of
+from app.agents.inbox import sweep_stale_asks
 from app.agents.memory import agent_for_role
 from app.agents.messages import (
     open_messages,
@@ -68,7 +69,7 @@ from app.services import append_event, utc_now
 logger = logging.getLogger("studio.mail")
 
 MAIL_TASK = "answer_mail"
-MAIL_TEMPLATE_VERSION = "mail-v1"
+MAIL_TEMPLATE_VERSION = "mail-v2"
 
 #: How many letters one round answers. The worker comes round every half minute; a bound
 #: keeps a burst of mail from holding it for an hour.
@@ -141,6 +142,17 @@ _INSTRUCTIONS = (
     '"done" is true only when nothing more is owed on this thread.\n'
 )
 
+#: The stage whose report opens a thread the studio's measurements belong to.
+PERFORMANCE_STAGE = "performance_intake"
+_RECORDS_INSTRUCTIONS = (
+    "\nAfter the thread are the studio's own measurements of the published films, read from "
+    "the channels' YouTube Analytics this minute: per film its title, when it was measured, "
+    "views, the average percentage viewed (retention), engagement, the Director's editorial "
+    "scores, and the sample size. Answer from them: name the figures and the sample size; do "
+    "not ask anyone for a dashboard, an export or a file the studio already read. Impressions "
+    "and click-through are not reported by this source: say so where they are asked for, and "
+    "give what is measured instead.\n"
+)
 _BOOKS_INSTRUCTIONS = (
     "\nAfter the thread are your books, computed by the studio this minute: today's and this "
     "month's spend per provider, the budgets, the usage no price covered per model with "
@@ -204,6 +216,10 @@ def _thread_text(messages: list[AgentMessage], names: dict[str, str]) -> str:
         text = (m.body_text or "").strip()
         if text:
             lines.append(text)
+        if m.body_json:
+            lines.append(
+                "Structured evidence: " + json.dumps(m.body_json, ensure_ascii=False, default=str)
+            )
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -224,7 +240,58 @@ def _books_for(engine: Engine, role: str | None) -> str | None:
     except (SQLAlchemyError, ValueError, KeyError):
         logger.warning("mail_books_unreadable", exc_info=True)
         return None
-    return json.dumps(figures, ensure_ascii=False, default=str)[:12000]
+    return json.dumps(figures, ensure_ascii=False, default=str)
+
+
+def _records_for(engine: Engine, thread: list[AgentMessage]) -> str | None:
+    """The studio's measurements, when the thread is about them: a thread opened by the
+    performance intake's report (its stage in the letter's body) carries every published
+    film's measured audience (`analytics.services.story_performance`).
+
+    Dr. Aris was asked by the Director for per-film click-through and retention and answered
+    that he needed «access to the analytics dashboard or a CSV» (2026-10-15 21:39Z): the
+    figures were in the studio's own table, read from YouTube Analytics a minute before, and
+    his letter task held only the thread. Computed, never asked for; a fault leaves the letter
+    answered from the thread alone."""
+    if not any((m.body_json or {}).get("stage") == PERFORMANCE_STAGE for m in thread):
+        return None
+    from app.analytics.services import story_performance  # noqa: PLC0415
+
+    try:
+        performance = story_performance(engine)
+    except (SQLAlchemyError, ValueError, KeyError, TypeError):
+        logger.warning("mail_records_unreadable", exc_info=True)
+        return None
+    films = [
+        {
+            key: row.get(key)
+            for key in (
+                "title",
+                "measured_at",
+                "seconds",
+                "views",
+                "measured_view_percentage",
+                "measured_engagement_percentage",
+                "editorial_scores",
+                "editorial_total",
+                "story_review",
+            )
+        }
+        for row in performance.get("videos") or []
+    ]
+    records = {
+        "source": (
+            "YouTube Analytics API, read by the studio's performance intake: views, watch "
+            "time, average percentage viewed, likes, comments, shares, subscribers. It does "
+            "not report impressions or click-through."
+        ),
+        "sample_size": performance.get("sample_size"),
+        "measured_view_percentage_mean": performance.get("measured_view_percentage"),
+        "measured_engagement_percentage_mean": performance.get("measured_engagement_percentage"),
+        "films": films,
+        "note": performance.get("note"),
+    }
+    return json.dumps(records, ensure_ascii=False, default=str)
 
 
 def _answered_letter(reply: AgentMessage, letters: dict[str, AgentMessage]) -> AgentMessage | None:
@@ -296,8 +363,12 @@ def _close_earlier(
     to the same employee in the thread. Another sender's letter is not answered by a reply
     that does not reach them — a reply to the Owner closed the Director's open question while
     her inbox got nothing. A question is answered by the answer; a HANDOFF is an instruction
-    that follows the employee into every run until the work is done, so it closes only on the
-    employee's word — and a new reply lifts a block set on an earlier, repeated one."""
+    that stays open until the work is done, so it closes only on the employee's word — and a
+    new reply lifts a block set on an earlier, repeated one. Since 2026-10-16 («Context pe
+    sarcină») an open HANDOFF rides no identity by itself: her weekly direction and her
+    decisions assigned to the department ride its work tasks while open
+    (`identity.standing_direction`, `identity.standing_decisions`); any other HANDOFF is this
+    mail round's to answer."""
     closed: list[str] = []
     for row in thread_messages(session, thread_id):
         if (
@@ -391,7 +462,7 @@ def _hold_repeated_request(
             told = post_message(
                 session,
                 intent="STATUS",
-                subject=f"Re: {letter.subject}"[:200],
+                subject=f"Re: {letter.subject}",
                 body={
                     "blocked_on": needs,
                     "repeats_message_id": previous.id,
@@ -467,6 +538,15 @@ def answer_mail(
         sender_name = names.get(letter.from_agent_id or "", "the Owner")
         agent_id, subject, name = agent.id, letter.subject, agent.display_name
         transcript = _thread_text(thread, names)
+        # The letters of this thread the call answers: the letter and the earlier open ones of
+        # the same sender to this employee, which its reply closes (`_close_earlier`).
+        owed_here = [
+            m.id
+            for m in thread
+            if _owed(m, agent_id)
+            and m.from_agent_id == letter.from_agent_id
+            and m.created_at <= letter.created_at
+        ] or [letter.id]
         previous = _last_reply(thread, agent_id, letter.from_agent_id)
         role = session.get(Role, agent.role_id)
         role_name = role.name if role is not None else None
@@ -481,11 +561,17 @@ def answer_mail(
         )
     prompt = _INSTRUCTIONS
     books = _books_for(engine, role_name)
+    records = _records_for(engine, thread)
     if books is not None:
         prompt += _BOOKS_INSTRUCTIONS
+    if records is not None:
+        prompt += _RECORDS_INSTRUCTIONS
     prompt += wrap_in_inert_boundary(transcript, "mail-thread")
     if books is not None:
         prompt += "\n" + wrap_in_inert_boundary(books, "books")
+    if records is not None:
+        prompt += "\n" + wrap_in_inert_boundary(records, "studio-records")
+    from app.agents.identity import complete_schema  # noqa: PLC0415
     from app.agents.structured import structured_run  # noqa: PLC0415
 
     answer, result, second = structured_run(
@@ -501,6 +587,9 @@ def answer_mail(
         summary=f"Răspund la «{subject}» de la {sender_name}.",
         max_tokens=3600,
         temperature=0.3,
+        # One thread per call: the letter and its thread are the task's data, and the identity
+        # adds no other letter (`identity.TASK_CONTEXT`, the Owner's decision of 2026-10-16).
+        subject={"thread_id": thread_id, "message_ids": owed_here},
     )
     final = second or result
     text = final.get("output_text") or ""
@@ -516,13 +605,13 @@ def answer_mail(
     if blocker is not None:
         # An employee who cannot do what the letter asks says so in words, not in a JSON
         # blob pasted into a letter: what stops them and what they need.
-        parsed = MailReply(
+        parsed = complete_schema(MailReply)(
             reply=(
                 f"Nu pot răspunde la asta: {blocker.reason}"
                 + (f" Am nevoie de: {blocker.needs}" if blocker.needs else "")
-            )[:4000],
+            ),
             done=False,
-            needs=blocker.needs[:600],
+            needs=blocker.needs,
         )
         intent_out = "ESCALATE"
     else:
@@ -531,7 +620,7 @@ def answer_mail(
         parsed = (
             answer
             if isinstance(answer, MailReply)
-            else MailReply(reply=" ".join(text.split())[:4000], done=False)
+            else complete_schema(MailReply)(reply=text.strip(), done=False)
         )
     # The Owner's own letter is always answered, even with what he was told before.
     if previous is not None and not owner_wrote and _repeats(previous, parsed):
@@ -550,7 +639,7 @@ def answer_mail(
         sent = post_message(
             session,
             intent=intent_out,
-            subject=f"Re: {subject}"[:200],
+            subject=f"Re: {subject}",
             body={"done": parsed.done, "needs": parsed.needs, "about_message_id": message_id},
             body_text=parsed.reply,
             from_agent_id=agent_id,
@@ -836,7 +925,7 @@ def note_failed_answer(
             "model_id": model_id,
             "last_failed_at": failed_at or moment.isoformat(),
             "retry_after": (moment + timedelta(seconds=wait)).isoformat(),
-            "error": " ".join(reason.split())[:200],
+            "error": " ".join(reason.split()),
             "run_status": run_status,
             "run_id": run_id,
         }
@@ -864,7 +953,11 @@ def _unread_replies(session: Session) -> list[AgentMessage]:
 
 
 def correspondence_round(
-    engine: Engine, registry: ProviderRegistry, now: datetime | None = None
+    engine: Engine,
+    registry: ProviderRegistry,
+    now: datetime | None = None,
+    *,
+    limit: int = LETTERS_PER_ROUND,
 ) -> dict[str, Any]:
     """Answer the letters that are waiting, then let the Director read what came back.
 
@@ -880,8 +973,19 @@ def correspondence_round(
     with Session(engine) as session:
         policy = session.get(OwnerPolicy, 1)
         if policy is not None and policy.autonomy_stopped:
-            return {"answered": [], "refused": [], "review": None, "reason": "autonomy stopped"}
-        waiting = letters_awaiting_answer(session, now=moment)
+            return {
+                "answered": [],
+                "refused": [],
+                "review": None,
+                "reason": "autonomy stopped",
+                "expired": [],
+            }
+    # The asks whose film is over, repeated or stale are closed first, each with its reason
+    # (`agents.inbox`): nobody is asked to answer a letter about a published film. A sweep that
+    # fails is logged and the round goes on (`sweep_stale_asks`).
+    expired = sweep_stale_asks(engine, now=moment)
+    with Session(engine) as session:
+        waiting = letters_awaiting_answer(session, limit=max(1, limit), now=moment)
     answered: list[dict[str, Any]] = []
     held: list[dict[str, Any]] = []
     refused: list[dict[str, Any]] = []
@@ -929,4 +1033,10 @@ def correspondence_round(
             review = {"refused": str(exc)[:200]}
     elif arrived:
         review = {"deferred": "a thread she decided in this hour; her next review reads it"}
-    return {"answered": answered, "held": held, "refused": refused, "review": review}
+    return {
+        "answered": answered,
+        "held": held,
+        "refused": refused,
+        "review": review,
+        "expired": expired["expired"],
+    }

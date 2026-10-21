@@ -1,6 +1,20 @@
-"""Series look: existing local-first media checks.
+"""The office serial's one look, as every shot prompt of every episode opens with it.
 
-Private production traces omitted; implementation unchanged."""
+Measured before this module (2026-09-24): the serial's visual style was the storyboard label
+"CHARACTER_ANIMATION". No prompt carried it, so each still was drawn in whatever style the
+image model defaults to, a different film in every shot. The Owner's headquarters picture
+(`art-source/reference/headquarters_dusk_primary.png`) already says what the studio looks
+like: a stylised, warm-lit, cinematic 3D office at human scale, with the eight employees as
+their bibles describe them.
+
+The look is a proposal in `config/serial_series_look.json`, next to the voice cast, and not a
+row in the Owner's database: writing a style block is free configuration, and he changes it
+by editing the file. It is versioned: a shot described under an older version is described
+again (`app.media.serial_storyboard.describe_serial_shots`). The block is read, never written
+by a model: an episode may not re-decide the series' look.
+
+Nothing here asks a vendor for anything.
+"""
 
 from __future__ import annotations
 
@@ -10,22 +24,36 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
+from runpod_worker.contract import MAX_PROMPT
+
 from app.config import ROOT
 
 #: The Owner's proposal file for the serial's look.
 SERIES_LOOK_FILE = ROOT / "config" / "serial_series_look.json"
 
-#: What a serial prompt may be at most, when the file does not say: the style block first,
-#: then the room, the people, the action and the camera. A longer prompt buries the shot.
-DEFAULT_MAX_PROMPT_CHARS = 980
+#: The serial uses the current GPU route's request allowance, not an editorial length cap.
+DEFAULT_MAX_PROMPT_CHARS = MAX_PROMPT
 
 #: The shot sizes the serial varies between, when the file does not name them. ``{name}`` is
 #: the character the shot is on.
 DEFAULT_SHOT_SIZES = {
-    "establishing": "Establishing wide shot at eye level, the whole room in view",
+    # The room and the desk first, the person last as a small full figure (2026-10-16,
+    # 87c05891 scene 1: «{name} small in the middle distance» beside an action naming both
+    # hands built a medium close-up around Sarah).
+    "establishing": (
+        "Establishing wide shot at eye level from across the room: the whole room in view, "
+        "floor to ceiling, the whole desk inside the frame, {name} a small full figure in the "
+        "middle distance"
+    ),
     "two_shot": "Medium two-shot at eye level, both speakers facing the viewer",
     "single": "Medium close-up single at eye level on {name}, facing the viewer",
     "close": "Close-up at eye level on {name}'s reaction, facing the viewer",
+    # The listener while the other goes on speaking from beside the frame (montage, the
+    # Owner 2026-10-16: dialogue heard in off, reaction shots instead of moving lips).
+    "reaction": (
+        "Close-up at eye level on {name} listening, lips closed, eyes on the speaker beside "
+        "the frame"
+    ),
 }
 
 
@@ -35,6 +63,7 @@ SHOT_TYPES = {
     "two_shot": "MEDIUM_TWO_SHOT",
     "single": "MEDIUM_CLOSEUP",
     "close": "CLOSEUP",
+    "reaction": "CLOSEUP_REACTION",
 }
 
 #: The part a beat plays (the showrunner's structure, S4) as the scene purpose a shot records.
@@ -102,6 +131,7 @@ def load_series_look(path: Path | None = None) -> dict[str, Any]:
             "continuity_rules": [],
             "avoid": [],
             "shot_sizes": dict(DEFAULT_SHOT_SIZES),
+            "rooms": {},
             "max_prompt_chars": DEFAULT_MAX_PROMPT_CHARS,
             "file": str(source),
         }
@@ -117,6 +147,13 @@ def load_series_look(path: Path | None = None) -> dict[str, Any]:
         cap = int(data.get("max_prompt_chars") or DEFAULT_MAX_PROMPT_CHARS)
     except (TypeError, ValueError):
         cap = DEFAULT_MAX_PROMPT_CHARS
+    rooms: dict[str, str] = {}
+    given_rooms = data.get("rooms")
+    if isinstance(given_rooms, dict):
+        for key, value in given_rooms.items():
+            sentence = strip_on_screen_text(_clean(value))
+            if _clean(key) and sentence:
+                rooms[_clean(key)] = sentence
     rendering = strip_on_screen_text(_clean(data.get("rendering")))
     if not rendering and proposed:
         rendering = proposed.split(". ")[0].rstrip(".") + "."
@@ -133,9 +170,32 @@ def load_series_look(path: Path | None = None) -> dict[str, Any]:
         "continuity_rules": _strings(data.get("continuity_rules")) if in_use else [],
         "avoid": _strings(data.get("avoid")) if in_use else [],
         "shot_sizes": sizes,
-        "max_prompt_chars": max(300, min(2000, cap)),
+        "rooms": rooms if in_use else {},
+        "max_prompt_chars": cap if 0 < cap <= MAX_PROMPT else MAX_PROMPT,
         "file": str(source),
     }
+
+
+#: The key of the look's room sentence for a room the table does not name by itself.
+HOUSE_ROOM = "house"
+
+
+def room_sentence(look: dict[str, Any], location: Any) -> str:
+    """The look's sentence for the room a beat names: the entry of ``rooms`` whose key is
+    in the location's name (the longest such key), else the house's own; empty without a
+    look or a table. 2026-10-15 (episode 2, 2d276038): the style block itself said «wooden
+    desks with glowing monitors … Screens show abstract glow» in every room, Sarah's
+    penthouse was drawn as the render bay with lit monitors, and no rewrite could change the
+    block's words — six scenes were refused on them. The room's furniture is said here, per
+    room, so a beat in the penthouse is drawn in the penthouse."""
+    rooms = look.get("rooms") if isinstance(look.get("rooms"), dict) else {}
+    if not rooms:
+        return ""
+    where = " ".join(str(location or "").casefold().split())
+    named = [key for key in rooms if key != HOUSE_ROOM and where and key.casefold() in where]
+    if named:
+        return str(rooms[max(named, key=len)])
+    return str(rooms.get(HOUSE_ROOM) or "")
 
 
 def series_bible(look: dict[str, Any], aspect_ratio: str = "9:16") -> dict[str, Any]:

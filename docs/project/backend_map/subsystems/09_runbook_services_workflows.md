@@ -75,7 +75,7 @@ dispatch table and runs in other modules.
 - **Dead processes leave rows behind**: renders RENDERING since 2026-09-12, uploads in
   REMOTE_UNKNOWN, budget holds never released, vendor tasks never collected, days left RUNNING
   (`backend/app/workflows/watchdog.py:1-48`).
-- **Films stood waiting with nothing left to ask the Owner** (babcf272, cyclotron 00000160,
+- **Films stood waiting with nothing left to ask the Owner** (babcf272, cyclotron aa170155,
   NASA 6fe6a577, serial 043317d3) → registered passes that re-queue the film's continuation
   (the passes' module docstrings, 2026-10-09..11). The Owner's rules quoted there: «studioul
   trebuie să rezolve singur, fără intervenții», «Nu trebuie să respingă un film, trebuie să îl
@@ -709,7 +709,7 @@ or before 2026-10-11 the brief run under one of the film's continuations) did no
 is older than 20 min, with no walk in those 20 min and fewer than 6 retries today → queue
 FILM_CONTINUE (cause `director_ladder_retry`, key `film-continue-{film}-ladder-retry-{day}-{n}`).
 Helpers `_when`, `_retry_prefix`; nested `walked_since`, `newest_attempt`. Why: cyclotron
-00000160 (brief refused by its schema twice, film left WAITING NEEDS_OWNER). Decided by:
+aa170155 (brief refused by its schema twice, film left WAITING NEEDS_OWNER). Decided by:
 CODE_RULE; the brief itself is the Director's (LLM) inside the continuation.
 
 ### `app.workflows.passes.director_qc_review` — `passes/director_qc_review.py` (180 lines, order 160)

@@ -236,7 +236,7 @@ def _replayed(engine: Any, command_id: UUID | None, payload: dict[str, Any]) -> 
     return {**stored, "replayed": True} if stored is not None else None
 
 
-def _sheet_wiring(request: Request) -> dict[str, Any]:
+def _sheet_wiring(request: Request, storyboard_id: str | None = None) -> dict[str, Any]:
     """What the sheet and its steps are built from: the fakes a test put on ``app.state``,
     otherwise the Runway connection the Owner selected and verified."""
     state = request.app.state
@@ -247,6 +247,10 @@ def _sheet_wiring(request: Request) -> dict[str, Any]:
     if capabilities is None:
         capabilities = connection_capabilities(engine, integration_id)
     image = getattr(state, "image_adapter", None) or image_provider(engine, vault)
+    if storyboard_id:
+        from app.media.factory import reference_image_adapter  # noqa: PLC0415
+
+        image = reference_image_adapter(engine, storyboard_id, image)
     account = getattr(state, "runway_account", None) or connection_account(
         engine, vault, integration_id
     )
@@ -828,6 +832,7 @@ def create_media_router() -> APIRouter:
     def get_shooting_sheet(
         request: Request,
         storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        include_redos: bool = True,
     ) -> dict:
         """Foaia de filmare: everything a film will buy, before a credit is spent.
 
@@ -836,7 +841,7 @@ def create_media_router() -> APIRouter:
         """
         from app.media.faces import count_faces  # noqa: PLC0415 - opencv loads lazily
 
-        wiring = _sheet_wiring(request)
+        wiring = _sheet_wiring(request, storyboard_id)
         try:
             sheet = build_sheet(
                 request.app.state.engine,
@@ -847,6 +852,8 @@ def create_media_router() -> APIRouter:
                 resolution=wiring["resolution"],
                 stills_model=getattr(wiring["image_adapter"], "model", None),
                 face_counter=count_faces,
+                include_redos=include_redos,
+                settings=request.app.state.settings,
             )
             from app.media.blocker_repair import repair_status  # noqa: PLC0415
 
@@ -906,7 +913,7 @@ def create_media_router() -> APIRouter:
         if replayed is not None:
             return replayed
         settings = request.app.state.settings
-        wiring = _sheet_wiring(request)
+        wiring = _sheet_wiring(request, storyboard_id)
         storage = getattr(request.app.state, "media_storage_root", None)
         if step == ASSEMBLE_STEP:
             assembled = _assemble_step(request, storyboard_id, cmd, wiring)
@@ -953,7 +960,7 @@ def create_media_router() -> APIRouter:
         """The Owner's choice of one filmed scene's motion model (or LOCAL_MOVE), on the sheet.
         It changes the sheet and its hash; a yes for the old sheet buys nothing."""
         engine = request.app.state.engine
-        wiring = _sheet_wiring(request)
+        wiring = _sheet_wiring(request, storyboard_id)
         context = {
             "capabilities": wiring["capabilities"],
             "integration_id": wiring["integration_id"],
@@ -991,7 +998,7 @@ def create_media_router() -> APIRouter:
         """What redoing one scene (or the sound) would do, cost and replace, with the
         plan_hash the Owner's yes is bound to. 0 credits, no vendor asked."""
         engine = request.app.state.engine
-        wiring = _sheet_wiring(request)
+        wiring = _sheet_wiring(request, storyboard_id)
         try:
             return redo_plan(
                 engine,
@@ -1031,7 +1038,7 @@ def create_media_router() -> APIRouter:
         settings = request.app.state.settings
         storage = getattr(request.app.state, "media_storage_root", None)
         paid = cmd.kind in ("still", "motion")
-        wiring = _sheet_wiring(request) if paid else {}
+        wiring = _sheet_wiring(request, storyboard_id) if paid else {}
         try:
             redone = redo_scene(
                 engine,
@@ -1077,7 +1084,7 @@ def create_media_router() -> APIRouter:
         engine = request.app.state.engine
 
         def sheet_now(storyboard_id: str) -> dict[str, Any]:
-            wiring = _sheet_wiring(request)
+            wiring = _sheet_wiring(request, storyboard_id)
             return build_sheet(
                 engine,
                 storyboard_id,

@@ -332,6 +332,123 @@ def test_a_rejected_script_does_not_take_the_day_down_with_it(engine, settings, 
     assert "1 respins:" in outcome["reason"]
 
 
+def test_a_script_refused_by_its_form_is_asked_again_with_the_refusal(
+    engine, settings, monkeypatch
+):
+    """14:43Z, d7d80450: the first script a writer with the right facts wrote was dropped whole
+    for one DATA_CARD scene without its numbers, and the room closed on the topic. Text is
+    free: the writer is asked again with the refusal in his notes, within the exchanges the
+    room allows; a topic with no supported claim at all still closes at once."""
+    from pathlib import Path as _Path
+
+    from app.factual.agent_pipeline import ScriptRejected
+    from app.integrations.vault import CredentialVault
+
+    topic_id = _topic(engine, status="SELECTED")
+    _claim(engine, topic_id, status="SUPPORTED")
+    registry = ProviderRegistry()
+    registry.register("any", object())
+    asked: list[list[str] | None] = []
+
+    def refuse(*args: Any, **kwargs: Any) -> None:
+        asked.append(kwargs.get("notes"))
+        raise ScriptRejected("Scena 3 este un grafic (DATA_CARD), dar nu dă cifrele lui.")
+
+    monkeypatch.setattr("app.runbook.stages.agent_write_script", refuse)
+    vault = CredentialVault(_Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    outcome = build_stage_runners(engine, settings, vault, registry)["script_and_storyboard"]()
+
+    from app.runbook.stages import SCRIPT_FORM_RETRIES
+
+    assert outcome["status"] == "COMPLETED"
+    assert len(asked) == SCRIPT_FORM_RETRIES + 1  # the draft, then the bounded retries
+    assert asked[0] is None
+    assert any("Forma a refuzat ciorna" in note for note in asked[1] or [])
+    assert any("DATA_CARD" in note for note in asked[1] or [])
+    assert len(outcome["artefacts"]["rejected"]) == 1  # one topic refused, once
+    assert outcome["artefacts"]["form_retries"] == SCRIPT_FORM_RETRIES
+    assert "1 respins:" in outcome["reason"]
+
+
+def test_a_writer_who_stops_over_a_charts_missing_figures_is_told_to_write_it_live(
+    engine, settings, monkeypatch
+):
+    """15:51Z, d7d80450: four claims verified, the story passed its check, and the writer
+    answered with a blocker — scene 3's DATA_CARD had no numeric claim — so the topic went
+    back to research with its 30 claims retired. A chart's missing figures are a form
+    matter: he is asked again to write the scene LIVE, and his claims stand; a stop over a
+    fact the story lacks still goes back to research."""
+    from pathlib import Path as _Path
+
+    from app.agents.identity import Blocker
+    from app.factual.agent_pipeline import ScriptBlocked
+    from app.factual.models import FactualClaim
+    from app.integrations.vault import CredentialVault
+    from app.runbook.stages import SCRIPT_FORM_RETRIES
+    from sqlalchemy import select
+
+    topic_id = _topic(engine, status="SELECTED")
+    _claim(engine, topic_id, status="SUPPORTED")
+    registry = ProviderRegistry()
+    registry.register("any", object())
+    asked: list[list[str] | None] = []
+
+    def stop(*args: Any, **kwargs: Any) -> None:
+        asked.append(kwargs.get("notes"))
+        raise ScriptBlocked(
+            Blocker(
+                reason="Scene 3 requires a DATA_CARD chart; the claims carry no numeric values.",
+                needs="A verified claim with a value and unit for the dimming.",
+            )
+        )
+
+    monkeypatch.setattr("app.runbook.stages.agent_write_script", stop)
+    vault = CredentialVault(_Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    outcome = build_stage_runners(engine, settings, vault, registry)["script_and_storyboard"]()
+    assert outcome["status"] == "COMPLETED"
+    assert len(asked) == SCRIPT_FORM_RETRIES + 1
+    assert any("se scrie LIVE" in note for note in asked[1] or [])
+    with Session(engine) as session:
+        claims = session.scalars(select(FactualClaim).where(FactualClaim.topic_id == topic_id))
+        assert [c.status for c in claims] == ["SUPPORTED"]  # not retired by a form matter
+
+    # A stop over a missing fact is not a form matter: the topic goes back to research.
+    asked.clear()
+    with Session(engine) as session, session.begin():
+        session.get(TopicIdea, topic_id).status = "REJECTED"  # out of the room's way
+    topic_two = _topic(engine, status="SELECTED")
+    _claim(engine, topic_two, status="SUPPORTED")
+
+    def no_facts(*args: Any, **kwargs: Any) -> None:
+        asked.append(kwargs.get("notes"))
+        raise ScriptBlocked(Blocker(reason="No claim supports the hook.", needs="Sources."))
+
+    monkeypatch.setattr("app.runbook.stages.agent_write_script", no_facts)
+    build_stage_runners(engine, settings, vault, registry)["script_and_storyboard"]()
+    assert len(asked) == 1
+    with Session(engine) as session:
+        claims = session.scalars(select(FactualClaim).where(FactualClaim.topic_id == topic_two))
+        assert [c.status for c in claims] == ["UNCERTAIN"]
+        assert session.get(TopicIdea, topic_two).status == "PROPOSED"  # read for once more
+
+    # The second stop on the same topic's facts today leaves the topic: the day's next run
+    # selects another candidate (d7d80450, three stops in one day, seven candidates waiting).
+    with Session(engine) as session, session.begin():
+        session.get(TopicIdea, topic_two).status = "SELECTED"
+    _claim(engine, topic_two, status="SUPPORTED")
+    build_stage_runners(engine, settings, vault, registry)["script_and_storyboard"]()
+    with Session(engine) as session:
+        topic = session.get(TopicIdea, topic_two)
+        assert topic.status == "REJECTED" and "2 ori" in str(topic.decision_notes)
+        from app.agents.models import AgentMessage
+
+        subjects = [
+            m.subject
+            for m in session.scalars(select(AgentMessage).where(AgentMessage.intent == "STATUS"))
+        ]
+        assert any("se lasă, se alege altul" in s for s in subjects), subjects
+
+
 def test_quality_control_selects_files_by_what_they_are_not_by_their_label(
     engine, settings, tmp_path
 ):
@@ -1655,8 +1772,34 @@ def _noise_stills(tmp_path) -> tuple[Path, Path]:
     return made[0], made[1]
 
 
+def _fixture_sarah_approves(monkeypatch) -> None:
+    """When the test is about money/Owner policy, supply a deterministic Sarah.
+
+    These tests deliberately run _media(..., registry=None). Since PRODUCTION
+    now fails closed without Director approval, simulate only the editorial
+    approval boundary; the real paid staircase, budgets and QC remain active.
+    Her missing/rejected review is covered by dedicated prompt-audit tests.
+    """
+    from app.runbook import stages
+
+    original = stages._walk_staircase
+
+    def with_director(engine, settings, registry, *args, **kwargs):
+        return original(
+            engine, settings, registry if registry is not None else object(),
+            *args, **kwargs
+        )
+
+    def approved(_engine, _registry, *, scenes, **_kwargs):
+        return {"approved": list(scenes), "rewritten": [], "held": [], "skipped": [], "asked": True}
+
+    monkeypatch.setattr(stages, "_walk_staircase", with_director)
+    monkeypatch.setattr("app.media.prompt_audit.audit_before_purchase", approved)
+
+
 def _staircase_world(engine, tmp_path, monkeypatch, *, stills=None) -> dict[str, Any]:
     """The vendors, faked, as the stage's wiring hands them over; the legacy render refuses."""
+    _fixture_sarah_approves(monkeypatch)
     from app.runbook import stages
     from test_film_costing import SEEDANCE, Account, Models, SpyVideo
     from test_stills_stage import SpyStills
@@ -2088,8 +2231,8 @@ def test_under_mode_a_first_still_that_never_passes_is_bought_once_not_every_day
         stages._media(engine, settings, None, None)
         asked.append(len(world["images"].asked))
 
-    # Scene 1: one request and its two re-rolls, then the Owner; scene 2 waits for Figure 1.
-    assert asked == [3, 3, 3], asked
+    # Scene 1: one rejected request waits for the reviewed rewrite; scene 2 waits for Figure 1.
+    assert asked == [1, 1, 1], asked
     assert world["models"].posts() == 0
     sheet = build_sheet(
         engine, storyboard_id, capabilities=[SEEDANCE], resolution="1080p", read_live=False
@@ -2098,7 +2241,7 @@ def test_under_mode_a_first_still_that_never_passes_is_bought_once_not_every_day
     assert sheet["steps"]["stills"]["to_buy"] == []
     scene_one = next(s for s in sheet["scenes"] if s["scene_index"] == 1)
     assert scene_one["still_hold"]["status"] == "NEEDS_OWNER"
-    assert "Proprietar" in scene_one["still_hold"]["reason_ro"]
+    assert "Directoarea" in scene_one["still_hold"]["reason_ro"]
     # Quality control's refusal of a scene is the Director's to answer (her ladder in the walk,
     # the `ladder_retry` pass after it), never a letter to the Owner (2026-10-12, 75f2267: the
     # sheet's letter reached him while the rung was composing scene 3 again). His letters are
@@ -2125,9 +2268,8 @@ def test_under_mode_a_hero_that_fails_clip_qc_twice_is_bought_once_not_every_day
         outcomes.append(stages._media(engine, settings, None, None))
         posts.append(world["models"].posts())
 
-    # The hero and clip QC's one retry, on the first day only; no other scene became the
-    # test shot in its place.
-    assert posts == [2, 2, 2], posts
+    # The rejected hero waits for Director/editor review; no unreviewed retry is bought.
+    assert posts == [1, 1, 1], posts
     assert len(world["images"].asked) == 2
     films = outcomes[-1]["artefacts"]["films"]
     assert films[0]["status"] == "WAITING" and films[0]["refusal"] == "NEEDS_OWNER"
@@ -2135,7 +2277,7 @@ def test_under_mode_a_hero_that_fails_clip_qc_twice_is_bought_once_not_every_day
     # Clip QC's refusal is the Director's to answer (her ladder), never a letter to the Owner
     # (2026-10-12, 75f2267); his letters are for his matters only.
     assert _owner_letters(engine, "owner_shooting_sheet") == []
-    # Every purchase is in the books once: the stills and the two shots.
+    # Every purchase is in the books once: the stills and the one shot.
     steps = sorted(cost.attribution_json["step"] for cost in _provider_costs(engine))
     assert steps == ["stills", "test_shot"]
 
@@ -2435,11 +2577,11 @@ def test_a_stopped_older_film_does_not_stop_the_newer_one(
     ) == len(about_older)
 
 
-def test_a_film_without_its_shot_plan_is_asked_of_the_model_again_once_a_day_for_two_days(
+def test_a_film_without_its_shot_plan_is_asked_again_without_a_two_day_ceiling(
     engine, settings, tmp_path, monkeypatch
 ):
     """NEEDS_SHOT_PLAN, and a film the lint held: the shot plan is asked of the model again
-    (text only, no media credit) once a business day, on at most two days."""
+    (text only, no media credit) once a business day until usable."""
     from app.media.models import Storyboard, StoryboardScene
     from app.media.prompt_agent import ShotPlanUnusable
     from app.models import DomainEvent
@@ -2477,7 +2619,7 @@ def test_a_film_without_its_shot_plan_is_asked_of_the_model_again_once_a_day_for
         # ...and the script stage asks the model for both plans again, once that day.
         stages._script_and_storyboard(engine, registry, "en", 30, settings=settings)
 
-    assert sorted(asked) == sorted([waiting, waiting, linted, linted]), asked
+    assert sorted(asked) == sorted([waiting, waiting, waiting, linted, linted, linted]), asked
     with Session(engine) as session:
         events = list(
             session.scalars(
@@ -2489,6 +2631,8 @@ def test_a_film_without_its_shot_plan_is_asked_of_the_model_again_once_a_day_for
         "2026-10-02",
         "2026-10-03",
         "2026-10-03",
+        "2026-10-04",
+        "2026-10-04",
     ]
     assert world["images"].asked == [] and world["models"].posts() == 0
     assert _approvals(engine) == [] and _provider_costs(engine) == []
@@ -2786,6 +2930,7 @@ def _assembled_staircase_film(engine, settings, tmp_path, monkeypatch):
 
     _production(engine)
     _paid_media_mode(engine)
+    _fixture_sarah_approves(monkeypatch)
     storyboard_id = _bottom_of_the_staircase(engine, tmp_path, scenes=2)
     stills = _noise_stills(tmp_path)
 

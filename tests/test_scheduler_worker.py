@@ -299,7 +299,7 @@ def test_the_application_seeds_the_daily_job_only_when_the_worker_is_on(settings
     assert jobs[DAILY_JOB_NAME].timezone == settings.timezone
     assert jobs[DIRECTOR_LOOP_JOB_NAME].workflow_type == DIRECTOR_LOOP
     assert jobs[DIRECTOR_LOOP_JOB_NAME].is_active
-    assert jobs[DIRECTOR_LOOP_JOB_NAME].interval_seconds == 21600
+    assert jobs[DIRECTOR_LOOP_JOB_NAME].interval_seconds == settings.director_check_interval_seconds
     assert jobs[MODEL_REVIEW_JOB_NAME].workflow_type == MODEL_REVIEW
     assert jobs[MODEL_REVIEW_JOB_NAME].is_active
     assert jobs[MODEL_REVIEW_JOB_NAME].interval_seconds == 86400
@@ -1080,11 +1080,17 @@ def test_a_lapsed_task_with_no_attempts_left_is_interrupted_not_reclaimed_and_to
     queued = enqueue_task(engine, DAILY_RUN, {"manual": True}, max_attempts=1)
     claimed = claim_task(engine, "worker_that_died", lease_duration_seconds=1)
     assert claimed is not None and claimed["id"] == queued["id"]
+    # The dead worker had begun the day: its row was written, so it has a run to resume.
+    run_id = _day_begun(engine, queued["id"])
     _lapse(engine, queued["id"])
 
     # The queue never hands it out again: it had its one attempt.
     assert claim_task(engine, "worker_after_restart", lease_duration_seconds=60) is None
 
+    # As in production: the process that runs these passes began after the dead worker's
+    # last write (one worker per database), so its claim is one the pass takes back. Review
+    # 2026-10-16: with this the Owner's day was given back to the queue and run again whole.
+    monkeypatch.setattr("app.workflows.worker.PROCESS_STARTED_AT", datetime.now(UTC).isoformat())
     handlers = build_task_handlers(engine, settings, vault, None)
     first = worker_pass(engine, handlers)
     second = worker_pass(engine, handlers)
@@ -1107,7 +1113,68 @@ def test_a_lapsed_task_with_no_attempts_left_is_interrupted_not_reclaimed_and_to
     told = _letters(engine, "day_interrupted")
     assert len(told) == 1, "one letter, not one per pass"
     letter = f"{told[0].subject} {told[0].body_text}"
-    assert "întreruptă" in letter and "nu o repornesc singur" in letter
+    assert "întreruptă" in letter and "reiau singur" in letter
+    with Session(engine) as session:
+        assert session.get(DailyRun, run_id).status == "INTERRUPTED"
+
+
+def _day_begun(engine, task_id: str) -> str:
+    """The day's row and start event, written as `execute_daily_run` writes them after its
+    free preflight (`runbook.services._begin_run`): what a process killed in a stage leaves."""
+    from app.runbook.services import _begin_run, _stage
+
+    run_id = str(uuid4())
+    _begin_run(
+        engine,
+        run_id=run_id,
+        date_iso=datetime.now(UTC).date().isoformat(),
+        preflight={"status": "READY"},
+        stages=[_stage("preflight", "COMPLETED", "pregătit")],
+        started_at=datetime.now(UTC).isoformat(),
+        payload={},
+        correlation_id=task_id,
+    )
+    return run_id
+
+
+def test_a_go_a_dead_process_left_claimed_before_its_run_began_is_run_not_dead_lettered(
+    engine, settings, vault, monkeypatch
+):
+    """Review 2026-10-16: the Owner's GO, killed after its claim and before its run's row was
+    written (the handler's reads, the media setup, the free preflight: nothing bought), was
+    dead-lettered INTERRUPTED like a day cut off in a stage, with a letter saying «o reiau
+    singur»; with no run, the watchdog's resume found nothing and the GO was lost. Its run
+    never began, so it is given back to the queue and run once, and the Owner is told nothing."""
+    from app.workflows.passes import WatchdogContext
+    from app.workflows.passes.resume_interrupted_day import resume_interrupted_days
+    from app.workflows.services import claim_task
+
+    _autonomy(engine, False)
+    calls: list[dict[str, Any]] = []
+
+    def day(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"status": "COMPLETED", "id": str(uuid4())}
+
+    monkeypatch.setattr("app.workflows.worker.execute_daily_run", day)
+    queued = enqueue_task(engine, DAILY_RUN, {"manual": True}, max_attempts=1)
+    claimed = claim_task(engine, "worker_that_died", lease_duration_seconds=3600)
+    assert claimed is not None and claimed["id"] == queued["id"]
+
+    # The next process began after the dead one's claim; the lease still has an hour.
+    monkeypatch.setattr("app.workflows.worker.PROCESS_STARTED_AT", datetime.now(UTC).isoformat())
+    handlers = build_task_handlers(engine, settings, vault, None)
+    first = worker_pass(engine, handlers)
+    resume_interrupted_days(WatchdogContext(engine, settings, "wd"))
+    second = worker_pass(engine, handlers)
+
+    assert first["interrupted"] == [] and second["interrupted"] == []
+    assert [item["task_id"] for item in first["ran"]] == [queued["id"]], first["ran"]
+    assert second["ran"] == []
+    assert len(calls) == 1 and calls[0]["correlation_id"] == queued["id"]
+    (task,) = _tasks(engine)
+    assert task.status == "COMPLETED", (task.status, task.error_detail)
+    assert _letters(engine, "day_interrupted") == []
 
 
 def test_a_lapsed_task_with_attempts_left_is_still_reclaimed_by_the_queue(engine):
@@ -1176,7 +1243,7 @@ def test_a_killed_day_is_left_interrupted_and_the_clock_starts_no_second_one(
         assert by_name["serial_next"]["status"] == "BLOCKED"
     told = _letters(engine, "day_interrupted")
     assert len(told) == 1
-    assert "«" in told[0].body_text and "nu o repornesc singur" in told[0].body_text
+    assert "«" in told[0].body_text and "reiau singur" in told[0].body_text
 
     # The clock fires again today (a restart, the slot put back): no second day.
     _due_job(engine)
@@ -1234,8 +1301,16 @@ def test_the_watchdog_closes_a_running_day_nobody_is_running_any_more(
     assert len(_letters(engine, "day_interrupted")) == 1
 
 
-def test_a_continuation_cut_off_by_a_crash_is_told_once_and_not_run_again(engine, settings, vault):
-    from app.workflows.services import claim_task
+def test_a_continuation_cut_off_by_a_crash_is_resumed_once_and_told_only_when_it_is_not(
+    engine, settings, vault
+):
+    """Review 2026-10-16: the sweep's letter told the Owner «nu o repornesc singur» and the
+    next pass, seconds later, queued the continuation again and walked the film. Whether it is
+    resumed is decided before he is told: resumed (once, in the same pass) it is no letter —
+    his letters are for accounts, authorisations and security; cut off again, it is not
+    resumed a second time, and that one he is told about, once."""
+    from app.models import DomainEvent
+    from app.workflows.services import TASK_RESUMED_EVENT, claim_task
     from app.workflows.worker import FILM_CONTINUE
 
     _autonomy(engine, False)
@@ -1244,16 +1319,107 @@ def test_a_continuation_cut_off_by_a_crash_is_told_once_and_not_run_again(engine
     )
     assert claim_task(engine, "worker_main", lease_duration_seconds=1) is not None
     _lapse(engine, queued["id"])
+    walks: list[int] = []
 
-    handlers = build_task_handlers(engine, settings, vault, None)
-    worker_pass(engine, handlers)
+    def walk(task: dict[str, Any]) -> dict[str, Any]:
+        walks.append(task["attempts"])
+        raise Killed()  # the resumed walk is cut off too
+
+    handlers = {**build_task_handlers(engine, settings, vault, None), FILM_CONTINUE: walk}
+    with pytest.raises(Killed):
+        worker_pass(engine, handlers)
+
+    assert walks == [2], "resumed and walked in the pass that found it dead"
+    assert _letters(engine, "film_continue_interrupted") == []
+    with Session(engine) as session:
+        resumed = list(
+            session.scalars(select(DomainEvent).where(DomainEvent.event_type == TASK_RESUMED_EVENT))
+        )
+    assert [event.aggregate_id for event in resumed] == [queued["id"]]
+
+    _lapse(engine, queued["id"])
+    second = worker_pass(engine, handlers)
     worker_pass(engine, handlers)
 
+    assert walks == [2], "not resumed a second time"
+    assert second["ran"] == []
     (task,) = [t for t in _tasks(engine) if t.id == queued["id"]]
-    assert task.status == "DEAD_LETTER"
+    assert task.status == "DEAD_LETTER" and str(task.error_detail).startswith("INTERRUPTED")
     told = _letters(engine, "film_continue_interrupted")
     assert len(told) == 1
     assert "nu o repornesc singur" in told[0].body_text
+
+
+def test_a_manual_day_a_killed_process_left_claimed_is_resumed_from_its_stage_not_run_again(
+    engine, settings, vault, started_studio, monkeypatch
+):
+    """Review 2026-10-16: the Owner's GO, left CLAIMED by a killed process with most of its
+    lease to run, was given back to the queue by the next process (`release_orphaned_claims`),
+    claimed a second time and run from its start — a second subject, a second film — while its
+    first run stood RUNNING with half a film bought. Now the claim is closed INTERRUPTED with
+    its run, and the watchdog resumes that run from the stage it stopped in."""
+    from collections import defaultdict
+
+    from app.runbook.services import STAGES, execute_daily_run, resumable_run
+    from app.story.services import business_date
+    from app.workflows.passes import WatchdogContext
+    from app.workflows.passes.resume_interrupted_day import resume_interrupted_days
+    from app.workflows.services import claim_task
+
+    calls: dict[str, int] = defaultdict(int)
+
+    def stages(*, killed_in_media: bool) -> dict[str, Any]:
+        def runner_for(name: str):
+            def run() -> dict[str, Any]:
+                calls[name] += 1
+                if name == "media" and killed_in_media:
+                    raise Killed()
+                return {"status": "COMPLETED", "reason": f"{name} gata", "artefacts": {}}
+
+            return run
+
+        return {name: runner_for(name) for name in STAGES[1:]}
+
+    queued = enqueue_task(engine, DAILY_RUN, {"manual": True}, max_attempts=1)
+    task = claim_task(engine, "worker_main", lease_duration_seconds=3600)
+    assert task is not None and task["id"] == queued["id"]
+    with pytest.raises(Killed):
+        execute_daily_run(
+            engine,
+            settings,
+            vault,
+            correlation_id=task["id"],
+            stage_runners=stages(killed_in_media=True),
+        )
+    with Session(engine) as session:
+        (run,) = session.scalars(select(DailyRun)).all()
+        assert run.status == "RUNNING"
+        cut_id = run.id
+    before = dict(calls)
+
+    # The next process began after the dead one's last write; the lease still has an hour.
+    monkeypatch.setattr("app.workflows.worker.PROCESS_STARTED_AT", datetime.now(UTC).isoformat())
+    handlers = build_task_handlers(engine, settings, vault, stages(killed_in_media=False))
+    first = worker_pass(engine, handlers)
+
+    assert first["ran"] == [] and dict(calls) == before, "the day is not run again from its start"
+    assert [item["id"] for item in first["interrupted"]] == [queued["id"]]
+    (dead,) = _tasks(engine)
+    assert dead.status == "DEAD_LETTER" and str(dead.error_detail).startswith("INTERRUPTED")
+    with Session(engine) as session:
+        cut = session.get(DailyRun, cut_id)
+        assert cut.status == "INTERRUPTED" and cut.stopped_at_stage == "media"
+    assert worker_pass(engine, handlers)["interrupted"] == []
+    assert len(_letters(engine, "day_interrupted")) == 1
+
+    # The watchdog resumes the run it closed: what it completed is replayed, not done again.
+    found = resumable_run(engine, business_date(settings.timezone))
+    assert found is not None and found.id == cut_id
+    assert resume_interrupted_days(WatchdogContext(engine, settings, "wd"))["queued"] == [cut_id]
+    (ran,) = worker_pass(engine, handlers)["ran"]
+    assert ran["outcome"]["resumed_from"] == cut_id, ran
+    assert calls["media"] == 2
+    assert all(calls[name] == 1 for name in STAGES[1 : STAGES.index("media")])
 
 
 # ------------------------------------------------- dead Workflow rows (AR-14) --

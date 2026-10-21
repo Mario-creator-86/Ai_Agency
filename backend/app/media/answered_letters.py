@@ -1,6 +1,28 @@
-"""Answered letters: existing local-first media checks.
+"""Letters to the Owner that ask about something no longer waiting close themselves.
 
-Private production traces omitted; implementation unchanged."""
+2026-10-09 (film babcf272): the Owner closed six «Foaia de filmare: … așteaptă răspunsul tău la
+pasul …» letters by hand, each written for a question he had already answered on the sheet or
+for a state the film had already left (13:42 «așteaptă să se încheie cumpărarea în curs»,
+closed by him at 17:12). The studio now closes an OPEN letter to him when:
+
+- it is the sheet's letter (``owner_shooting_sheet``) and the question it names
+  (``approval_id``) no longer waits: answered, withdrawn or expired;
+- it is the sheet's letter and a newer sheet letter about the same film says where the film
+  stands now;
+- it is the sheet's letter and the film's newest walk (``runbook.film_state``, newer than the
+  letter) left it somewhere else than the letter says (2026-10-12: «scena 6 așteaptă decizia
+  Proprietarului» stayed OPEN while the walk had moved the scene to the Director's ladder,
+  which writes him no newer letter to move past it);
+- it is the list of his standing questions (``owner_waiting``) and none of them waits any more.
+
+Every other letter stays for him: a letter about the books or money (``paid_step_interrupted``,
+a purchase abandoned, takes lost) reports a fact, not a question. Local reads and writes;
+nothing sent, nothing bought.
+
+Whether a question still waits is read through the Owner's command module
+(`services.pending_approvals`), never from his approval rows directly: only that module may
+reach them (tests/test_phase_dg_closure_adversary.py).
+"""
 
 from __future__ import annotations
 

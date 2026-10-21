@@ -26,8 +26,10 @@ import {
   serialStageNotes,
   journalCoverHtml,
   coverVerdict,
+  checksCount,
   dayWords,
   splitName,
+  tellOutcomeMessage,
   textParts,
 } from '../src/serial_room.js';
 import { describeEvent } from '../src/ledger.js';
@@ -124,7 +126,8 @@ test('the checks come in reading order, with the labels the serial asked for and
   assert.equal(rows[1].word, 'structură (cârlig → poantă, camere din studio)');
   assert.equal(rows[1].passed, false);
   assert.equal(rows[1].reason, 'Beat-ul 3 nu are o parte.', 'the backend reason, as it came');
-  assert.equal(rows[2].word, 'cuvinte pe beat (8-22 rostite)');
+  assert.equal(rows[2].word, 'cuvinte pe beat (8-22 rostite, recomandare)');
+  assert.equal(rows[2].advisory, false, 'a review written before 2026-10-13 carries no advisory key');
   assert.equal(rows[2].measure, '14 · 18 · 12');
   assert.equal(rows[3].measure, '10 din 10 replici');
   assert.equal(rows[4].word, 'shiny new rule', 'a check the page does not know keeps its own name');
@@ -307,8 +310,102 @@ test('an unnumbered, unread draft says so, and no episode is a cover that says n
   const none = journalCoverHtml(null, null);
   assert.ok(none.includes('Niciun episod încă'));
   assert.ok(!none.includes('episoade aprobate'), 'a serial not read says no count');
-  assert.deepEqual(coverVerdict(null), { verdict: '—', mean: '', checks: '', read: false });
+  assert.deepEqual(coverVerdict(null), { verdict: '—', mean: '', checks: '', read: false, computed: false });
   assert.equal(coverVerdict({ verdict: 'FAIL', scores: {}, checks: {} }).mean, '', 'a computed FAIL has no scores to average');
   assert.equal(dayWords('2026-09-12'), '12.09.2026');
   assert.equal(dayWords(''), '');
+});
+
+test('a recommendation is shown apart from the rules and refuses nothing (2026-10-13)', () => {
+  const review = {
+    ...REVIEW,
+    checks: {
+      ...REVIEW.checks,
+      structure: { passed: true, reason: '' },
+      words_per_beat: {
+        passed: false,
+        advisory: true,
+        per_beat: [14, 23, 12],
+        outside: [2],
+        reason: 'beat-urile 2 ies din recomandarea de 8-22 cuvinte rostite (au 23); decide Directoarea',
+      },
+    },
+  };
+  const rows = checkRows(review);
+  const words = rows.find((r) => r.key === 'words_per_beat');
+  assert.equal(words.advisory, true);
+  assert.equal(words.passed, false);
+  assert.equal(checksCount(rows), '4 din 4 trecute · 1 recomandare de decis');
+  assert.equal(checksCount(checkRows(REVIEW)), '4 din 5 trecute', 'a recommendation kept is not counted either way');
+  const html = episodeHtml(
+    { id: 'ep-3', title: 'T', status: 'DRAFT', beats: [V3_BEAT], grounded_event_ids: ['e1'], review, continuity: {} },
+    { open: true },
+  );
+  assert.ok(html.includes('check-row is-advice'));
+  assert.ok(html.includes('1 recomandare de decis'));
+  assert.ok(!html.includes('check-row is-fail'), 'nothing is picată');
+  assert.ok(html.includes('decide Directoarea'));
+});
+
+test('the cover signs a computed rejection by the checks, not by the Director', () => {
+  const computed = {
+    verdict: 'FAIL',
+    model_used: false,
+    scores: {},
+    reasons: ['Titlul nu e în engleză.'],
+    checks: {
+      grounding: { passed: true, reason: '' },
+      language: { passed: false, reason: 'Titlul nu e în engleză.' },
+      words_per_beat: { passed: false, advisory: true, per_beat: [23], outside: [1], reason: 'r' },
+    },
+  };
+  const v = coverVerdict(computed);
+  assert.equal(v.computed, true);
+  assert.equal(v.checks, '1 din 2 verificări trecute', 'the recommendation is not a rule');
+  const cover = journalCoverHtml(
+    { id: 'c', status: 'REJECTED', reviewed_by: 'checks', title: 'The Ninth Rewrite', beats: [], grounded_event_ids: [], review: computed, continuity: { episode_number: 2, business_date: '2026-10-13' } },
+    { canon_episode_number: 1 },
+  );
+  assert.ok(cover.includes('Verificările calculate'));
+  assert.ok(!cover.includes('Verdictul Directorului'));
+  assert.ok(cover.includes('cover-verdict-word">RESPINS<'));
+  assert.ok(cover.includes('Directorul nu a citit episodul.'));
+  const hers = coverVerdict({ ...computed, model_used: true, scores: { hook: 2 } });
+  assert.equal(hers.computed, false);
+  const herCover = journalCoverHtml(
+    { id: 'd', status: 'REJECTED', reviewed_by: 'director', title: 'T', beats: [], grounded_event_ids: [], review: { ...computed, model_used: true }, continuity: {} },
+    null,
+  );
+  assert.ok(herCover.includes('Verdictul Directorului') && herCover.includes('cover-verdict-word">FAIL<'));
+  const page = episodeHtml({ id: 'e', title: 'T', status: 'REJECTED', reviewed_by: 'checks', beats: [], review: computed, continuity: {} });
+  assert.ok(page.includes('Respins de verificările calculate'), page.slice(0, 400));
+});
+
+test('the Owner\'s press says where the episode ended, in the backend\'s words, and only picks the tone (2026-10-13)', () => {
+  // The words are the backend's (serial_stage.py _press_words); the page prints them as they came.
+  const told = (words, episode_status, verdict, extra = {}) => tellOutcomeMessage({
+    status: 'COMPLETED', reason: 'Episodul zilei 2026-10-12 a fost scris, citit, aprobat și pregătit de filmare; rularea de mâine îl filmează.',
+    artefacts: {}, words, episode_status, verdict, ...extra,
+  });
+  const approved = told('„The Nine-Scene Rewrite” a trecut citirea Directorului și e aprobat; pregătit de filmare, iar rularea de mâine îl filmează.', 'APPROVED', 'PASS');
+  assert.deepEqual(approved, { text: '„The Nine-Scene Rewrite” a trecut citirea Directorului și e aprobat; pregătit de filmare, iar rularea de mâine îl filmează.', error: false });
+  const waiting = told('„T” a trecut citirea Directorului și așteaptă aprobarea ta; politica canalului nu îi permite Directorului să aprobe singură.', 'DRAFT', 'PASS');
+  assert.equal(waiting.error, false);
+  assert.ok(waiting.text.includes('așteaptă aprobarea ta'));
+  const hers = told('„T” a fost respins de Director: Primul beat nu se ține singur. (o apăsare nouă sau rularea următoare o scrie din nou, cu motivele).', 'REJECTED', 'FAIL');
+  assert.equal(hers.error, true, 'a rejection takes the error tone so it is not missed');
+  assert.ok(hers.text.includes('respins de Director'));
+  const computed = told('„T” a fost respins de verificările calculate: Titlul nu e în engleză. (ziua și-a folosit cele 3 ciorne; serialul trece la altă zi).', 'REJECTED', 'FAIL');
+  assert.equal(computed.error, true);
+  assert.ok(computed.text.includes('verificările calculate') && computed.text.includes('cele 3 ciorne'));
+  const unread = told('„T” a fost scrisă, dar Directorul nu a putut-o citi: fără obiect; rularea următoare o citește din nou.', 'DRAFT', null);
+  assert.equal(unread.error, true, 'a draft she could not read needs his eye');
+  // The same press answered twice (the same command id) says so, with the first answer's words.
+  const again = told('„T” a trecut citirea Directorului și e aprobat; pregătit de filmare, iar rularea de mâine îl filmează.', 'APPROVED', 'PASS', { replayed: true });
+  assert.ok(again.text.endsWith('(aceeași apăsare, răspunsul de atunci)'));
+  assert.equal(again.error, false);
+  // No words: the stage's reason stands in; nothing at all is said as such, never invented.
+  assert.equal(tellOutcomeMessage({ reason: 'Episodul pentru 2026-10-12 a fost respins de Director (o rulare următoare o scrie din nou, cu motivele): x', episode_status: 'REJECTED' }).text.startsWith('Episodul pentru 2026-10-12'), true);
+  assert.deepEqual(tellOutcomeMessage(null), { text: 'Studioul nu a spus ce s-a întâmplat cu episodul; reîncarcă lista.', error: true });
+  assert.equal(tellOutcomeMessage({ words: '', episode_status: null }).error, true);
 });

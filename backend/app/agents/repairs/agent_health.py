@@ -565,6 +565,22 @@ def _ask_owner(context: RepairContext, agent_id: str, why_ro: str) -> str | None
         return owner_card(session, **model_card(agent, why_ro)) if agent is not None else None
 
 
+def _chosen_by_owner(session: Session, agent_id: str, model_id: Any) -> bool:
+    """True when the newest assignment of this employee is the Owner's own hand (the page,
+    assignment_origin OWNER) and puts her on ``model_id``: his choice, never switched by a
+    repair (2026-10-15). A seed assignment (no origin) is the configuration's, not his."""
+    from app.agents.services import _assignments  # noqa: PLC0415
+
+    for row in _assignments(session, agent_id):
+        if row.event_type != "agent.model_assigned":
+            continue
+        payload = row.payload or {}
+        return payload.get("assignment_origin") == "OWNER" and str(payload.get("model_id")) == str(
+            model_id
+        )
+    return False
+
+
 def _probe(
     context: RepairContext, agent_id: str, model_id: str, model_name: str, name: str
 ) -> dict[str, Any]:
@@ -620,6 +636,7 @@ def switch_model(context: RepairContext, params: Mapping[str, Any]) -> dict[str,
             "min_confidence": agent.min_confidence,
         }
         home = owner_home_model(session, agent.id)
+        his_choice = _chosen_by_owner(session, agent.id, agent.model_id)
         switched = _switches_today(session, agent.id)
         found = (
             []
@@ -662,6 +679,30 @@ def switch_model(context: RepairContext, params: Mapping[str, Any]) -> dict[str,
             "ți-am pus întrebarea în Decizii.",
             changed={"card": card, "switches_today": switched, "probes": [own]},
         )
+    if his_choice:
+        # The Owner put her on this model himself (2026-10-15: «modelele de LLM, dacă au
+        # fost alese de mine, rămân; nu se schimbă singur»). One other probe tells an outage
+        # of the provider from a fault of his model; either way nothing is switched here.
+        sample = [_probe(context, agent_id, mid, mname, name) for mid, mname in options[:1]]
+        if sample and all(p["status"] in DOWN for p in sample):
+            return outcome(
+                DECLINED,
+                f"{failing} Nici {sample[0]['model']} nu răspunde: furnizorul e căzut, nu "
+                "modelul lui. Modelul e ales de Owner și rămâne; reîncerc la trecerea următoare.",
+                changed={"probes": [own, *sample], "provider_down": True, "owner_chosen": True},
+            )
+        card = _ask_owner(
+            context,
+            agent_id,
+            f"{failing} Modelul e ales de tine și nu se schimbă singur: alegi tu altul sau îl "
+            "păstrezi.",
+        )
+        return outcome(
+            DECLINED,
+            f"{failing} Modelul lui {name} e ales de Owner și rămâne; cardul lui din «Decizii» "
+            "spune că eșuează.",
+            changed={"probes": [own, *sample], "owner_chosen": True, "card": card},
+        )
     probes: list[dict[str, Any]] = [own]
     chosen: tuple[str, str] | None = None
     for model_id, model_name in options:
@@ -670,6 +711,19 @@ def switch_model(context: RepairContext, params: Mapping[str, Any]) -> dict[str,
         if probe["answered"]:
             chosen = (model_id, model_name)
             break
+    if chosen is None and len(probes) > 1 and all(p["status"] in DOWN for p in probes):
+        # Her model and every candidate failed the same way at the same moment: the provider
+        # is down, not her model (2026-10-14 21:38Z, HTTP 400 on every model for four minutes:
+        # three cards «Aleg eu modelul» reached the Owner, who refused all three — the choice
+        # of a model is hers, and an outage is nobody's decision). Nothing changes; the next
+        # loop probes again, and a fresh failure of hers raises a fresh case.
+        return outcome(
+            DECLINED,
+            f"{failing} Niciun model de pe o conexiune verificată nu a răspuns la probă: "
+            "furnizorul nu răspunde acum pentru niciunul. Nu te întreb; reîncerc la trecerea "
+            "următoare.",
+            changed={"probes": probes, "provider_down": True},
+        )
     if chosen is None:
         why = (
             f"{failing} Niciun model de pe o conexiune verificată, prețuit și potrivit rolului "

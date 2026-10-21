@@ -193,6 +193,7 @@ class StepPermit:
     correlation_id: str
     integration_id: str | None
     cost_usd: float | None = None
+    batch_permits: tuple[StepPermit, ...] = ()
 
     def context(self) -> dict[str, Any]:
         return {
@@ -864,6 +865,19 @@ def _kernel(engine: Engine, permit: StepPermit) -> dict[str, Any]:
     from app.services import may_act  # noqa: PLC0415 - services imports providers
 
     with Session(engine) as session:
+        for other in permit.batch_permits:
+            checked = may_act(
+                session,
+                "infra.gpu_on",
+                requester=other.requester,
+                subject=other.storyboard_id,
+                cost_usd=other.cost_usd,
+                context=other.context(),
+                ask_owner=False,
+            )
+            if not checked["allowed"]:
+                session.rollback()
+                return checked
         verdict: dict[str, Any] = may_act(
             session,
             "infra.gpu_on",
@@ -1085,6 +1099,21 @@ def open_session(
                     "purpose": purpose,
                     "step": permit.step,
                     "storyboard_id": permit.storyboard_id,
+                    **(
+                        {
+                            "approved_purchases": [
+                                {
+                                    "storyboard_id": p.storyboard_id,
+                                    "step": p.step,
+                                    "plan_hash": p.plan_hash,
+                                    "approval_id": p.approval_id,
+                                }
+                                for p in (permit, *permit.batch_permits)
+                            ]
+                        }
+                        if permit.batch_permits
+                        else {}
+                    ),
                     "workers_max": config.max_workers,
                     "shared": shared,
                     **(

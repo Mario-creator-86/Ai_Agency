@@ -6,9 +6,9 @@ script cited the Nepal claim 0be61855, passed the factual gate (the claim exists
 SUPPORTED), passed the story review and was approved. These tests hold the computed check that
 now stands in that gap, before the storyboard and before anything is bought.
 
-The fixtures are the rehearsal's own rows (topic 00000127 and its SUPPORTED claims, read-only
+The fixtures are the rehearsal's own rows (topic 9274f345 and its SUPPORTED claims, read-only
 from the rehearsal's copy) and the two scripts the studio's real model wrote and the studio
-approved on 2026-09-12 (f243bf48, the LHC film, and 0000007d, the ATLAS film), copied verbatim.
+approved on 2026-09-12 (f243bf48, the LHC film, and 37fc8ef6, the ATLAS film), copied verbatim.
 Everything is local: no model, no vendor, no network.
 """
 
@@ -43,19 +43,19 @@ NEPAL_CLAIMS = {
         "Most of the estimated US$83.3 billion provided to developing countries in 2020 was "
         "targeted at mitigation (US$48.6 billion, or 58%)."
     ),
-    "00000000-0000-4000-8000-0000000000b4": (
+    "55c26333-bf54-44ec-aebf-89e2a8248553": (
         "Nepal is globally ranked fourth in terms of vulnerability to climate change."
     ),
-    "00000000-0000-4000-8000-000000000085": (
+    "3ab56ae3-1d30-458c-9a66-b0edb953a838": (
         "Nepal experienced flash floods and landslides in August 2018 across the southern "
         "border, amounting to US$600 million in damages."
     ),
-    "00000000-0000-4000-8000-000000000196": (
+    "c4a0e6c8-c71f-48d4-93c3-089148a27790": (
         "At COP16 in Cancun (2010), developed countries committed to mobilizing jointly US$100 "
         "billion per year by 2020 to address the needs of developing countries, a goal "
         "extended through 2025 at COP21 in Paris (2015)."
     ),
-    "00000000-0000-4000-8000-0000000001aa": (
+    "d3561aea-dcaa-4f19-aa4a-23b80a1c52ef": (
         "According to OECD figures, climate finance provided and mobilized by developed "
         "countries reached US$83.3 billion in 2020 and US$89.6 billion in 2021, meaning the "
         "US$100 billion-per-year-by-2020 target was missed."
@@ -86,10 +86,10 @@ FAITHFUL = [
     "surviving floods. Who should pay the climate bill?",
 ]
 FAITHFUL_CLAIMS = [
-    ["00000000-0000-4000-8000-0000000000b4"],
-    ["00000000-0000-4000-8000-000000000085"],
-    ["00000000-0000-4000-8000-000000000196"],
-    ["00000000-0000-4000-8000-0000000001aa"],
+    ["55c26333-bf54-44ec-aebf-89e2a8248553"],
+    ["3ab56ae3-1d30-458c-9a66-b0edb953a838"],
+    ["c4a0e6c8-c71f-48d4-93c3-089148a27790"],
+    ["d3561aea-dcaa-4f19-aa4a-23b80a1c52ef"],
     [REHEARSAL_CLAIM],
 ]
 
@@ -260,8 +260,8 @@ def test_a_script_that_cites_a_claim_it_never_says_is_refused_naming_that_claim(
     # claim without a word of it: no US$83.3 billion, no 2020, no mitigation.
     lines = FAITHFUL[:2] + ["Who should pay the climate bill Nepal is being handed?"]
     ids = [
-        "00000000-0000-4000-8000-0000000000b4",
-        "00000000-0000-4000-8000-000000000085",
+        "55c26333-bf54-44ec-aebf-89e2a8248553",
+        "3ab56ae3-1d30-458c-9a66-b0edb953a838",
         REHEARSAL_CLAIM,
     ]
     measured = _measure(NEPAL_TITLE, NEPAL_ANGLE, _cited(ids), lines)
@@ -302,9 +302,9 @@ def test_a_script_it_cannot_measure_says_so_and_does_not_pass():
 
 # ------------------------------------------------ the adversary's cases, 2026-09-19 --
 
-FOURTH = "00000000-0000-4000-8000-0000000000b4"
-FLOODS = "00000000-0000-4000-8000-000000000085"
-PLEDGE = "00000000-0000-4000-8000-000000000196"
+FOURTH = "55c26333-bf54-44ec-aebf-89e2a8248553"
+FLOODS = "3ab56ae3-1d30-458c-9a66-b0edb953a838"
+PLEDGE = "c4a0e6c8-c71f-48d4-93c3-089148a27790"
 
 
 @pytest.mark.parametrize(

@@ -42,7 +42,7 @@ from test_phase5_media import _seeded_storyboard
 
 requires_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
 
-FIXTURES = Path(__file__).parent / "fixtures" / "factual_sample"
+FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
 
 #: The Nepal film's six scenes, as the new writer marks them.
 NEPAL = [
@@ -57,8 +57,8 @@ NEPAL = [
 NEPAL_CARD = {
     "title": "Finanțare climatică pe an",
     "bars": [
-        {"label": "Promis", "value": 100, "unit": "mld. USD", "claim_id": "00000196"},
-        {"label": "Livrat", "value": 83, "unit": "mld. USD", "claim_id": "000001aa"},
+        {"label": "Promis", "value": 100, "unit": "mld. USD", "claim_id": "c4a0e6c8"},
+        {"label": "Livrat", "value": 83, "unit": "mld. USD", "claim_id": "d3561aea"},
     ],
     "highlight": "Livrat",
 }

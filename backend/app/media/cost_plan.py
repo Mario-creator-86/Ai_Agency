@@ -47,10 +47,14 @@ MEASURED = "MEASURED"
 #: bake-off measures it. The Owner reads it as an estimate, never as «tarif publicat».
 ESTIMATED = "ESTIMATED"
 
-#: The stills every LIVE scene buys before any motion: two candidates at 2K (1530:2720).
+#: The stills every LIVE scene buys before any motion: ONE candidate at 2K (1530:2720).
+#: Two until 2026-10-15 21:10Z — the Owner, watching the Speed of Light film buy ten images
+#: for five scenes: «ne costă bani pentru că facem câte două imagini, vreau să facem doar 1».
+#: The prompt is approved by the Director before the purchase, so one picture is the bet; a
+#: refused one is redone on a reviewed prompt under the renders cap, never bought twice blind.
 STILLS_MODEL = "seedream5_pro"
 STILLS_RESOLUTION = "2K"
-STILL_CANDIDATES = 2
+STILL_CANDIDATES = 1
 
 #: What "the premium model everywhere" means when the plan reports its saving.
 PREMIUM_REFERENCE = ("seedance2_5", "1080p")
@@ -420,7 +424,7 @@ def plan_film(
     table: PriceTable | None = None,
     stills_model: str = STILLS_MODEL,
     stills_resolution: str = STILLS_RESOLUTION,
-    candidates: int = STILL_CANDIDATES,
+    candidates: int | None = None,
     premium: tuple[str, str] = PREMIUM_REFERENCE,
     alternatives: Sequence[tuple[str | None, str]] = ALTERNATIVES,
     today: date | None = None,
@@ -444,7 +448,9 @@ def plan_film(
             prices,
             stills_model=stills_model,
             stills_resolution=stills_resolution,
-            candidates=candidates,
+            # Read when the plan is made, not when this function was defined: a default
+            # bound at import kept 2 after the Owner's one still per scene (2026-10-15).
+            candidates=STILL_CANDIDATES if candidates is None else candidates,
             override=override,
         )
 

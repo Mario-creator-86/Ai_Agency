@@ -1,6 +1,26 @@
-"""Offline regression tests for test faces strict.
+"""The strict face count: a face found at ANY size refuses the picture (2026-10-12).
 
-Providers are faked; all data is synthetic."""
+Still 4be4364e of the cyclotron film aa170155 (scene 1, stills/scene_01_3bc31f47_c1.png)
+shows four people at a table behind the device; two show part of their faces, blurred. The
+single reading (`count_faces`: 1080 px, bar 0.6) scored the bald man's face 0.348, the
+stills gate approved the still, and six clips were bought from it (motion prompt_hash
+b2a94fcd, 22 credits each). Clip QC refused every one for faces: on the first frame, which
+is the still as the video model received it, the same face scored 0.56-0.69. Measured at 720
+and 540 px the still itself scores 0.630 and 0.634, so `strict_faces` refuses it for 7
+credits, before a clip is bought (the Owner's order of 2026-10-12, 22:00: never buy the same
+thing again after a refusal; a new still before another clip).
+
+Three groups of tests:
+- pure ones (sizes, merging, the bar) and a fake detector that replays the incident's
+  scores, which run wherever the pinned model file is (it is committed);
+- YuNet on the committed Nepal fixtures and on a synthetic blurred face pasted into one of
+  them, skipped when opencv is not installed;
+- YuNet on the real stills and clips of 2026-10-12, read only from the studio's media folder
+  (backend/storage/media, or the folder named by STUDIO_REAL_MEDIA), skipped cleanly where
+  that folder is absent. Every picture used here was looked at by eye on 2026-10-12: the
+  ones that must be refused show people with part of a face, the ones that must pass show
+  nobody.
+"""
 
 from __future__ import annotations
 
@@ -27,9 +47,9 @@ from app.media.faces import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-NEPAL = ROOT / "tests" / "fixtures" / "factual_sample"
+NEPAL = ROOT / "tests" / "fixtures" / "nepal_1d530880"
 MEDIA = Path(os.environ.get("STUDIO_REAL_MEDIA", ROOT / "backend" / "storage" / "media"))
-CYCLOTRON = MEDIA / "00000000-0000-4000-8000-000000000160"
+CYCLOTRON = MEDIA / "aa170155-56c7-4e29-9616-e1e917fb243e"
 PARTICLE = MEDIA / "1c038a99-e2c7-49c0-af97-ea7437f412bb"
 FFMPEG = shutil.which("ffmpeg")
 
@@ -39,7 +59,7 @@ needs_yunet = pytest.mark.skipif(
 )
 needs_cyclotron = pytest.mark.skipif(
     not (CYCLOTRON / "stills").is_dir(),
-    reason="the cyclotron film's media (00000160) is not on this machine",
+    reason="the cyclotron film's media (aa170155) is not on this machine",
 )
 needs_particle = pytest.mark.skipif(
     not (PARTICLE / "stills").is_dir(),
@@ -49,7 +69,7 @@ needs_particle = pytest.mark.skipif(
 #: Still 4be4364e: the bald man's face, as YuNet boxes it at 540 px (0.634), in still pixels.
 BALD_MAN = (414, 581, 132, 174)
 
-#: The six scene-1 stills of 00000160, every one with people at the table behind the device
+#: The six scene-1 stills of aa170155, every one with people at the table behind the device
 #: (looked at 2026-10-12): 4be4364e is the approved one, the rest were refused or kept PAID.
 SCENE_ONE_STILLS = (
     "scene_01_3bc31f47_c1.png",  # 4be4364e, APPROVED: the bald man and the blonde woman
@@ -84,7 +104,7 @@ CLEAN_PARTICLE = (
     "scene_05_b959724a_c2.png",  # ae98b761: the tall cylinder
 )
 #: The PAID clips of both films, each passed by clip QC: 1c038a99 scenes 1-5 (takes
-#: 82ac5e4b, a147d909, 580dc0da, af96e54a, 0b98f293) and 00000160 scenes 2-5 (ae853e87,
+#: 82ac5e4b, a147d909, 580dc0da, af96e54a, 0b98f293) and aa170155 scenes 2-5 (ae853e87,
 #: c1d82e12, e72664e0, b0f0eadc; scene 2 shows two men only from behind, which its bible
 #: allows). Clip QC counts faces on the first, middle AND last frame, and the calibration
 #: measured first frames only: on the review of 2026-10-12 the highest score on any of
@@ -463,7 +483,7 @@ def test_the_first_frame_of_every_scene_one_clip_is_refused(tmp_path):
 
     clips = [CYCLOTRON / "motion" / f"motion_01_{take}.mp4" for take in SCENE_ONE_CLIPS]
     if not all(clip.is_file() for clip in clips):
-        pytest.skip("the scene-1 clips of 00000160 are not all here")
+        pytest.skip("the scene-1 clips of aa170155 are not all here")
     for clip in clips:
         frames = clip_frames(FFMPEG, clip, tmp_path / clip.stem)
         first = next(path for at, _, path in frames if at == "first")

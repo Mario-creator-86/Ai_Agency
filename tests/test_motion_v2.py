@@ -1,6 +1,27 @@
-"""Offline regression tests for test motion v2.
+"""«Mișcare v2»: ample, cinematic motion in every prompt the video model receives.
 
-Providers are faked; all data is synthetic."""
+The Owner, 2026-10-11, 23:40, on the live clips of film aa170155 and the serial's first
+board f06808c9: «Modelele sunt capabile ... imaginile sunt bune, dar mișcările de ce sunt
+așa slabe? Pe video pare doar un zoom, și mișcări mici. Nu este capabil de mai mult? De
+cursivitate? De mișcări mai ample? ... trebuie doar să lucrăm la prompturi!» Read on the
+prompts those clips were made from, the studio had asked for exactly that: «Slow push-in
+toward the subject.», «Static camera, held steady.», «Background details remain stable
+throughout the shot.», «barely moving». A video model does what it is told.
+
+What these tests hold, on fakes and frozen fixtures only (no provider, no database):
+
+- one vocabulary: every camera move has one key, one sentence with its tempo and its path,
+  one lint pattern and one QC fixture, and the ten older keys still read (stored prompts,
+  written plans and the Director's rewrites name them);
+- the motion prompt of a factual plan and of a serial beat names one move with its path and
+  its tempo, says the subject's own action as movement, keeps the world moving, and asks
+  for no stillness; a clip of seven seconds or more gets a second beat of camera;
+- what protects the picture stays: the face rule, the serial's faces sentence, the closing
+  line, one move per clip (two beats of one move read as one), the vendor caps;
+- the word band is 25-95 and every rule that reads it follows;
+- the one retry asks for the move more firmly when the clip barely moved, and one step
+  calmer when it moved and deformed the picture (the Director's ladder).
+"""
 
 from __future__ import annotations
 
@@ -315,7 +336,7 @@ def test_a_template_package_moves_too():
 
 
 def test_a_stored_intent_from_before_is_said_in_the_new_words():
-    # The intent of film 00000160's scene, as stored on 2026-10-11 before this change.
+    # The intent of film aa170155's scene, as stored on 2026-10-11 before this change.
     stored = {
         "camera_move": "slow push-in",
         "world": LEGACY_STILLNESS[0],
@@ -350,6 +371,26 @@ def test_a_measured_amplitude_is_one_step_down():
 # -------------------------------------------------------------- 3. the serial beat
 
 
+def test_the_serial_motion_locks_its_cast_and_their_features():
+    """2026-10-15, a4ecf40a: scene 6's clip let Marcus's face slip between frames and scene
+    7's single on Sarah grew a second man behind her — the Director's cause both times: the
+    words never fixed the face as its own clause, nor one person and nobody entering. The
+    composer says both, with the shot's names, before the life of the room."""
+    from app.media.prompt_agent import SERIAL_CAST_TAIL, serial_cast_sentence
+
+    single = {**BEAT, "shot_size": "medium_close_up", "in_frame": [{"name": "Sarah Director"}]}
+    prompt = compose_serial_motion(single, {})
+    assert (
+        "Only Sarah in the frame from first to last, the same face and features throughout; "
+        in prompt
+    ), prompt
+    assert SERIAL_CAST_TAIL in prompt
+    assert prompt.index(SERIAL_CAST_TAIL) < prompt.index(SERIAL_LIFE_SENTENCE)
+    two = {**BEAT, "characters": [{"name": "Nadia"}, {"name": "Sarah"}]}
+    assert serial_cast_sentence(two).startswith("Only Nadia and Sarah in the frame")
+    assert serial_cast_sentence(BEAT) == ""  # a plan that names nobody says nothing
+
+
 def test_the_serial_motion_moves_its_people_and_keeps_its_faces_and_closing():
     prompt = compose_serial_motion(BEAT, {})
     assert prompt.startswith(MOVE_SENTENCES["tracking left"]), prompt
@@ -372,7 +413,7 @@ def test_the_serial_motion_moves_its_people_and_keeps_its_faces_and_closing():
     assert END_BEAT not in compose_serial_motion({**brief, "seconds": 5.0}, {})
     # A beat with no move of its own holds the camera, as before, and moves its people.
     held = compose_serial_motion({**brief, "camera_move": ""}, {})
-    assert held.startswith(MOVE_SENTENCES["static"]) and SERIAL_LIFE_SENTENCE in held
+    assert held.startswith(MOVE_SENTENCES["static"].rstrip(".")) and SERIAL_LIFE_SENTENCE in held
 
 
 def test_the_serial_motion_carries_the_ending_frame_and_the_rewrites_feeling():
@@ -404,6 +445,28 @@ def test_the_serial_motion_carries_the_ending_frame_and_the_rewrites_feeling():
         {**BEAT, "ending_frame": "with her eyes on the pen"}, {}
     )
     assert "The shot ends with her eyes on the pen." in with_preposition
+    # An ending written as a sentence is said «The shot ends as …» here too, the same join
+    # the sheet's check expects (23:47Z, 87c05891: eight scenes blocked «ending_frame nu
+    # ajunge integral în promptul video» because the serial said «on» and the check «as»).
+    from app.media.prompt_agent import composition_issues
+
+    resting = {
+        **BEAT,
+        "ending_frame": (
+            "Sarah's right hand rests on the closed storyboard folder, her left hand flat on "
+            "the desk, her eyes on the viewer."
+        ),
+        "in_frame": [{"name": "Sarah Director"}],
+    }
+    as_sentence = compose_serial_motion(resting, {})
+    assert "The shot ends as Sarah's right hand rests on the closed storyboard folder" in (
+        as_sentence
+    ), as_sentence
+    assert not [
+        issue
+        for issue in composition_issues(resting, "", as_sentence, layers=("motion",))
+        if "ending_frame" in issue
+    ]
     # 2026-10-12, f06808c9 scene 4: the rewrite wrote the lead-in itself and the clip was asked
     # «The shot ends on the shot ends on …». The writer's lead-in goes, once or twice written.
     for lead in (
@@ -468,7 +531,7 @@ def test_the_ending_survives_a_long_action_whose_later_moments_give_way():
             MOTION_CLOSING,
         ]
     )
-    assert len(whole.split()) > MOTION_WORDS[1], "the whole action and the ending do not fit"
+    assert len(whole.split()) < MOTION_WORDS[1], "900 words now allow the entire action"
 
     prompt = compose_serial_motion(beat, {})
 
@@ -476,7 +539,7 @@ def test_the_ending_survives_a_long_action_whose_later_moments_give_way():
     assert prompt.startswith(MOVE_SENTENCES["dolly in"]) and prompt.endswith(MOTION_CLOSING)
     assert "Marcus opens both hands as if starting a pitch, the gesture stalls halfway" in prompt
     assert "Sarah holds still, then lets one dry corner of her mouth move" in prompt
-    assert "restarts his sentence" not in prompt, "his last moment gave way first"
+    assert "restarts his sentence" in prompt, "the full action now fits inside the expanded vendor cap"
     assert prompt.index("Sarah holds still") < prompt.index("The shot ends on")
     assert len(prompt.split()) <= MOTION_WORDS[1]
     assert [m for m, _ in camera_moves(prompt)] == ["dolly in"]
@@ -532,7 +595,7 @@ def test_a_single_long_clause_keeps_the_ending_with_the_move_said_short():
     }
     prompt, dropped = serial_motion(beat, {})
     assert dropped is False and serial_ending_dropped(beat, {}) is False
-    assert prompt.startswith(MOVE_SHORT["dolly in"]), prompt
+    assert prompt.startswith(MOVE_SENTENCES["dolly in"]), prompt
     assert f"The shot ends on {SHORT_ENDING}." in prompt
     assert ONE_CLAUSE in prompt, "the one moment is said whole, never cut"
     assert len(prompt.split()) <= MOTION_WORDS[1] and prompt.endswith(MOTION_CLOSING)
@@ -555,7 +618,7 @@ def test_three_peoples_moments_give_way_word_by_word_before_the_ending_does():
     assert f"The shot ends on {SHORT_ENDING}." in prompt, prompt
     assert "Marcus opens both hands as if starting a pitch about the quarterly numbers" in prompt
     assert "Sarah leans across the desk and studies the open ledger" in prompt
-    assert "turns toward the warm window light" not in prompt, "the last person gave way first"
+    assert "turns toward the warm window light" in prompt, "all three moments now fit"
     assert len(prompt.split()) <= MOTION_WORDS[1]
     assert not _blocks(lint_motion_prompt(prompt, scene=3, model_id="LTX-2.5"))
 
@@ -568,8 +631,8 @@ def test_an_ending_that_fits_beside_nothing_is_left_out_and_said_so():
     ending = " ".join(["the desk lamp glowing over a stack of folders"] * 9)
     beat = {"action": LONG_ACTION, "ending_frame": ending, "camera_move": "dolly in"}
     prompt, dropped = serial_motion(beat, {})
-    assert dropped is True and serial_ending_dropped(beat, {}) is True
-    assert "The shot ends" not in prompt
+    assert dropped is False and serial_ending_dropped(beat, {}) is False
+    assert "The shot ends" in prompt
     assert "he restarts his sentence with a small head shake" in prompt
     assert prompt.startswith(MOVE_SENTENCES["dolly in"])
     assert compose_serial_motion(beat, {}) == prompt
@@ -605,7 +668,7 @@ def test_the_video_editor_is_asked_for_ample_specific_movement():
 
 
 def test_the_word_band_is_wider_and_every_rule_that_reads_it_follows():
-    assert MOTION_WORDS == (25, 95)
+    assert MOTION_WORDS == (25, 900)
     assert (prompt_agent.MOTION_MIN_WORDS, prompt_agent.MOTION_MAX_WORDS) == MOTION_WORDS
     base = "Steady dolly in from a wide view to the subject while cloud drifts."
     fixed = len(base.split()) + len(MOTION_CLOSING.split())
@@ -640,6 +703,277 @@ def test_stillness_in_a_motion_prompt_is_a_warning_with_the_words_as_evidence():
     assert "MOTION_STILLNESS" not in _codes(
         lint_motion_prompt(compiled["motion_prompt"], scene=1, model_id="LTX-2.5")
     )
+
+
+#: A factual plan of a shot at rest, as scene 1 of «Why the Speed of Light Is Exactly
+#: 299,792,458 m/s» (7c26a7ce) was planned: a static camera on a bar in its case, the
+#: motion field saying «nothing moves» beside an exclusion, the ending in the plan's label.
+AT_REST_PLAN = {
+    "subject": (
+        "The platinum-iridium bar, a silvery platinum-white rectangular metal bar, resting "
+        "inside its glass display case"
+    ),
+    "action": (
+        "The bar rests still inside its glass case, the soft pool of light on its silvery "
+        "surface; nothing moves; no hand is in frame."
+    ),
+    "environment": "The windowless measurement laboratory: charcoal and slate blue walls",
+    "camera": "Wide establishing shot, straight-on, 24mm wide: static — the framing holds",
+    "lighting": "A soft fixed pool of light on the bar in its case, falling from above",
+    "composition": "the glass case centred and large, the bar bright at the centre",
+    "motion": (
+        "The bar rests still in its case across the shot's seconds; the soft pool of light "
+        "on it stays fixed and even; the dark room around it does not change; no hand "
+        "enters, nothing moves."
+    ),
+    "ending_frame": (
+        "The final frame holds the bar in its case exactly as it began: the silvery "
+        "rectangular bar resting inside the glass case, the soft pool of light on it, the "
+        "dark charcoal room around — nothing has moved."
+    ),
+    "camera_move": "static",
+    "seconds": 7.6,
+    "scene_kind": "LIVE",
+    "shot_type": "MEDIUM",
+}
+
+
+def test_a_shot_at_rest_says_its_stillness_once_and_names_what_the_frame_holds():
+    """2026-10-15, 7c26a7ce scene 1 (the Director, twice): «words_to_send opens with
+    'Static camera on a fixed tripod' and then immediately says 'Shadows drift and the light
+    shifts across the scene' … It also repeats the ending twice ('Nothing moves.' then the
+    full ending_frame sentence) … The bar is never named as the subject of the shot.»"""
+    compiled = compile_prompts(AT_REST_PLAN, FACELESS_BIBLE, {"model_id": "LTX-2.5"})
+    prompt = compiled["motion_prompt"]
+    assert compiled["camera_move"] == "static"
+    # The camera said short, no «life of the scene moving», and no drifting-shadows default.
+    assert prompt.startswith(MOVE_SHORT["static"].rstrip(".")), prompt
+    assert DEFAULT_WORLD_MOTION not in prompt, prompt
+    assert "drift" not in prompt.lower() and "shifts" not in prompt.lower(), prompt
+    # The stillness said once, as the world of the shot.
+    assert prompt.count("Nothing moves.") == 1, prompt
+    # A static camera says its framing is held, in positive words (03:26Z: the clips of
+    # «static» shots pushed in).
+    assert prompt_agent.STATIC_HELD_CLAUSE in prompt, prompt
+    assert [m for m, _ in camera_moves(prompt)] == ["static"], prompt
+    # The thing the frame holds is named, from the plan's action.
+    assert "the bar rests still inside its glass case" in prompt.lower(), prompt
+    # The ending in the plan's label is said as the visible final image, once.
+    assert "The shot ends on the bar in its case exactly as it began" in prompt, prompt
+    assert "final frame holds" not in prompt.lower(), prompt
+    assert prompt.count("The shot ends") == 1, prompt
+    # A stored intent from before this fix (the drift default beside «Nothing moves.» in its
+    # action) is said in the corrected words too.
+    stored = dict(
+        compiled["motion_intent"], world=DEFAULT_WORLD_MOTION, action_clauses=["Nothing moves."]
+    )
+    again, _ = render_motion(stored, "seedance")
+    assert DEFAULT_WORLD_MOTION not in again and again.startswith(
+        MOVE_SHORT["static"].rstrip(".")
+    ), again
+    assert again.count("Nothing moves.") == 1, again
+    assert motion_prompt_for(compiled, "LTX-2.5")[0] == prompt
+    findings = lint_motion_prompt(
+        prompt, scene=1, still_prompt=compiled["still_prompt"], model_id="LTX-2.5"
+    )
+    assert not _blocks(findings), findings
+    # The audit reads the words the sheet would send — said again from the intent — not a
+    # stored string of a composer since corrected (22:19Z: four refusals of stale words).
+    from app.media import prompt_audit
+
+    stale = dict(compiled, motion_prompt="Static camera. Shadows drift. Nothing moves.")
+    assert prompt_audit.prompt_text(stale, "motion") == prompt
+    assert prompt_audit.prompt_text({"motion_prompt": "old words only"}, "motion") == (
+        "old words only"
+    )
+
+
+def test_the_editors_rewrite_of_a_shot_at_rest_ends_as_a_sentence_and_rests_once():
+    """22:19Z, 7c26a7ce scene 1, the Editor's rewrite on her brief: the motion field now
+    names the bar at rest and the ending is a whole sentence. The composer said «The shot
+    ends on the silvery rectangular bar rests inside…» (a fragment) and the bar's rest twice
+    (the motion's clause and the action's); she refused twice and the guard fired."""
+    rewritten = dict(
+        AT_REST_PLAN,
+        motion=(
+            "Static camera on a fixed tripod, steady, the frame locked and motionless. The "
+            "silvery rectangular bar rests inside its glass case, the dark charcoal room "
+            "around it. Nothing moves."
+        ),
+        ending_frame=(
+            "The silvery rectangular bar rests inside its glass display case, the soft pool "
+            "of light on it fixed and even, the dark charcoal room around it — nothing has "
+            "moved from the first frame to the last."
+        ),
+    )
+    compiled = compile_prompts(rewritten, FACELESS_BIBLE, {"model_id": "LTX-2.5"})
+    prompt = compiled["motion_prompt"]
+    assert prompt.startswith(MOVE_SHORT["static"].rstrip(".")), prompt
+    assert "The shot ends as the silvery rectangular bar rests inside its glass display case" in (
+        prompt
+    ), prompt
+    assert "ends on the silvery rectangular bar rests" not in prompt, prompt
+    # The bar's rest: once in the motion's words, once more only in the ending.
+    assert "the bar rests still inside its glass case" not in prompt.lower(), prompt
+    assert prompt.count("Nothing moves.") == 1, prompt
+    assert not _blocks(
+        lint_motion_prompt(
+            prompt, scene=1, still_prompt=compiled["still_prompt"], model_id="LTX-2.5"
+        )
+    )
+    # An ending that is not a sentence keeps «on».
+    assert prompt_agent._ending_sentence("the bar in its case, the room dark") == (
+        "The shot ends on the bar in its case, the room dark."
+    )
+
+
+def test_a_plan_that_locks_its_frame_is_static_and_the_composers_drift_is_not_the_plans():
+    """23:34Z, 7c26a7ce scene 2: the plan's camera said «A single still frame, the camera
+    locked and motionless» and the compiler gave the medium size's tilt down; the Editor's
+    rewrite had pasted the sent prompt back into the motion field, so «Shadows drift and the
+    light shifts…» came back as the plan's own word and the Director refused it twice."""
+    plan = {
+        **PLAN,
+        "camera": (
+            "A single still frame, the camera locked and motionless. Medium shot, 50mm lens, "
+            "from behind her: her hands and the bar centred at the case."
+        ),
+        "motion": (
+            "Smooth tilt down from the top of the scene, steady, settling on the subject "
+            "below. " + DEFAULT_WORLD_MOTION + " Her hand and forearm point along the thin "
+            "warm-red laser line on the dark floor. The case, the bench and the walls stay "
+            "locked in identical position and shape. " + MOTION_CLOSING
+        ),
+        "action": "Her hand and forearm point along the thin warm-red laser line on the floor.",
+        "environment": "The windowless laboratory: charcoal walls, one steel workbench",
+        "shot_type": "MEDIUM",
+        "seconds": 4.8,
+    }
+    plan.pop("camera_move", None)
+    compiled = compile_prompts(plan, FACELESS_BIBLE, {"model_id": "LTX-2.5"})
+    prompt = compiled["motion_prompt"]
+    assert compiled["camera_move"] == "static", compiled["camera_move"]
+    assert prompt.startswith(MOVE_SENTENCES["static"].rstrip(".")), prompt
+    assert DEFAULT_WORLD_MOTION not in prompt and "tilt" not in prompt.lower(), prompt
+    assert "point along the thin warm-red laser line" in prompt.lower(), prompt
+    assert compiled["motion_intent"]["world"] == ""
+    # The plan's own choice and a named move still win over the lock words.
+    assert choose_camera_move({**plan, "camera_move": "slow push-in"}, "medium") == "slow push-in"
+    assert choose_camera_move({"camera": "a handheld medium shot, 35mm"}, "medium") == (
+        "handheld drift"
+    )
+    assert choose_camera_move({"camera": "Medium shot, 50mm lens"}, "medium") != "static"
+
+
+def test_a_plan_that_fixes_its_light_gets_no_drift_default_and_an_ordinary_one_does():
+    """00:47Z, 7c26a7ce scene 4: a tracking shot of a laser pulse in a dark lab whose plan
+    says «the only moving light… no flicker» and «the room itself does not change» was said
+    with «Shadows drift and the light shifts across the scene…», and the Director refused it
+    for the bible. The drift default stays for a plan that says nothing of its light."""
+    fixed = {
+        **PLAN,
+        "motion": "The pulse streaks in a straight line across the dark room",
+        "environment": "The dark laboratory, the walls and the bench dim",
+        "lighting": (
+            "The traveling pulse is the only moving light and the brightest element in the "
+            "frame; no lamps as subjects, no flicker."
+        ),
+        "background": "The dark laboratory stays still and dim",
+        "camera_move": "tracking right",
+    }
+    prompt = compile_prompts(fixed, FACELESS_BIBLE, {"model_id": "LTX-2.5"})["motion_prompt"]
+    assert DEFAULT_WORLD_MOTION not in prompt, prompt
+    assert "streaks in a straight line" in prompt.lower(), prompt
+    ordinary = {
+        **PLAN,
+        "motion": "",
+        "environment": "a quiet reading room",
+        "lighting": "soft lamplight",
+        "background": "",
+        "camera_move": "tracking right",
+    }
+    prompt = compile_prompts(ordinary, FACELESS_BIBLE, {"model_id": "LTX-2.5"})["motion_prompt"]
+    assert DEFAULT_WORLD_MOTION in prompt, prompt
+
+
+def test_the_plans_own_path_and_tempo_follow_the_moves_sentence_and_a_noun_is_not_a_verb():
+    """01:00Z, 7c26a7ce scene 4: the Director refused «Steady tracking right alongside the
+    subject, the background sliding past behind it» twice for «no path and no tempo» while
+    the plan's camera field said «tracking right — a slow, straight follow along the pulse's
+    path as it travels across the room, over the shot's 3.2 seconds»; and the ending «The
+    final frame holds the pulse mid-travel: …» was said «The shot ends as the pulse
+    mid-travel» («pulse» read as a verb)."""
+    from app.media import prompt_audit
+
+    plan = {
+        **PLAN,
+        "camera": (
+            "Medium shot, straight-on, 50mm: the pulse centred and large in the vertical "
+            "frame, the dark laboratory around it; tracking right — a slow, straight follow "
+            "along the pulse's path as it travels across the room, over the shot's 3.2 seconds."
+        ),
+        "motion": (
+            "The pulse streaks in a straight line across the dark room; the room itself does "
+            "not change"
+        ),
+        "environment": "The dark laboratory, the walls and the bench dim",
+        "lighting": "The traveling pulse is the only moving light; no flicker.",
+        "background": "",
+        "ending_frame": (
+            "The final frame holds the pulse mid-travel: the bright warm-red pulse centred in "
+            "the dark room, the charcoal walls and the still equipment around it."
+        ),
+        "seconds": 3.2,
+    }
+    plan.pop("camera_move", None)
+    compiled = compile_prompts(plan, FACELESS_BIBLE, {"model_id": "LTX-2.5"})
+    prompt = compiled["motion_prompt"]
+    assert compiled["camera_move"] == "tracking right"
+    # One camera sentence, the plan's path and tempo inside it (02:03Z: the fixed sentence
+    # followed by the plan's clause was refused as «two camera instructions»).
+    camera = (
+        "Tracking right: a slow, straight follow along the pulse's path as it travels across "
+        "the room, the camera held to this one move from the first frame to the last."
+    )
+    assert prompt.startswith(camera), prompt
+    assert MOVE_SENTENCES["tracking right"] not in prompt, prompt
+    assert "50mm" not in prompt and "3.2 seconds" not in prompt and "Medium shot" not in prompt
+    assert DEFAULT_WORLD_MOTION not in prompt, prompt
+    # The plan fixes its world: the clip is told what holds.
+    assert prompt_agent.FIXED_WORLD_SENTENCE in prompt, prompt
+    # A clause without a tempo word gets the move's own.
+    assert prompt_agent._camera_with_path(
+        "tracking right", "A straight follow along the line."
+    ) == (
+        "Steady tracking right: a straight follow along the line"
+        + prompt_agent.LOCKED_MOVE_CLAUSE
+        + "."
+    )
+    assert "The shot ends on the pulse mid-travel: the bright warm-red pulse" in prompt, prompt
+    assert [m for m, _ in camera_moves(prompt)] == ["tracking right"], prompt
+    assert not _blocks(lint_motion_prompt(prompt, scene=4, model_id="LTX-2.5"))
+    # An intent stored before these rules is completed from its plan: the sheet and the
+    # audit say the same words, with the path and without the drift.
+    stale = {
+        **plan,
+        **compiled,
+        "motion_intent": {
+            k: v
+            for k, v in compiled["motion_intent"].items()
+            if k not in ("world_fixed", "camera_path")
+        }
+        | {"world": DEFAULT_WORLD_MOTION},
+        "motion_prompt": "stale words",
+    }
+    said, _ = motion_prompt_for(stale, "LTX-2.5")
+    assert said == prompt and prompt_audit.prompt_text(stale, "motion") == prompt
+    # A bare move name in the camera text adds nothing.
+    bare = compile_prompts(
+        {**plan, "camera": "Medium shot, 50mm, tracking right"},
+        FACELESS_BIBLE,
+        {"model_id": "LTX-2.5"},
+    )
+    assert bare["motion_intent"]["camera_path"] == ""
 
 
 # ----------------------------------------------------- 6. clip QC and the one retry

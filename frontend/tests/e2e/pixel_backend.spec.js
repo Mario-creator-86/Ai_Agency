@@ -10,6 +10,19 @@ import {fileURLToPath} from 'node:url';
 import {build} from 'vite';
 import {chromium} from 'playwright';
 
+/** Select an employee through the actual scene now that the bottom strip is retired. */
+async function selectSceneEmployee(page, id) {
+  const pageIndex = await page.evaluate(id => window.__studio.engine.positions.find(p => p.id === id)?.page, id);
+  if (pageIndex === undefined) throw Error('Employee has no scene desk');
+  const annex = page.locator('#pixel-office-pages button').nth(pageIndex);
+  if (await annex.isVisible()) await annex.click();
+  const point = await page.evaluate(id => {
+    const e=window.__studio.engine,p=e.visiblePositions().find(p=>p.id===id),s=e.viewport.worldToScreen(p.x,p.y-28),r=e.canvas.getBoundingClientRect();
+    return {x:r.x+s.x/e.dpr,y:r.y+s.y/e.dpr};
+  },id);
+  await page.mouse.click(point.x,point.y);
+}
+
 const FRONTEND=fileURLToPath(new URL('../..',import.meta.url)),ROOT=path.resolve(FRONTEND,'..');
 const OUT=process.env.E2E_EVIDENCE||path.join(ROOT,'output/playwright/backend-animation-2026-10-09');
 const MODES=['WORKING','THINKING','REVIEWING','BLOCKED','ERROR','IDLE'];
@@ -55,7 +68,7 @@ test('backend commits update eight employee labels and authorized animated poses
   evidence.original_ensemble_profiles=profiles.length;
   evidence.front_portraits=[];
   for(const person of employees){
-   await page.locator(`#pixel-roster [data-agent="${person.id}"]`).click();await page.waitForSelector('#agent-inspector[open]');
+   await selectSceneEmployee(page, person.id);await page.waitForSelector('#agent-inspector[open]');
    const portrait=page.locator('#inspector-portrait');
    assert.equal(await portrait.getAttribute('data-orientation'),'front');
    assert.equal(await portrait.getAttribute('data-portrait-source'),'native_atlas');
@@ -106,7 +119,7 @@ test('backend commits update eight employee labels and authorized animated poses
   assert.ok(evidence.painted_character_regions.every(p=>p.distinct_frames>2),'all eight rendered character regions change');
 
   const person=employees[0],id=person.id;
-  await page.locator(`#pixel-roster [data-agent="${id}"]`).click();await page.waitForSelector('#agent-inspector[open]');
+  await selectSceneEmployee(page, id);await page.waitForSelector('#agent-inspector[open]');
   const paused=await owner(`/agents/${id}/pause`,{});assert.equal(paused.status,200);
   await page.waitForFunction(id=>{const e=window.__studio.engine,a=e.agents.find(a=>a.id===id),m=e.motionFor(a);return a.lifecycle==='PAUSED'&&m.authorized&&!m.animate&&m.monitor==='off';},id);
   await page.waitForSelector('#inspector-lifecycle[data-state="PAUSED"]');
@@ -132,7 +145,7 @@ test('backend commits update eight employee labels and authorized animated poses
   });
   assert.equal((await owner('/e2e/agent-state',{agent_id:id,runtime_state:'WORKING'})).status,200);await captured;
   latest=await owner('/e2e/agent-state',{agent_id:id,runtime_state:'THINKING'});
-  await page.waitForSelector(`#pixel-roster [data-agent="${id}"][data-state="THINKING"]`);
+  await page.waitForSelector(`#pixel-roster [data-agent="${id}"][data-state="THINKING"]`,{state:"attached"});
   const waiting=(await read()).find(a=>a.id===id);assert.equal(waiting.authorized,false);assert.equal(waiting.animated,false);
   release();
   await page.waitForFunction(([id,version])=>{const e=window.__studio.engine,a=e.agents.find(a=>a.id===id);return a.version===version&&e.motionFor(a).authorized;},[id,latest.body.version],{timeout:4000});

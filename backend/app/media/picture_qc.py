@@ -86,11 +86,12 @@ from pydantic import (
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.agents.editorial import FRAME_WIDTH, MAX_FRAMES
+from app.agents.editorial import FRAME_WIDTH, frame_picks
 from app.agents.identity import clipped
 from app.agents.vision import frames_at, frames_for, vision_agent
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media.cards import CAPTION_BAND_TOP, FRAME_HEIGHT
+from app.media.markings import markings_note
 from app.media.models import (
     CharacterBible,
     MediaAsset,
@@ -100,6 +101,7 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.montage import beat_of
 from app.media.toolchain import find_ffmpeg
 
 if TYPE_CHECKING:
@@ -113,7 +115,7 @@ PICTURE_TASK = "picture_qc"
 #: subtitles are the studio's own (film babcf272 was failed for its own captions).
 #: v5 (2026-10-12 review): the look is told which scene numbers its frames are, since a scene
 #: carried forward is not shown and a frame numbered by its position named the wrong scene.
-TEMPLATE_VERSION = "picture-qc-v5"
+TEMPLATE_VERSION = "picture-qc-v7"
 
 #: The departments asked to look, in order. The Video Editor owns the pictures, so the
 #: department that made them is the department that answers for them; the Director is asked
@@ -166,11 +168,14 @@ _INSTRUCTIONS = (
     "only what you can see.\n"
     "{captions_note}"
     "For every scene answer three questions from its frame alone. First: is it a picture at "
-    "all? A blank or uniform field, plain stripes or bands, pure noise, a smear, or a wall "
-    "of garbled writing is not a picture, however clean the file is. Second: is it ONE "
+    "all? A uniformly blank frame, pure noise, severe smears or a wall of garbled "
+    "writing is not a picture. Ordinary horizontal surfaces, horizons and dark skies "
+    "are valid scene elements, not defects by themselves. Second: is it ONE "
     "picture, one continuous photograph filling the frame from edge to edge? A collage, a "
-    "split screen, a grid, panels stacked one above another, a comic strip, or a picture "
-    "with a blank or black band across it is not one picture, however good each part is. "
+    "split screen, grid or panels stacked as separate scenes are not one picture. "
+    "Do not infer panels from a horizon, dark sky, desk, floor, wall, shadow or "
+    "horizontal line alone. Reject a band only when it visibly divides separate "
+    "images or is clearly a pasted, unnatural obstruction. "
     "Third: does it show what the scene asked for — its written picture and what the "
     "narration says over it, including its requested motion and ending frame? A visual "
     "effect explicitly requested by the motion is not an unrequested addition. Judge whether "
@@ -1087,7 +1092,12 @@ def earlier_acceptances(
 
     def same_picture(index: int, recorded: Any) -> bool:
         key = keys.get(index) if keys else None
-        return bool(key) and isinstance(recorded, Mapping) and dict(recorded) == dict(key)
+        return (
+            key is not None
+            and bool(key)
+            and isinstance(recorded, Mapping)
+            and dict(recorded) == dict(key)
+        )
 
     found: dict[int, EarlierAcceptance] = {}
     decided: set[int] = set()
@@ -1096,7 +1106,8 @@ def earlier_acceptances(
         at = str(newest.get("_at") or "")
         # Her second looks, from every event of this decision: they win over its verdicts.
         for payload in events:
-            done = payload.get("done") if isinstance(payload.get("done"), Mapping) else {}
+            raw_done = payload.get("done")
+            done = raw_done if isinstance(raw_done, Mapping) else {}
             for look in done.get("overturned") or []:
                 if not isinstance(look, Mapping) or not isinstance(look.get("scene_index"), int):
                     continue
@@ -1113,7 +1124,7 @@ def earlier_acceptances(
                     report_id=report_id,
                     decided_at=str(payload.get("_at") or at),
                     verdicts=("OVERTURNED",),
-                    reason=str(look.get("reason") or "")[:300],
+                    reason=str(look.get("reason") or ""),
                     still_take=takes[index][0],
                     clip_take=takes[index][1],
                 )
@@ -1144,7 +1155,7 @@ def earlier_acceptances(
                     report_id=report_id,
                     decided_at=at,
                     verdicts=tuple(dict.fromkeys(words)),
-                    reason=str(verdicts[0].get("reason") or "")[:300],
+                    reason=str(verdicts[0].get("reason") or ""),
                     still_take=takes[index][0],
                     clip_take=takes[index][1],
                 )
@@ -1315,6 +1326,9 @@ def evaluate_pictures(
         scenes: list[dict[str, Any]] = [
             {
                 "index": scene.scene_index,
+                # The writer's scene this shot was cut from (the montage, `montage.beat_of`);
+                # the frames are spread one per writer's scene (`frame_picks`).
+                "writer_scene": beat_of(scene.prompt_json).get("scene_number"),
                 "seconds": scene.duration_seconds,
                 **film_scene_prompts(session, production, scene),
                 "narration": scene.voiceover_segment,
@@ -1424,10 +1438,15 @@ def evaluate_pictures(
     # Only the scenes not carried forward are shown (2026-10-12): a carried scene's frame is
     # never cut from its shot, and never sent.
     to_judge = [scene for scene in scenes if scene["index"] not in carried]
-    wanted = to_judge[:MAX_FRAMES]
+    # One frame per writer's scene, spread over the whole film with its last row (the montage,
+    # 2026-10-16: the first eight rows were only the film's first half-minute).
+    wanted = [to_judge[p] for p in frame_picks([scene["writer_scene"] for scene in to_judge])]
     source: FrameSource = "FILM"
     frames: list[str] = []
     framed: list[dict[str, Any]] = []
+    #: Scenes picked for a frame whose cut from the film failed: named as unlooked-at for that
+    #: reason, and their frame's place is never taken by the next scene's (SAFE-001).
+    cut_failed: set[int] = set()
     if wanted and all(scene["index"] in shots for scene in wanted):
         frames = _shot_middles(
             [shots[scene["index"]] for scene in wanted], ffmpeg_path, _film_fps(production)
@@ -1436,30 +1455,31 @@ def evaluate_pictures(
             source = "SHOT"
             framed = wanted[: len(frames)]
     if not frames:
-        # The film's frames are found by the scenes' lengths end to end, so every scene is
-        # cut and the carried ones are dropped after.
+        # The film's frames are found by the scenes' lengths end to end: every scene places
+        # the wanted ones on the timeline, and only those are cut.
+        position = {scene["index"]: number for number, scene in enumerate(scenes)}
         cut = frames_for(
             path,
             ffmpeg_path,
             duration,
             scene_seconds=[scene["seconds"] for scene in scenes],
+            picks=[position[scene["index"]] for scene in wanted],
         )
-        cut_pairs = [
-            (scene, frame)
-            for scene, frame in zip(scenes, cut, strict=False)
-            if scene["index"] not in carried
-        ]
-        framed = [scene for scene, _frame in cut_pairs]
-        frames = [frame for _scene, frame in cut_pairs]
+        # One entry per wanted scene (`frames_for`): each frame is judged as its own scene's,
+        # and a scene whose cut failed is left out with it.
+        paired = list(zip(wanted, cut, strict=False))
+        frames = [frame for _scene, frame in paired if frame]
+        framed = [scene for scene, frame in paired if frame]
+        cut_failed = {scene["index"] for scene, frame in paired if not frame}
     if not frames:
         return _not_applicable(
             "no frame could be read from the film: there is no encoder, or no file to cut",
             characters_configured=characters_configured,
         )
 
-    # One frame per scene, in order. When the encoder returned fewer than the storyboard
-    # has (the frame cap, or a cut that failed), the frames are the first scenes and only
-    # those are asked about; the scenes past them are named as unlooked-at, never as passed.
+    # One frame per scene shown, in order. When the storyboard has more scenes than the frame
+    # cap (`frame_picks`), or a cut failed, only the scenes framed are asked about; the others
+    # are named as unlooked-at, never as passed.
     looked = framed
     framed_indices = {scene["index"] for scene in framed}
     unlooked = [scene["index"] for scene in to_judge if scene["index"] not in framed_indices]
@@ -1536,7 +1556,7 @@ def evaluate_pictures(
             StudioText(source=source, captions_burned_in=burned, headline=headline)
         ),
     )
-    body = wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:14000], "the-film")
+    body = wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False), "the-film")
 
     from app.agents.structured import structured_run  # noqa: PLC0415
 
@@ -1552,8 +1572,7 @@ def evaluate_pictures(
             PictureReport,
             '{"scenes": [...], "characters": [...]}',
             summary=(
-                f"Mă uit la cele {len(frames)} cadre ale filmului «{title[:80]}» înainte de "
-                "Director."
+                f"Mă uit la cele {len(frames)} cadre ale filmului «{title}» înainte de Director."
             ),
             max_tokens=4000,
             temperature=0.1,
@@ -1627,14 +1646,14 @@ def evaluate_pictures(
         reask_run_id = again_run.get("id")
         if again is not None and again.scenes:
             renumbered = _renumbered([verdict.scene for verdict in again.scenes], shown_indices)
-            for verdict in again.scenes:
-                index = (renumbered or {}).get(verdict.scene, verdict.scene)
+            for extra_verdict in again.scenes:
+                index = (renumbered or {}).get(extra_verdict.scene, extra_verdict.scene)
                 if index in missing and index not in answered:
-                    answered[index] = verdict
-            for verdict in again.characters:
-                index = (renumbered or {}).get(verdict.scene, verdict.scene)
+                    answered[index] = extra_verdict
+            for person_verdict in again.characters:
+                index = (renumbered or {}).get(person_verdict.scene, person_verdict.scene)
                 if index in missing:
-                    people.setdefault((index, verdict.character.strip()), verdict)
+                    people.setdefault((index, person_verdict.character.strip()), person_verdict)
     unanswered = [index for index in shown_indices if index not in answered]
     measured_scenes = 0
     for scene in looked:
@@ -1698,7 +1717,11 @@ def evaluate_pictures(
                 "is_a_picture": None,
                 "one_picture": None,
                 "shows_the_scene": None,
-                "reason": "no frame was cut for this scene",
+                "reason": (
+                    "the frame of this scene could not be cut from the film"
+                    if index in cut_failed
+                    else "no frame was cut for this scene"
+                ),
             }
         )
     scene_records += [
@@ -1870,16 +1893,21 @@ STILL_TASK = "still_qc"
 #: moments ("A slow drift through a dark particle-detector cavern…", "…dissolving into a
 #: glowing spiral of particles, then a vast laboratory complex…" on the database copy): the
 #: still is judged against its first moment, as against the plan's.
-STILL_TEMPLATE_VERSION = "still-qc-v3"
+#: v6 (2026-10-16, audit finding 27): a shot the montage cut from a scene is told its form,
+#: shot k of n at its size (`StillPlan.shot_form`, `_SHOT_NOTE`), and its `scene_picture` and
+#: `narration` are the shot's own; a scene that is its own one shot is asked as under v4.
+#: (v5 is skipped: «still-qc-v5-contract» named v4 with the current plan's conditions.)
+STILL_TEMPLATE_VERSION = "still-qc-v7"
 #: The same, for a still bought after its scene's words were rewritten: it is also asked, item
 #: by item, whether each mistake the rewrite answered is gone (`StillPlan.must_fix`,
 #: `_FIXES_NOTE`). Only such a still is asked this way; any other is asked as above.
 #: fixes2 (2026-10-12, late evening): each item is answered gone, minor or persists (the
 #: Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI!»), the correction's words are guidance, not a
 #: second plan, and an item about the movement is left to the clip, which is checked for it.
-STILL_FIX_TEMPLATE_VERSION = "still-qc-v3-fixes2"
-#: The most `must_fix` items one look answers (`fix_check.MAX_ITEMS` gives at most 4).
-MAX_FIXES = 8
+STILL_FIX_TEMPLATE_VERSION = "still-qc-v7-fixes"
+#: The same with the current plan's explicit conditions (a cropped person, unruled pages) to
+#: verify on the pixels (`stills_stage._still_plan`, ``source == "current_plan"``).
+STILL_CONTRACT_TEMPLATE_VERSION = "still-qc-v7-contract"
 #: The answers one item may get (`fix_check.FIX_STATUSES`).
 FixStatus = Literal["gone", "minor", "persists"]
 #: The width the still is shown at. A 2K still (1530x2720) is scaled down to it.
@@ -2000,7 +2028,7 @@ class StillVerdict(BaseModel):
     #: The answer to each `StillPlan.must_fix` item (2026-10-12). Asked only of a still whose
     #: scene was rewritten, and then required for every item (`still_report_schema`); a still
     #: with nothing to verify is asked nothing and reads none.
-    fixes: list[FixAnswer] = Field(default_factory=list, max_length=MAX_FIXES)
+    fixes: list[FixAnswer] = Field(default_factory=list)
     _clip_violations = field_validator("bible_violations", mode="before")(clipped(300))
     _clip_reason = field_validator("reason", mode="before")(clipped(300))
 
@@ -2069,11 +2097,11 @@ def still_report_schema(asked: int) -> type[StillJudgeReport]:
 
 
 def fix_items(plan: Any) -> list[dict[str, str]]:
-    """The ``must_fix`` items of a plan as the look is shown them (`MAX_FIXES` at most): what
+    """Every ``must_fix`` item of a plan as the look is shown it: what
     quality control saw (``finding``), the correction's words (``expected``, guidance) and,
     from her QC verdict, why it appeared (``cause``) when known."""
     items: list[dict[str, str]] = []
-    for item in (getattr(plan, "must_fix", ()) or ())[:MAX_FIXES]:
+    for item in getattr(plan, "must_fix", ()) or ():
         said = dict(item or {})
         shown = {
             "finding": str(said.get("finding") or ""),
@@ -2089,7 +2117,7 @@ def _studio_words(fixes: Sequence[FixAnswer], items: Sequence[Mapping[str, str]]
     """The answers with the studio's own words for each finding; a number beyond the list
     answers nothing."""
     return [
-        fix.model_copy(update={"finding": str(items[fix.item - 1]["finding"])[:300]})
+        fix.model_copy(update={"finding": str(items[fix.item - 1]["finding"])})
         for fix in fixes
         if fix.item <= len(items)
     ]
@@ -2121,8 +2149,9 @@ _STILL_INSTRUCTIONS = (
     "- readable_text: is there any lettering, number, sign, caption or logo?\n"
     "- one_picture: is this ONE continuous photograph filling the whole frame from edge to "
     "edge? A collage, a split screen, a grid, panels stacked one above another, a comic "
-    "strip, a picture inside a picture, or a picture with a blank or black band across it "
-    "is not one picture.\n"
+    "strip or a picture inside a picture is not one picture. A dark sky, horizon, "
+    "desk front, shadow or straight horizontal edge is not proof of a panel. "
+    "Reject a separator only if it visibly divides different images or is clearly pasted.\n"
     "- matches_plan: does it show what the plan asks for, as one moment?\n"
     "- shows_scene: does it show what the SCENE asks for — the scene's written picture and "
     "the narration spoken over it, under `scene_picture` and `narration`? The plan is how "
@@ -2170,6 +2199,44 @@ _FIXES_NOTE = (
     'words", "status": "gone" | "minor" | "persists", "seen": "what you see"}], one object per '
     "item.\n"
 )
+
+#: Added to `_STILL_INSTRUCTIONS` for a shot the montage cut from a scene (`montage.beat_tag`,
+#: `StillPlan.shot_form`; 2026-10-16, audit finding 27): a wide, medium or detail of one scene
+#: is judged as that view of it, its `scene_picture` and `narration` being the shot's own.
+_SHOT_NOTE = (
+    "This still is shot {shot} of {of} of the scene below, a {size} view: `scene_picture` is "
+    "what this shot shows of the scene and `narration` the part of the narration spoken over "
+    "this shot. For shows_scene, judge whether it is a plausible {size} view of that scene."
+    "{detail}\n"
+)
+#: Said after `_SHOT_NOTE` for a detail: close on hands, an object or a texture, the place
+#: out of frame by design.
+_DETAIL_NOTE = (
+    " A detail view is close on hands, an object or a texture and leaves the wider place out "
+    "of frame: judge shows_scene against this shot's own narration fragment (`narration`) and "
+    "its picture (`scene_picture`), not against the place around it."
+)
+
+
+def _shot_form(plan: Any) -> dict[str, Any] | None:
+    """The montage shot's form a still is judged as (`StillPlan.shot_form`), or None."""
+    form = getattr(plan, "shot_form", None)
+    if not isinstance(form, Mapping):
+        return None
+    shot, of, size = form.get("shot"), form.get("of"), str(form.get("size") or "")
+    if not isinstance(shot, int) or not isinstance(of, int) or of <= 1 or not size:
+        return None
+    return {"shot": shot, "of": of, "size": size}
+
+
+def _shot_note(form: Mapping[str, Any]) -> str:
+    """`_SHOT_NOTE` for one shot, with `_DETAIL_NOTE` when it is a detail."""
+    return _SHOT_NOTE.format(
+        shot=form["shot"],
+        of=form["of"],
+        size=form["size"],
+        detail=_DETAIL_NOTE if form["size"] == "detail" else "",
+    )
 
 
 def still_image(ffmpeg: str | None, path: Path | str, width: int = STILL_WIDTH) -> str | None:
@@ -2265,16 +2332,22 @@ def judge_still(
     # What the scene's words were rewritten to fix (`fix_check.open_findings`); empty for a
     # still with nothing open, which is then asked exactly as before (STILL_TEMPLATE_VERSION).
     must_fix = fix_items(plan)
-    shown: dict[str, Any] = {
-        "scene": plan.scene,
-        "plan": plan.still_prompt,
-        "scene_picture": getattr(plan, "scene_picture", "") or "",
-        "narration": getattr(plan, "narration", "") or "",
-        "purpose": getattr(plan, "purpose", "") or "",
-    }
+    # A shot of the montage (2026-10-16): judged as shot k of n at its size, against its own
+    # picture and narration; a scene that is its own one shot is shown nothing more.
+    shot = _shot_form(plan)
+    shown: dict[str, Any] = {"scene": plan.scene}
+    if shot is not None:
+        shown["shot"] = shot
+    shown.update(
+        {
+            "plan": plan.still_prompt,
+            "scene_picture": getattr(plan, "scene_picture", "") or "",
+            "narration": getattr(plan, "narration", "") or "",
+            "purpose": getattr(plan, "purpose", "") or "",
+        }
+    )
     if must_fix:
-        # Before the look and the rules: the shown JSON is cut at 8000 characters, and these
-        # items are what this look is for.
+        # Each required correction travels whole with the scene's rules.
         shown["must_fix"] = [{"item": number, **item} for number, item in enumerate(must_fix, 1)]
     shown.update(
         {
@@ -2284,10 +2357,25 @@ def judge_still(
             "bible_rules": list(plan.bible_rules),
         }
     )
+    # An object the plan asks for with its own markings (`markings.planned_markings`,
+    # 2026-10-13): the look is told its scale is not writing, and asked only about the rest.
+    marked = tuple(getattr(plan, "expected_markings", ()) or ())
+    if marked:
+        shown["planned_markings"] = list(marked)
     prompt = (
         _STILL_INSTRUCTIONS.format(scene=plan.scene)
+        + (_shot_note(shot) if shot is not None else "")
         + (_FIXES_NOTE if must_fix else "")
-        + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:8000], "the-still")
+        + (
+            "\nSome must_fix items are explicit conditions of the current plan. Verify them "
+            "against the pixels independently: a face or profile where only a shoulder/arm "
+            "is requested persists as a serious framing defect; ruled or gridded pages "
+            "are not unruled blank pages. Do not infer compliance from the prompt text.\n"
+            if any(item.get("source") == "current_plan" for item in plan.must_fix)
+            else ""
+        )
+        + (markings_note(marked) + "\n" if marked else "")
+        + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False), "the-still")
     )
 
     from app.agents.structured import structured_run  # noqa: PLC0415
@@ -2298,7 +2386,11 @@ def judge_still(
         looker_id,
         STILL_TASK,
         prompt,
-        STILL_FIX_TEMPLATE_VERSION if must_fix else STILL_TEMPLATE_VERSION,
+        STILL_CONTRACT_TEMPLATE_VERSION
+        if any(item.get("source") == "current_plan" for item in plan.must_fix)
+        else STILL_FIX_TEMPLATE_VERSION
+        if must_fix
+        else STILL_TEMPLATE_VERSION,
         correlation_id,
         still_report_schema(len(must_fix)),
         '{"stills": [...]}',
@@ -2360,14 +2452,14 @@ CLIP_TASK = "clip_qc"
 #: v3 (2026-10-10): a film's frames come with `studio_text_note` (where they were cut from, and
 #: the narration's subtitles named as the studio's) and, when their caption rows were cut out,
 #: the strip of each below them; a bought clip's prompt is unchanged.
-CLIP_TEMPLATE_VERSION = "clip-qc-v4"
+CLIP_TEMPLATE_VERSION = "clip-qc-v6"
 #: The same, for a clip bought after the scene's movement was rewritten to correct what quality
 #: control found (2026-10-12, late evening; the review of 9ac0195, finding 5): it is also asked,
 #: item by item, whether each mistake is gone, minor or persists (`StillPlan.must_fix` of the
 #: motion layer, `_CLIP_FIXES_NOTE`). Until then a finding treated in the motion's words was
 #: put to the still, which cannot show a movement, answered «fixed» without looking, and was
 #: never checked on the clip at all.
-CLIP_FIX_TEMPLATE_VERSION = "clip-qc-v4-fixes"
+CLIP_FIX_TEMPLATE_VERSION = "clip-qc-v6-fixes"
 #: The frames shown per clip, in order: first, middle, last.
 CLIP_FRAMES = 3
 
@@ -2396,7 +2488,7 @@ class ClipVerdict(BaseModel):
     reason: str = Field(min_length=1, max_length=300)
     #: The answer to each motion-layer ``must_fix`` item (2026-10-12), asked only of a clip
     #: whose scene's movement was rewritten (`clip_report_schema`), as on `StillVerdict`.
-    fixes: list[FixAnswer] = Field(default_factory=list, max_length=MAX_FIXES)
+    fixes: list[FixAnswer] = Field(default_factory=list)
     _clip_violations = field_validator("bible_violations", mode="before")(clipped(300))
     _clip_reason = field_validator("reason", mode="before")(clipped(300))
 
@@ -2478,8 +2570,9 @@ _CLIP_INSTRUCTIONS = (
     "- same_shot: are the three frames one continuous shot of the same place, with no cut "
     "to another picture and nothing turning into something else?\n"
     "- one_picture: is each frame ONE continuous photograph filling the whole frame? A "
-    "collage, a split screen, a grid, panels stacked one above another, a comic strip, or a "
-    "frame with a blank or black band across it is not one picture.\n"
+    "collage, split screen, grid or stacked separate scenes are not one picture. "
+    "A dark sky, desk, floor, shadow or horizontal edge can be part of a valid shot: "
+    "only mark false when you see distinct panels or a clearly pasted obstruction.\n"
     "- bible_violations: name the violation or write none. Check every rule listed.\n"
     "- verdict: keep only if the clip is right as it is; regenerate_motion if animating the "
     "same still again could fix it; back_to_still if the still itself must change (always "
@@ -2609,6 +2702,11 @@ def judge_clip(
         shown["scene_picture"] = getattr(plan, "scene_picture", "") or ""
         shown["narration"] = getattr(plan, "narration", "") or ""
         shown["must_fix"] = [{"item": number, **item} for number, item in enumerate(must_fix, 1)]
+    # An object the plan asks for with its own markings (`markings.planned_markings`,
+    # 2026-10-13): the look is told its scale is not writing, in the clip as in the still.
+    marked = tuple(getattr(plan, "expected_markings", ()) or ())
+    if marked:
+        shown["planned_markings"] = list(marked)
     prompt = (
         _CLIP_INSTRUCTIONS.format(
             scene=plan.scene,
@@ -2616,7 +2714,8 @@ def judge_clip(
             studio_note=studio_text_note(studio_text),
         )
         + (_CLIP_FIXES_NOTE if must_fix else "")
-        + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:8000], "the-clip")
+        + (markings_note(marked) + "\n" if marked else "")
+        + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False), "the-clip")
     )
 
     from app.agents.structured import structured_run  # noqa: PLC0415

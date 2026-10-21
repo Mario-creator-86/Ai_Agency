@@ -72,8 +72,8 @@ test('what a decision is about, from the backend’s own matter keys', () => {
   assert.equal(matterWords('renders_failed'), 'randări eșuate');
   assert.equal(matterWords('bottleneck_approval'), 'gâtuire la aprobare');
   assert.equal(matterWords('bottleneck_research'), 'gâtuire la cercetare');
-  const names = new Map([['0000004d', 'Main Channel A - Factual Shorts']]);
-  assert.equal(matterWords('cold_start_0000004d', names), 'pornire la rece · Main Channel A - Factual Shorts');
+  const names = new Map([['23d3ba8b', 'Main Channel A - Factual Shorts']]);
+  assert.equal(matterWords('cold_start_23d3ba8b', names), 'pornire la rece · Main Channel A - Factual Shorts');
   assert.equal(matterWords('cold_start_ffffffff'), 'pornire la rece');
   assert.equal(matterWords('something_else'), 'something else');
 });

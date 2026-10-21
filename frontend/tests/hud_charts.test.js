@@ -185,7 +185,7 @@ test('the ring\'s SVG carries those arcs, and no limit is said in words, not dra
 // /analytics/performance from the copy of the studio's database: channel A has two films, one
 // measured at zero views and one YouTube has not measured.
 const performance = JSON.parse(fs.readFileSync(path.join(HERE, 'fixtures', 'analytics_performance.json'), 'utf8'));
-const CHANNEL_A = '00000000-0000-4000-8000-00000000004d';
+const CHANNEL_A = '23d3ba8b-5f3c-4a99-9ab8-4993fe108f1a';
 const CHANNEL_B = '34acf9d6-d5e2-4891-a494-7dafc27a4438';
 
 test('a channel\'s bars are its films, oldest first: a measured zero is a tick, an unmeasured film has no height', () => {

@@ -35,7 +35,7 @@ from app.media.faces import FaceCount, count_faces, detector_available
 from app.media.models import SceneTake, Storyboard, StoryboardScene
 from app.media.picture_qc import StillJudgement, StillVerdict
 from app.media.prompt_lint import LintScene, has_block, lint_film
-from app.media.still_gate import MAX_REROLLS
+from app.media.renders_cap import max_rerolls
 from app.media.stills_stage import (
     FIGURE_ONE,
     STILL_RATIO,
@@ -51,7 +51,7 @@ from sqlalchemy.orm import Session
 from test_approvals import answer
 from test_scene_takes import nepal_like
 
-FIXTURES = Path(__file__).parent / "fixtures" / "factual_sample"
+FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
 FACE = FIXTURES / "scene_06.jpg"  # a woman's face filling the right half (eye-checked)
 NO_FACE = (FIXTURES / "scene_01.jpg", FIXTURES / "scene_02.jpg")  # ridges, a river: nobody
 
@@ -349,9 +349,7 @@ def test_a_candidate_with_a_face_is_rejected_by_the_face_gate_and_never_judged(e
 # ------------------------------------------- 3. two re-rolls, positive words, then the Owner
 
 
-def test_a_failing_scene_is_rerolled_twice_with_positive_words_then_needs_the_owner(
-    engine, tmp_path
-):
+def test_a_failing_scene_goes_to_prompt_review_without_paid_rerolls(engine, tmp_path):
     storyboard_id = a_film(engine, tmp_path)
 
     def pictures(prompt, call):
@@ -363,17 +361,13 @@ def test_a_failing_scene_is_rerolled_twice_with_positive_words_then_needs_the_ow
     result = approved_run(engine, storyboard_id, tmp_path, adapter, judge)
 
     scene_two = [c for c in adapter.asked if SUBJECTS[2] in c["prompt"]]
-    assert MAX_REROLLS == 2
-    assert len(scene_two) == 1 + MAX_REROLLS
+    assert len(scene_two) == 1
     assert "faces not visible" not in scene_two[0]["prompt"]
-    for call in scene_two[1:]:
-        assert "figures small and distant, seen from behind, faces not visible" in call["prompt"]
-        assert "avoid" not in call["prompt"].lower()
 
     by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
     assert by_scene[2]["status"] == "NEEDS_OWNER"
-    assert "Proprietar" in by_scene[2]["reason"]
-    assert by_scene[2]["rerolls"] == MAX_REROLLS
+    assert "Directoare" in by_scene[2]["reason"] and by_scene[2]["rewrite"] is True
+    assert by_scene[2]["rerolls"] == 0
     # The other scenes go on; scene 2 is never pushed on with a failing still.
     assert all(by_scene[n]["status"] == "APPROVED" for n in (1, 3, 4))
     rows = [t for t in takes(engine, storyboard_id) if t.scene_number == 2]
@@ -397,7 +391,7 @@ def test_without_a_passing_scene_one_no_later_scene_is_bought(engine, tmp_path):
 
     result = approved_run(engine, storyboard_id, tmp_path, adapter, SpyJudge())
 
-    assert len(adapter.asked) == 1 + MAX_REROLLS
+    assert len(adapter.asked) == 1
     assert all(SUBJECTS[1] in c["prompt"] for c in adapter.asked)
     by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
     assert by_scene[1]["status"] == "NEEDS_OWNER"
@@ -448,7 +442,7 @@ def test_the_stage_refuses_without_an_approval_bound_to_the_current_plan_hash(en
     adapter, judge = SpyStills(), SpyJudge()
     plan = stills_plan(engine, storyboard_id)
     assert plan["cost_credits"] == 4 * 18
-    assert plan["cap_credits"] == 4 * 18 * (1 + MAX_REROLLS)
+    assert plan["cap_credits"] == 4 * 18 * (1 + max_rerolls())
 
     # No answer yet: the Owner is asked about exactly this plan, and nothing is bought.
     with pytest.raises(StillsStageRefused) as first:

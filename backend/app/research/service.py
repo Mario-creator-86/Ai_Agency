@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
@@ -44,6 +45,7 @@ from app.research.retrieval import (
     RateLimited,
     RetrievalError,
     RetrievalPolicy,
+    RetrievedSource,
     SourceRetriever,
     validate_url,
 )
@@ -824,6 +826,11 @@ def _policy(settings: Settings, engine: Engine | None = None) -> RetrievalPolicy
     return RetrievalPolicy(hosts)
 
 
+class IrrelevantPage(ValueError):
+    """The page came back but is not about the topic (`research.agent.page_is_about`): it is
+    not stored, so nothing is extracted from it."""
+
+
 def retrieve_and_ingest(
     engine: Engine,
     settings: Settings,
@@ -831,8 +838,12 @@ def retrieve_and_ingest(
     correlation_id: str,
     topic_id: str | None = None,
     retriever: SourceRetriever | None = None,
+    accept: Callable[[RetrievedSource], str | None] | None = None,
 ) -> dict[str, Any]:
     """Fetch an allow-listed URL and store it as a source snapshot.
+
+    ``accept`` reads the fetched page before anything is stored and says why it is not a
+    source for the topic (None when it is): such a page raises `IrrelevantPage` unstored.
 
     Returns the stored snapshot together with the retrieval receipt — the resolved URL, the
     digest of the bytes that came back and of the extracted text, and the time of the fetch —
@@ -851,6 +862,9 @@ def retrieve_and_ingest(
         raise HostNotAllowed(str(exc)) from exc
 
     source = (retriever or SourceRetriever(policy)).fetch(url)
+    refused = accept(source) if accept is not None else None
+    if refused:
+        raise IrrelevantPage(f"pagina nu este despre subiect: {refused}")
     command = source.ingest_command(topic_id)
     snapshot = ingest_source_snapshot(
         engine,

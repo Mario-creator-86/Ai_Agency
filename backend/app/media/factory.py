@@ -238,6 +238,95 @@ def _from_connection(adapter: _A, integration_id: str) -> _A:
 _A = TypeVar("_A")
 
 
+def reference_model_for_storyboard(
+    engine: Engine, storyboard_id: str, model_id: str | None, integration_id: str | None = None
+) -> str | None:
+    """Choose a discovered reference sibling on the same configured RunPod connection."""
+    from app.media.models import CharacterBible, MediaAsset, StoryboardScene  # noqa: PLC0415
+    from app.providers.runpod.models import reference_spec, serverless_catalogue  # noqa: PLC0415
+
+    if not model_id or reference_spec(model_id):
+        return model_id
+    with Session(engine) as session:
+        selection = session.get(ServiceSelection, "image")
+        connection_id = integration_id or (selection.integration_id if selection else None)
+        connection = session.get(Integration, connection_id) if connection_id else None
+        if (
+            connection is None
+            or connection.kind != "runpod"
+            or connection.status not in VERIFIED_STATUSES
+        ):
+            return model_id
+        ids = {
+            cid
+            for scene in session.scalars(
+                select(StoryboardScene).where(StoryboardScene.storyboard_id == storyboard_id)
+            )
+            for cid in scene.character_ids_json or []
+            if isinstance(cid, str)
+        }
+        has_picture = False
+        for person in session.scalars(select(CharacterBible).where(CharacterBible.id.in_(ids))):
+            for asset_id in (person.reference_assets_json or {}).values():
+                asset = session.get(MediaAsset, str(asset_id)) if asset_id else None
+                if asset is not None and Path(asset.uri_or_path).is_file():
+                    has_picture = True
+                    break
+        if not has_picture:
+            return model_id
+        for entry in serverless_catalogue()["models"]:
+            candidate = str(entry.get("id") or "")
+            spec = reference_spec(candidate)
+            if (
+                spec
+                and spec.get("text_model") == model_id
+                and production_resource(session, connection.id, "MODEL", candidate, "image")
+                is not None
+            ):
+                return candidate
+    return model_id
+
+
+def reference_image_adapter(engine: Engine, storyboard_id: str, adapter: Any) -> Any:
+    """Resolve before pricing; preserve the source adapter and share a prepared route per batch."""
+    from app.providers.runpod.adapters import RunPodImageAdapter  # noqa: PLC0415
+    from app.providers.runpod.client import RunPodClient  # noqa: PLC0415
+
+    if not isinstance(adapter, RunPodImageAdapter) or not adapter.integration_id:
+        return adapter
+    model = reference_model_for_storyboard(
+        engine, storyboard_id, adapter.model, adapter.integration_id
+    )
+    if not model or model == adapter.model:
+        return adapter
+    cached = getattr(adapter, "_reference_route_cache", None)
+    if not isinstance(cached, dict):
+        cached = {}
+        adapter._reference_route_cache = cached
+    selected = cached.get(model)
+    if selected is None:
+        selected = RunPodImageAdapter(
+            adapter.config,
+            engine,
+            model=model,
+            integration_id=adapter.integration_id,
+            storage_root=adapter.storage_root,
+        )
+        selected.core.transport = adapter.core.transport
+        if isinstance(selected.core.client, RunPodClient) and isinstance(
+            adapter.core.client, RunPodClient
+        ):
+            selected.core.client.transport = adapter.core.client.transport
+        cached[model] = selected
+    with Session(engine) as session:
+        resource = production_resource(
+            session, str(adapter.integration_id), "MODEL", model, "image"
+        )
+        if resource is not None:
+            selected.model_metadata = dict(resource.api_metadata)
+    return selected
+
+
 def image_provider(engine: Engine, vault: CredentialVault) -> ImageProvider | None:
     """The image generator selected for the "image" purpose, if it has been verified."""
     with Session(engine) as session:
@@ -698,6 +787,15 @@ def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> d
                     "speaker": take["speaker"],
                     "character_id": take["character_id"],
                     "text": take["text"],
+                    # How the words are said (the writer's acting note): the assembler sends
+                    # it with the words for the voice to play. It never enters the take's
+                    # identity (`assembler.narration_key`), so a changed note re-buys no take
+                    # already paid for (the Owner, 2026-10-16). Before this the plan carried
+                    # it and the built take dropped it: no note ever reached the voice.
+                    "direction": str(take.get("direction") or ""),
+                    # The voice take these words are said in (`pause_plan`): a speaker's run
+                    # that goes on into the next shot is said once, as one take.
+                    "voice_group": take.get("voice_group"),
                     "adapter": cache[key],
                     "voice_source": voice.get("speaker_source"),
                 }

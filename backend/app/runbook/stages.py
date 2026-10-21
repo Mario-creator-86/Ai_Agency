@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -56,7 +56,12 @@ from app.agents.director import (
     file_stage_reports,
     letter_to_owner,
 )
-from app.agents.editorial import EditorialError, editorial_review, latest_editorial
+from app.agents.editorial import (
+    EditorialError,
+    accepted_under_cap,
+    editorial_review,
+    latest_editorial,
+)
 from app.agents.memory import agent_for_role, remember
 from app.agents.models import AgentMessage
 from app.agents.reviews import (
@@ -95,6 +100,7 @@ from app.economy.budget import (
 from app.economy.services import EconomyError
 from app.factual.agent_pipeline import (
     NoVerifiedClaims,
+    ScriptBlocked,
     ScriptRejected,
     agent_extract_claims,
     agent_verify_claim,
@@ -114,10 +120,12 @@ from app.factual.story_review import (
     judged_story,
     latest_review,
     review_story,
+    rewrite_notes,
     story_gate,
 )
 from app.integrations.services import selected_youtube
 from app.integrations.vault import RECONNECT_RO, VaultUnreadable
+from app.media.cap_choice import CAP_KEEPS_RO
 from app.media.models import (
     EditorialReview,
     MediaAsset,
@@ -133,6 +141,14 @@ from app.media.prompt_agent import (
     write_shot_prompts,
 )
 from app.media.qc import evaluate_media_qc, rights_verdict
+from app.media.renders_cap import at_cap as renders_at_cap
+from app.media.renders_cap import (
+    motion_spent,
+    paid_redos_per_scene,
+    paid_redos_setting,
+    renders_per_layer,
+    renders_ro,
+)
 from app.media.serial_storyboard import describe_serial_shots
 from app.media.services import generate_storyboard_from_script
 from app.models import DomainEvent
@@ -140,6 +156,7 @@ from app.providers.registry import ProviderRegistry
 from app.publishing.licence_release import mark_held_for_licence
 from app.publishing.models import ChannelRecord, PublicationRecord
 from app.publishing.services import (
+    CONFIRMED_UPLOAD_STATES,
     LIVE_PUBLICATION_STATES,
     REMOTE_REJECTED_STATES,
     ROUTE_SELECTED,
@@ -209,6 +226,11 @@ SKIPPED = "SKIPPED"
 #: How many drafts of one story a single run will work through — the same number the review
 #: counts to, so the room and the reading agree about when the conversation is over.
 MAX_SCRIPT_EXCHANGES = MAX_EXCHANGES
+#: How many times a draft its form refused (a chart without its figures, a citation that was
+#: not supplied) is asked for again with the refusal in the writer's notes, per topic and day
+#: (2026-10-15, 14:43Z: the first script with the right facts was dropped whole for one
+#: DATA_CARD scene without its numbers). Text is free; the room is not endless.
+SCRIPT_FORM_RETRIES = 2
 
 BATCH = 5
 #: Claims verified in one day. Verification is one short call per claim; extraction from
@@ -476,6 +498,136 @@ def _performance_intake(engine: Engine, vault: Any) -> dict[str, Any]:
 # ------------------------------------------------------- research and verification --
 
 
+#: The body key of the Director's note that a topic's script was blocked on what research
+#: gave it; sources fetched before the note are spent, the topic is read for again.
+SCRIPT_BLOCKED_KEY = "script_blocked"
+
+
+_CHART_WORDS = ("data_card", "chart", "grafic", "bar", "numeric", "value and unit", "cifr")
+
+
+def _stop_is_about_a_chart(blocker: Any) -> bool:
+    """Whether the writer stopped over a chart's missing figures rather than a missing fact:
+    then the scene is LIVE and the claims stand (15:51Z, d7d80450)."""
+    said = " ".join(str(getattr(blocker, key, "") or "") for key in ("reason", "needs")).lower()
+    return any(word in said for word in _CHART_WORDS)
+
+
+#: How many times in one day research is sent back for a topic whose writer stopped on its
+#: facts before the topic is left for another (`_topic_back_to_research`). 2026-10-15,
+#: d7d80450 «The Supernova Surprise»: three stops (14:17Z, 15:51Z, 17:41Z) — the pages read
+#: never carried the thesis in words the verifier could hold — and every run of the day went
+#: to the same topic while seven candidates waited.
+TOPIC_RESEARCH_RETURNS = 1
+
+
+def _stops_today(session: Session, topic_id: str) -> int:
+    """How many times today the writer stopped on this topic's facts (the Director's notes)."""
+    today = utc_now()[:10]
+    count = 0
+    for message in session.scalars(
+        select(AgentMessage).where(
+            AgentMessage.intent == "STATUS", AgentMessage.created_at >= today
+        )
+    ):
+        body = message.body_json if isinstance(message.body_json, dict) else {}
+        if body.get(SCRIPT_BLOCKED_KEY) and str(body.get("topic_id") or "") == topic_id:
+            count += 1
+    return count
+
+
+def _topic_back_to_research(engine: Engine, topic_id: str, blocker: Any) -> None:
+    """A SELECTED topic whose writer stopped is PROPOSED again, with his reason noted to the
+    Director: `_gather_for_candidates` reads for it again (the note is newer than its
+    sources), verification and selection follow, and the writer sees new claims. After
+    `TOPIC_RESEARCH_RETURNS` such returns in a day the topic is left (REJECTED, with why):
+    the day's next run selects another candidate instead of reading for this one again."""
+    from app.agents.messages import post_message  # noqa: PLC0415
+
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        topic = session.get(TopicIdea, topic_id)
+        if topic is None:
+            return
+        stops_before = _stops_today(session, topic_id)
+        left = stops_before >= TOPIC_RESEARCH_RETURNS
+        if left:
+            topic.status = "REJECTED"
+            topic.decided_by = "scenaristul, după cercetare"
+            topic.decision_notes = (
+                f"Lăsat {utc_now()[:10]}: scenaristul s-a oprit de {stops_before + 1} ori pe "
+                f"faptele lui ({' '.join(str(getattr(blocker, 'reason', '') or '').split())[:300]})"
+            )[:2000]
+            topic.rejection_reasons_json = [
+                *list(topic.rejection_reasons_json or []),
+                f"{stops_before + 1} opriri ale scenaristului pe fapte",
+            ]
+        elif topic.status == "SELECTED":
+            topic.status = "PROPOSED"
+        # The claims he could not write from are retired with him: a SUPPORTED claim stays
+        # what the writer is handed (`script_agent.write_script`), and the Supernova topic's
+        # 37 «SUPPORTED» claims were about Discovery Channel, a Daft Punk album and a ship
+        # (2026-10-15 14:03Z: pages fetched for the word «Discovery»). The new pages bring
+        # new claims; these are UNCERTAIN, with why.
+        retired = 0
+        for claim in session.scalars(
+            select(FactualClaim).where(
+                FactualClaim.topic_id == topic_id, FactualClaim.status == "SUPPORTED"
+            )
+        ):
+            claim.status = "UNCERTAIN"
+            claim.verifier_notes = (
+                "retrasă: scenaristul nu a putut scrie din aceste afirmații ("
+                + " ".join(str(getattr(blocker, "reason", "") or "").split())[:160]
+                + ")"
+            )[:500]
+            retired += 1
+        director = agent_for_role(session, "Director")
+        post_message(
+            session,
+            intent="STATUS",
+            subject=(
+                f"Scenaristul s-a oprit la «{topic.title[:80]}»: "
+                + (
+                    "subiectul se lasă, se alege altul"
+                    if left
+                    else "subiectul merge înapoi la cercetare"
+                )
+            ),
+            body={
+                "topic_id": topic_id,
+                SCRIPT_BLOCKED_KEY: str(getattr(blocker, "reason", "") or "")[:1000],
+                "needs": str(getattr(blocker, "needs", "") or "")[:1000],
+            },
+            body_text=(
+                f"Scenaristul nu a putut scrie «{topic.title}» cinstit: "
+                f"{getattr(blocker, 'reason', '')}\n"
+                + (f"Are nevoie de: {blocker.needs}\n" if getattr(blocker, "needs", "") else "")
+                + (
+                    f"Subiectul se lasă: de {stops_before + 1} ori azi cercetarea nu i-a adus "
+                    f"faptele; {retired} afirmații sunt retrase, iar alegerea subiectului "
+                    "trece la alt candidat la următoarea rulare."
+                    if left
+                    else f"Subiectul e din nou PROPUS, {retired} afirmații de dinainte sunt "
+                    "retrase; cercetarea citește alte pagini pentru el la următoarea trecere, "
+                    "apoi verificarea și alegerea subiectului."
+                )
+            ),
+            to_agent_id=director.id if director else None,
+        )
+
+
+def _sent_back_after(session: Session) -> dict[str, str]:
+    """topic_id → when its script was last blocked (the Director's note), if ever."""
+    sent_back: dict[str, str] = {}
+    for message in session.scalars(select(AgentMessage).where(AgentMessage.intent == "STATUS")):
+        body = message.body_json if isinstance(message.body_json, dict) else {}
+        if body.get(SCRIPT_BLOCKED_KEY) and body.get("topic_id"):
+            topic_id = str(body["topic_id"])
+            sent_back[topic_id] = max(sent_back.get(topic_id, ""), str(message.created_at))
+    return sent_back
+
+
 def _gather_for_candidates(
     engine: Engine, registry: ProviderRegistry, settings: Settings
 ) -> list[dict[str, Any]]:
@@ -489,8 +641,14 @@ def _gather_for_candidates(
     """
     candidates_per_day, pages_per_topic = research_budget(settings)
     with Session(engine) as session:
+        # A topic whose writer stopped on what its sources gave him is read for again:
+        # the pages fetched before the Director's note are spent (`_topic_back_to_research`).
+        sent_back = _sent_back_after(session)
         with_sources = {
-            row for row in session.scalars(select(SourceSnapshot.topic_id)) if row is not None
+            row.topic_id
+            for row in session.scalars(select(SourceSnapshot))
+            if row.topic_id is not None
+            and str(row.fetched_at) >= sent_back.get(str(row.topic_id), "")
         }
         # A topic whose pages could not be found today is not tried again today: the
         # Researcher's escalation says so, and the same guesses would 404 the same way.
@@ -667,6 +825,69 @@ def _research_and_verification(
 # ------------------------------------------------------------------------- selection --
 
 
+#: How long a film that passed quality control may wait to be published before its topic
+#: stops holding the next choice (2026-10-15): a film the Publisher holds, the gate refuses
+#: or the Owner never answers for kept its topic «live» for ever, and no new topic was chosen.
+#: The film stays a candidate for publication; only the selection stops waiting for it.
+PUBLISH_WAIT_DAYS = 3
+
+
+def superseded(draft: ScriptDraft) -> bool:
+    """Whether the Director's editorial judgement shipped another version of this draft's
+    topic in its place (2026-10-11): a later, lower-scored rewrite that owes nobody anything."""
+    return bool(((draft.story_json or {}).get("editorial") or {}).get("superseded_by"))
+
+
+def topic_scripts(session: Session) -> dict[str, ScriptDraft]:
+    """Each topic's script as production follows it: its newest draft that no editorial
+    judgement superseded.
+
+    Not simply its newest draft (2026-10-16): «Why the Speed of Light Is Exactly 299,792,458
+    m/s» shipped its second draft and the judgement's two later rewrites, read and scored after
+    it, stayed newer. The film of the second draft was published at 06:43Z, yet the topic was
+    read by a rewrite with no storyboard, counted as «live», and no new subject was chosen.
+    `script_work` and `_script_awaiting_owner` already skip a superseded draft; this is the
+    same reading for the topic as a whole."""
+    current: dict[str, ScriptDraft] = {}
+    for draft in session.scalars(select(ScriptDraft).order_by(ScriptDraft.created_at)):
+        if draft.topic_id and not superseded(draft):
+            current[draft.topic_id] = draft  # ordered by age, so the last one wins
+    return current
+
+
+def topics_with_a_published_film(session: Session) -> set[str]:
+    """The topics with a film out: a finished render of one of their storyboards, of any of
+    their drafts, whose output asset the channel confirmed (`CONFIRMED_UPLOAD_STATES` with a
+    remote video id). The asset is matched, never a title the publisher may have changed.
+
+    Only a confirmed upload, read as `media.shooting_sheet.film_is_closed` reads one: this
+    finishes the topic whichever draft, storyboard or render the film came from, so it must
+    not take a row that left nothing on the channel. A gate refusal (BLOCKED_GATE) or a failed
+    upload (FAILED_FINAL, YouTube's «rejected» among them) is offered again by `_publish`, or
+    repaired with a replacement script and storyboard; read as «out», it let the day choose a
+    new subject beside a film still owed, and two films were made and paid for side by side."""
+    return {
+        str(topic_id)
+        for topic_id in session.scalars(
+            select(ScriptDraft.topic_id)
+            .join(Storyboard, Storyboard.script_draft_id == ScriptDraft.id)
+            .join(VideoRenderJob, VideoRenderJob.storyboard_id == Storyboard.id)
+            .join(
+                PublicationRecord,
+                PublicationRecord.media_asset_id == VideoRenderJob.output_asset_id,
+            )
+            .where(
+                ScriptDraft.topic_id.is_not(None),
+                VideoRenderJob.status == "COMPLETED",
+                PublicationRecord.status.in_(CONFIRMED_UPLOAD_STATES),
+                PublicationRecord.remote_video_id.is_not(None),
+                PublicationRecord.remote_video_id != "",
+            )
+            .distinct()
+        )
+    }
+
+
 def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
     """SELECTED topics with work genuinely in flight, and the ones that have stalled.
 
@@ -683,17 +904,24 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
     topic whose film has been published is simply done: it used to fall through to the stalled
     bucket and be reported as "selected earlier, renders failed quality control", which was
     said of a film that had gone out an hour before.
+
+    Done whichever of its drafts the film came from (2026-10-16): the topic used to be read by
+    its newest draft alone, and a rewrite written after the published one (the editorial
+    judgement's lower-scored versions) held the factual channel «în producție» with nothing
+    owed. A topic is read by its current script (`topic_scripts`), and one whose film the
+    channel confirmed, from any of its drafts (`topics_with_a_published_film`), is neither live
+    nor stalled. Any other publication row finishes the topic only on the newest render of its
+    current storyboard, as it always did; on an older render, or on another draft's, it says
+    nothing about the film the topic still owes.
     """
     selected = list(session.scalars(select(TopicIdea).where(TopicIdea.status == "SELECTED")))
     if not selected:
         return [], []
-    # Newest per topic and per script: with two drafts of one topic, or two storyboards of one
-    # script, which row won used to depend on the order the rows came back in.
-    scripts = {
-        s.topic_id: s
-        for s in session.scalars(select(ScriptDraft).order_by(ScriptDraft.created_at))
-        if s.topic_id
-    }
+    # The current script per topic (`topic_scripts`) and the newest storyboard per script: with
+    # two drafts of one topic, or two storyboards of one script, which row won used to depend on
+    # the order the rows came back in.
+    scripts = topic_scripts(session)
+    done = topics_with_a_published_film(session)
     boards = {
         b.script_draft_id: b
         for b in session.scalars(select(Storyboard).order_by(Storyboard.created_at))
@@ -707,13 +935,15 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
         select(QualityControlReport).order_by(QualityControlReport.verified_at)
     ):
         verdicts[verdict_row.media_asset_id] = verdict_row.status  # the newest per asset
+    # Any publication row on the newest render of the current storyboard finishes the topic, as
+    # it always did; on every other render only a confirmed upload does (`done`, above).
     published = set(session.scalars(select(PublicationRecord.media_asset_id)))
-    rejected = {
-        r.media_asset_id for r in session.scalars(select(EditorialReview)) if r.verdict == "REJECT"
-    }
+    rejected = _viewing_rejected(session)
     live: list[str] = []
     stalled: list[str] = []
     for topic in selected:
+        if topic.id in done:
+            continue  # the channel has a film of it; finished, neither live nor stuck
         script = scripts.get(topic.id)
         board = boards.get(script.id) if script else None
         last = jobs.get(board.id) if board else None
@@ -745,7 +975,14 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
         if last.output_asset_id in rejected:
             stalled.append(topic.id)  # the Director said no; the departments hold the notes
         elif verdict == "PASSED":
-            live.append(topic.id)  # waiting to be published
+            finished = str(last.finished_at or last.started_at or "")
+            waited_days = (
+                (datetime.now(UTC) - datetime.fromisoformat(finished)).days if finished else 0
+            )
+            if waited_days >= PUBLISH_WAIT_DAYS:
+                stalled.append(topic.id)  # held or refused this long: it no longer holds the day
+            else:
+                live.append(topic.id)  # waiting to be published
         elif verdict is None:
             live.append(topic.id)  # waiting for quality control
         else:
@@ -824,7 +1061,7 @@ def _selection(engine: Engine, registry: ProviderRegistry | None = None) -> dict
             continue
         reason = f"Subiect selectat: {chosen['title']}."
         if decided_by:
-            reason += f" Ales de Director: {notes}"[:220]
+            reason += f" Ales de Director: {notes}"
         return _outcome(
             COMPLETED,
             reason,
@@ -884,7 +1121,7 @@ def script_work(session: Session, selected: list[str]) -> list[tuple[str, list[s
             continue
         if latest.id in storyboarded:
             continue  # the film is past the page
-        if ((latest.story_json or {}).get("editorial") or {}).get("superseded_by"):
+        if superseded(latest):
             # The Director's editorial judgement shipped an earlier version of this topic
             # (2026-10-11): this later, lower-scored draft owes the room nothing.
             continue
@@ -899,7 +1136,8 @@ def script_work(session: Session, selected: list[str]) -> list[tuple[str, list[s
             continue
         if review.verdict != "REVISE":
             continue  # approved and waiting to be shot, or refused and not ours to retry
-        notes = list((review.notes_json or {}).get("notes") or [])
+        # Her notes and the retention row she judged the draft against (`rewrite_notes`).
+        notes = rewrite_notes((review.notes_json or {}).get("notes") or [], review.retention_json)
         owed.append((topic_id, notes))
     return owed
 
@@ -918,7 +1156,7 @@ def _script_awaiting_owner(session: Session) -> str | None:
     for draft in newest.values():
         if draft.status != "VERIFIED_PASS" or draft.id in storyboarded:
             continue
-        if ((draft.story_json or {}).get("editorial") or {}).get("superseded_by"):
+        if superseded(draft):
             continue  # the judgement shipped an earlier version; this one waits for nobody
         review = latest_review(session, draft.id)
         if review is not None and review.verdict == "PASS":
@@ -947,7 +1185,7 @@ def _director_approves(engine: Engine, script_id: str, review: dict[str, Any]) -
     if grounding is not None and not grounding["passed"]:
         logger.info(
             "script_approval_refused",
-            extra={"script_id": script_id, "reason": " ".join(grounding["reasons"])[:300]},
+            extra={"script_id": script_id, "reason": " ".join(grounding["reasons"])},
         )
         return None
     try:
@@ -982,8 +1220,8 @@ def _script_and_storyboard(
     """Draft the voiceover for the selected topic, and storyboard what has been approved.
 
     A film still waiting for its shot plan (NEEDS_SHOT_PLAN), or one the prompt lint held, is
-    asked of the model again here, once a business day on at most `SHOT_PLAN_REASK_DAYS`
-    days (`_reask_shot_plans`): text only, no media credit (A4).
+    asked of the model again here, once a business day until usable (`_reask_shot_plans`):
+    text only, no media credit (A4).
 
     The draft stops at VERIFIED_PASS until the Director has read it: a PASS from her story
     review approves it (`_director_approves`), a rewrite follows her notes for up to
@@ -995,6 +1233,7 @@ def _script_and_storyboard(
         return _outcome(SKIPPED, "Niciun model de limbaj disponibil; agenții nu pot rula.")
 
     drafted, rejected = 0, []
+    form_retries = 0
     with Session(engine) as session:
         selected = [
             topic.id
@@ -1011,6 +1250,7 @@ def _script_and_storyboard(
         # cheapest thing the studio produces — a render is where the money is — so the
         # conversation happens now, in full, and the film reaches the camera in the same day.
         notes = list(carried_notes or [])
+        form_refusals = 0  # refusals of the draft's form this topic had (`SCRIPT_FORM_RETRIES`)
         for attempt in range(1, MAX_SCRIPT_EXCHANGES + 1):
             try:
                 written = agent_write_script(
@@ -1057,13 +1297,69 @@ def _script_and_storyboard(
                     break  # she approved it; the camera is next
                 if review["verdict"] == "REJECT":
                     break  # the budget is spent or the story is unsupportable; let it go
-                notes = list(review["notes"])
-            except (ScriptRejected, NoVerifiedClaims) as exc:
-                # The draft was refused and nothing was stored — which is the pipeline working,
-                # not the day breaking. A model that writes narration it cannot attribute to a
-                # verified claim is a content problem; letting it stop the run would also stop
-                # the day's log and every stage after it, over an outcome the studio handled
-                # correctly. The room closes for this topic; the day goes on.
+                # Her notes, and her retention row — where she expects to lose the viewer, and
+                # why — in the rewrite's own data: no identity carries her letter (2026-10-16).
+                notes = rewrite_notes(review["notes"], review.get("retention"))
+            except ScriptBlocked as exc:
+                # The writer's honest stop: what he was given cannot be written. The topic
+                # goes back to research with his reason, through the Director, and the day
+                # goes on (2026-10-15, «The Supernova Surprise» on claims about «Discovery»).
+                logger.info("script_blocked", extra={"topic_id": topic_id, "reason": str(exc)})
+                if _stop_is_about_a_chart(exc.blocker):
+                    # 15:51Z, d7d80450: four claims verified, the story passed, and he stopped
+                    # because scene 3's chart had no figures — a form matter, not a fact the
+                    # story lacks. The scene is written LIVE; his claims are not retired.
+                    form_refusals += 1
+                    if form_refusals <= SCRIPT_FORM_RETRIES and attempt < MAX_SCRIPT_EXCHANGES:
+                        form_retries += 1
+                        notes = [
+                            *notes,
+                            "Nu te opri pentru lipsa unei cifre: "
+                            + " ".join(str(exc.blocker.reason or "").split())[:300]
+                            + " Scena fără cifre verificate se scrie LIVE (ce se vede), fără "
+                            "grafic; un grafic (DATA_CARD) există doar când fiecare bară are "
+                            "valoarea, unitatea și afirmația ei. Blocker-ul este numai pentru "
+                            "fapte pe care povestea nu le are deloc.",
+                        ]
+                        continue
+                    # His retries spent on the same chart: the topic is refused today with
+                    # his words, its claims untouched — the next run writes from them again.
+                    rejected.append(
+                        "scenaristul s-a oprit pentru un grafic fără cifre, deși scena se "
+                        "scria LIVE: "
+                        + " ".join(str(getattr(exc.blocker, "reason", "") or "").split())[:200]
+                    )
+                    break
+                # His own words, not «o eroare neașteptată în codul studioului» (14:03Z).
+                rejected.append(
+                    "scenaristul s-a oprit cinstit, subiectul merge înapoi la cercetare: "
+                    + " ".join(str(getattr(exc.blocker, "reason", "") or str(exc)).split())[:200]
+                )
+                _topic_back_to_research(engine, topic_id, exc.blocker)
+                break
+            except ScriptRejected as exc:
+                # The draft was refused by its form and nothing was stored (a chart without
+                # its figures, a citation that was not supplied). Until 2026-10-15 the room
+                # closed on it; 14:43Z, d7d80450: the first script a writer with the right
+                # facts wrote was dropped whole for one DATA_CARD scene without its numbers.
+                # Text is free: the writer is asked again with the refusal, within the
+                # exchanges the room allows (the Owner: «publicăm ce avem»).
+                logger.info("script_rejected", extra={"topic_id": topic_id, "reason": str(exc)})
+                form_refusals += 1
+                if form_refusals <= SCRIPT_FORM_RETRIES and attempt < MAX_SCRIPT_EXCHANGES:
+                    form_retries += 1
+                    notes = [
+                        *notes,
+                        f"Forma a refuzat ciorna: {str(exc)[:400]} Dă fiecărei bare a unui "
+                        "grafic valoarea, unitatea și afirmația verificată din care vine, sau "
+                        "fă scena una filmată (LIVE) fără grafic.",
+                    ]
+                    continue
+                rejected.append(str(exc)[:300])
+                break
+            except NoVerifiedClaims as exc:
+                # No SUPPORTED claim at all: nothing truthful to write from; the room closes
+                # for this topic and the day goes on.
                 logger.info("script_rejected", extra={"topic_id": topic_id, "reason": str(exc)})
                 rejected.append(error_words(exc))
                 break
@@ -1181,6 +1477,7 @@ def _script_and_storyboard(
         shots_described=prompted,
         story_reviews=reviews,
         rejected=rejected,
+        form_retries=form_retries,
         awaiting_approval=bool(awaiting),
         waiting_shot_plan=waiting_plan,
         storyboards_gated=gated,
@@ -1199,7 +1496,7 @@ def _reask_shot_plans(
     """Ask the model again for the shot plan of each factual film that is waiting for one.
 
     A NEEDS_SHOT_PLAN storyboard, or an APPROVED one whose last recorded day was a lint BLOCK,
-    is asked again once a business day, on at most `SHOT_PLAN_REASK_DAYS` days, counted by
+    is asked again once a business day until usable, counted by
     the day's own events: text only, no media credit. Only the POST /prompts route asked again
     before, so a plan the model lost stayed lost. A film holding a bought take is never asked:
     new prompts are new still identities, and a still bought for the old words would be bought
@@ -1248,7 +1545,7 @@ def _reask_shot_plans(
                     )
                 )
             }
-            if today in days or len(days) >= SHOT_PLAN_REASK_DAYS:
+            if today in days:
                 continue
             candidates.append(board.id)
     for storyboard_id in candidates:
@@ -1374,7 +1671,7 @@ def _release(engine: Engine, reservation_id: str | None, reason: str, correlatio
     if not reservation_id:
         return
     try:
-        release_reservation(engine, reservation_id, reason[:120], correlation_id=correlation)
+        release_reservation(engine, reservation_id, reason, correlation_id=correlation)
     except (EconomyError, ValueError):
         logger.info("reservation_not_released", extra={"reservation_id": reservation_id})
 
@@ -1536,6 +1833,13 @@ def _film_staircase(
     one's prompt and has it rewritten (`app.media.scene_rewrite.director_ladder`), and the film
     is walked again, at most `DIRECTOR_LADDER_ROUNDS` times; past them a continuation walks it on.
     ``director_ladder`` lists her rounds.
+
+    A walk whose stop the ladder settled under the renders cap, or judged again, buying nothing,
+    is walked again at once — at most `FREE_WALKS` times in a row, and never again on the very
+    stop it settled the walk before: a settle that changes nothing would otherwise turn for
+    ever while the walk holds the film's purchase lease (the dishonest-code audit of
+    2026-10-16, SAFE-013). The film then keeps the walk's own stop, and ``free_walks_stopped``
+    says how many free walks ran.
     """
     from app.media.shooting_sheet import (  # noqa: PLC0415 - media imports runbook
         FILM_BUSY,
@@ -1555,12 +1859,45 @@ def _film_staircase(
         ):
             bought: list[dict[str, Any]] = []
             rounds: list[dict[str, Any]] = []
+            free_walks = 0
+            last_free: tuple[Any, ...] | None = None
             while True:
                 film = _walk_staircase(
                     engine, settings, registry, storyboard_id, wiring, environment, correlation
                 )
                 bought.extend(film.get("bought") or [])
-                refused = _ladder_scenes(engine, storyboard_id, film)
+                refused = _ladder_scenes(
+                    engine, storyboard_id, film, registry=registry, settings=settings
+                )
+                if (
+                    not refused
+                    and (film.get("settled_under_cap") or film.get("rejudged"))
+                    and not stop_requested(engine)
+                ):
+                    # Settled or judged again, bought nowhere: the film is walked on, a bounded
+                    # number of times, and never twice on a stop that did not move.
+                    stopped_at = (
+                        film.get("step"),
+                        film.get("refusal"),
+                        tuple(sorted(film.get("settled_under_cap") or [])),
+                        tuple(sorted(film.get("rejudged") or [])),
+                    )
+                    free_walks = 0 if film.get("bought") else free_walks + 1
+                    if free_walks > FREE_WALKS or (
+                        not film.get("bought") and stopped_at == last_free
+                    ):
+                        logger.warning(
+                            "free_walks_stopped",
+                            extra={
+                                "storyboard_id": storyboard_id,
+                                "walks": free_walks,
+                                "step": film.get("step"),
+                            },
+                        )
+                        film["free_walks_stopped"] = free_walks
+                        break
+                    last_free = stopped_at
+                    continue
                 if not refused or stop_requested(engine):
                     break
                 if len(rounds) >= DIRECTOR_LADDER_ROUNDS:
@@ -1568,7 +1905,7 @@ def _film_staircase(
                     break
                 rung = _director_rung(engine, registry, storyboard_id, refused, correlation)
                 rounds.append(rung)
-                if not rung["rewritten"]:
+                if not rung["rewritten"] and not rung.get("recovered"):
                     # Nobody's decision: the Director's rewrite did not land (her brief
                     # refused, no Director, a fault), and the studio tries again by itself
                     # (`passes.ladder_retry`). The film's words say so, not «decide el».
@@ -1607,17 +1944,147 @@ def _film_staircase(
 #: (the Policy Kernel, the budgets, its ceiling) ends them sooner; past them a continuation
 #: walks the film on, so a film is never left idle while money allows it (2026-10-11).
 DIRECTOR_LADDER_ROUNDS = 3
+#: How many walks in a row that bought nothing may follow a settle under the renders cap (or a
+#: still judged again) in one `_film_staircase`: a stair can stop on scenes the cap settles at
+#: most once each (stills, test shot, motion), twice over is room enough (SAFE-013).
+FREE_WALKS = 6
 #: The stops of a walk whose scenes may be quality control's to answer.
 LADDER_REFUSALS = frozenset({"NEEDS_OWNER", "TAKES_NOT_ACCEPTED"})
 LADDER_CAUSE = "director_ladder"
 
 
-def _ladder_scenes(engine: Engine, storyboard_id: str, film: dict[str, Any]) -> list[int]:
-    """The scenes of a stopped walk that quality control refused (the Director's to answer)."""
+def _ladder_scenes(
+    engine: Engine,
+    storyboard_id: str,
+    film: dict[str, Any],
+    *,
+    registry: ProviderRegistry | None = None,
+    settings: Settings | None = None,
+    act: bool = True,
+) -> list[int]:
+    """The scenes of a stopped walk that quality control refused (the Director's to answer).
+    First, free: a refused still the gate's local checks stopped is judged again by today's
+    gate (`stills_stage.rejudge_refused_stills`); one it passes is the scene's picture and the
+    scene is listed on ``film["rejudged"]``. Then a refused scene whose picture has had its
+    renders, or whose motion has had its renders, is not rewritten: what it has stands under
+    the Owner's cap (`stills_stage.settle_scene_under_cap`) and the scene is listed on
+    ``film["settled_under_cap"]`` instead, so the walk goes on. A stopped scene at the cap that
+    quality control did not refuse (held by the cap itself, its shots made on older words, a
+    clip too short for its words) is settled the same way: past the cap the Director keeps
+    what is closest and nothing waits for the Owner (2026-10-16).
+
+    ``act=False`` only reads the refused scenes and changes nothing (`_ladders_stop`)."""
     if film.get("status") != "WAITING" or film.get("refusal") not in LADDER_REFUSALS:
         return []
     scenes = [int(scene) for scene in film.get("scenes") or [] if isinstance(scene, int)]
-    return _quality_scenes(engine, storyboard_id, scenes) if scenes else []
+    refused = _quality_scenes(engine, storyboard_id, scenes) if scenes else []
+    if not act:
+        return refused
+    capped = [
+        scene
+        for scene in scenes
+        if scene not in refused and _at_a_cap(engine, storyboard_id, scene)
+    ]
+    if not refused and not capped:
+        return refused
+    from app.media.stills_stage import (  # noqa: PLC0415
+        rejudge_refused_stills,
+        settle_scene_under_cap,
+    )
+
+    settled: list[int] = []
+    rejudged: list[int] = []
+    for scene in refused:
+        try:
+            if rejudge_refused_stills(
+                engine,
+                storyboard_id,
+                scene,
+                str(uuid4()),
+                registry=registry,
+                ffmpeg_path=getattr(settings, "ffmpeg_path", None),
+            ):
+                rejudged.append(scene)
+                continue
+            if settle_scene_under_cap(
+                engine,
+                storyboard_id,
+                scene,
+                str(uuid4()),
+                registry=registry,
+                ffmpeg_path=getattr(settings, "ffmpeg_path", None),
+            ):
+                settled.append(scene)
+        except Exception as exc:  # noqa: BLE001 - the ladder's stop stands for this scene
+            logger.warning(
+                "ladder_scene_not_settled",
+                extra={"storyboard_id": storyboard_id, "scene": scene, "error": type(exc).__name__},
+            )
+    for scene in capped:
+        try:
+            if settle_scene_under_cap(
+                engine,
+                storyboard_id,
+                scene,
+                str(uuid4()),
+                registry=registry,
+                ffmpeg_path=getattr(settings, "ffmpeg_path", None),
+            ):
+                settled.append(scene)
+        except Exception as exc:  # noqa: BLE001 - the walk's stop stands for this scene
+            logger.warning(
+                "capped_scene_not_settled",
+                extra={"storyboard_id": storyboard_id, "scene": scene, "error": type(exc).__name__},
+            )
+    if settled:
+        film.setdefault("settled_under_cap", []).extend(settled)
+    if rejudged:
+        film.setdefault("rejudged", []).extend(rejudged)
+    return [scene for scene in refused if scene not in settled and scene not in rejudged]
+
+
+def _at_a_cap(engine: Engine, storyboard_id: str, scene: int) -> bool:
+    """Whether the scene's picture or its motion has had its renders (`renders_cap`)."""
+    with Session(engine) as session:
+        return renders_at_cap(session, storyboard_id, scene, "still") or renders_at_cap(
+            session, storyboard_id, scene, "motion"
+        )
+
+
+def _settles_under_cap(engine: Engine, storyboard_id: str, scene: int) -> bool:
+    """Whether the walk's ladder settles the scene under the Owner's renders cap: what
+    `stills_stage.settle_scene_under_cap` would do, read with ``act=False`` (nothing written,
+    no model asked).
+    A layer at the cap is not enough: a scene whose still had its renders while its motion,
+    with a render left, waits for the Owner (the review of a079fac), or one at the cap with
+    nothing of its own on disk to keep, is not hers to settle and is not said to be."""
+    if not _at_a_cap(engine, storyboard_id, scene):
+        return False
+    from app.media.stills_stage import settle_scene_under_cap  # noqa: PLC0415
+
+    try:
+        return settle_scene_under_cap(engine, storyboard_id, scene, "", act=False)
+    except Exception as exc:  # noqa: BLE001 - unread, the scene is said as the stop has it
+        logger.warning(
+            "capped_scene_unread",
+            extra={"storyboard_id": storyboard_id, "scene": scene, "error": type(exc).__name__},
+        )
+        return False
+
+
+def _ladders_stop(engine: Engine, storyboard_id: str, film: dict[str, Any]) -> bool:
+    """Whether a walked film's stop is the Director's ladder's, read after the walk: scenes
+    quality control refused, or scenes the walk's ladder judged again or settled under the
+    cap. Read, never acted on: the walk (`_film_staircase`) already judged again and settled
+    what it could, and walked on whatever that moved. A look here moved a film nobody walked
+    on: a still approved after the walk (its look failed in the walk and answered here) was
+    said to wait for «Proprietarul», and the shooting-sheet letter asked him about a scene
+    already resolved for free (the review of 5f10781)."""
+    return bool(
+        _ladder_scenes(engine, storyboard_id, film, act=False)
+        or film.get("rejudged")
+        or film.get("settled_under_cap")
+    )
 
 
 def _quality_scenes(engine: Engine, storyboard_id: str, scenes: list[int]) -> list[int]:
@@ -1645,23 +2112,59 @@ def _scenes_ro(scenes: list[int], *, refused: bool = False) -> str:
 
 def _held_words(engine: Engine, storyboard_id: str, stair_ro: str, scenes: list[int]) -> str:
     """Why the walk stops before a stair, in the film's words: the scenes quality control
-    refused wait for the Director's rewrite (her ladder, this same walk), the others for the
-    Owner's decision on the shooting sheet. 2026-10-12: «scena 6 așteaptă decizia
-    Proprietarului» reached him for a clip quality control had refused — hers, not his."""
+    refused wait for the Director's rewrite (her ladder, this same walk), the scenes she
+    settles under the Owner's renders cap with what is closest (`_settles_under_cap`: what
+    `_ladder_scenes` will do, nothing bought), the others wait for the Owner's decision on the
+    shooting sheet. 2026-10-12: «scena 6 așteaptă decizia Proprietarului» reached him for a
+    clip quality control had refused — hers, not his; 2026-10-16, the same for a scene the
+    renders cap had stopped. A scene at a cap that she cannot settle is not said to be hers:
+    its stop is not the cap's, or nothing of it can stand (the review of a079fac)."""
     hers = set(_quality_scenes(engine, storyboard_id, scenes))
-    his = [scene for scene in scenes if scene not in hers]
+    from app.media.scene_rewrite import DELIVERY_CODES, last_failure_code  # noqa: PLC0415
+
+    with Session(engine) as session:
+        deliveries = {
+            index
+            for index in hers
+            if last_failure_code(session, storyboard_id, index) in DELIVERY_CODES
+        }
+    quality = hers - deliveries
+    capped = [
+        scene
+        for scene in scenes
+        if scene not in hers and _settles_under_cap(engine, storyboard_id, scene)
+    ]
+    his = [scene for scene in scenes if scene not in hers and scene not in capped]
     parts: list[str] = []
-    if hers:
-        parts.append(_scenes_ro(sorted(hers), refused=True) + " așteaptă rescrierea Directoarei")
+    if quality:
+        parts.append(_scenes_ro(sorted(quality), refused=True) + " așteaptă rescrierea Directoarei")
+    if deliveries:
+        parts.append(
+            _scenes_ro(sorted(deliveries)) + " așteaptă remedierea livrării de către Directoare"
+        )
+    if capped:
+        parts.append(
+            _scenes_ro(capped)
+            + (" a avut" if len(capped) == 1 else " au avut")
+            + f" randările plafonului Proprietarului ({renders_ro()} pe imagine sau mișcare, "
+            f"STUDIO_RENDERS_PER_LAYER): {CAP_KEEPS_RO}"
+        )
     if his:
         parts.append(_scenes_ro(his) + " așteaptă decizia Proprietarului pe foaia de filmare")
-    ending = (
-        "nu se cumpără din nou până nu decide el."
-        if not hers
-        else "nu se cumpără din nou până nu o rescrie ea."
-        if not his
-        else "nu se cumpără din nou până atunci."
-    )
+    if his:
+        ending = (
+            "nu se cumpără din nou până nu decide el."
+            if not hers and not capped
+            else "nu se cumpără din nou până atunci."
+        )
+    elif hers:
+        ending = (
+            "nu se cumpără din nou până nu stabilește ea remedierea."
+            if deliveries
+            else "nu se cumpără din nou până nu o rescrie ea."
+        )
+    else:
+        ending = "nu se mai cumpără nimic pentru " + ("ea." if len(capped) == 1 else "ele.")
     return f"după pasul «{stair_ro}», " + "; ".join(parts) + "; " + ending
 
 
@@ -1714,6 +2217,12 @@ def _walk_staircase(
     correlation: str,
 ) -> dict[str, Any]:
     """`_film_staircase` inside the film's purchase lease."""
+    from app.media.factory import reference_image_adapter  # noqa: PLC0415
+    from app.media.prompt_audit import (  # noqa: PLC0415 - media imports runbook
+        LAYER_OF_STEP,
+        NEEDS_PROMPT_APPROVAL,
+        audit_before_purchase,
+    )
     from app.media.shooting_sheet import (  # noqa: PLC0415 - media imports runbook
         SHEET_STEPS,
         SheetNotFound,
@@ -1723,7 +2232,7 @@ def _walk_staircase(
         run_sheet_step,
     )
 
-    image = wiring.get("image_adapter")
+    image = reference_image_adapter(engine, storyboard_id, wiring.get("image_adapter"))
     context: dict[str, Any] = {
         "capabilities": list(wiring.get("capabilities") or []),
         "integration_id": wiring.get("integration_id"),
@@ -1731,6 +2240,8 @@ def _walk_staircase(
     }
     bought: list[dict[str, Any]] = []
     sheet: dict[str, Any] = {}
+    rewritten_sheets: set[tuple[str, str]] = set()
+    step: str | None = None
 
     def stop(status: str, step: str | None, reason: str, **more: Any) -> dict[str, Any]:
         return {
@@ -1764,7 +2275,25 @@ def _walk_staircase(
         )
         recovered = {}
 
+    # Before the sheet prices a new still for a scene clip QC sent back to its still, she
+    # looks at the refused clip herself (the Owner, 2026-10-15: «ea poate să hotărască că
+    # imaginea este ok»); her yes restores the scene and nothing is bought for it. Free.
+    try:
+        from app.media.fix_check import restore_sent_back_scenes  # noqa: PLC0415
+
+        restored = restore_sent_back_scenes(
+            engine, registry, storyboard_id=storyboard_id, correlation_id=correlation
+        )
+        if restored:
+            logger.info(
+                "scenes_restored_by_look",
+                extra={"storyboard_id": storyboard_id, "scenes": restored},
+            )
+    except Exception:  # noqa: BLE001 - her look never stops the walk
+        logger.exception("restore_by_look_failed", extra={"storyboard_id": storyboard_id})
     for _stair in range(len(SHEET_STEPS) + 1):
+        if stop_requested(engine):
+            return stop("WAITING", step, stop_reason_words(engine), refusal="STOPPED")
         try:
             sheet = build_sheet(
                 engine,
@@ -1843,6 +2372,90 @@ def _walk_staircase(
                 refusal="NEEDS_OWNER",
                 scenes=[int(scene) for scene in scenes],
             )
+        # The Owner, 2026-10-15: «Mereu verificăm prompturile, fără excepție!» Before a step
+        # pays for a scene for the first time, the Director audits the words that would be
+        # sent (`prompt_audit.audit_before_purchase`): her yes is kept on those words, her no
+        # is a brief the Editor rewrites from, and the sheet is rebuilt on the new words; a
+        # scene she cannot approve waits for her, never bought. Text only.
+        # A paid PRODUCTION step must never treat an unavailable Director or model
+        # registry as permission to skip her review. TEST/DEMO may rehearse with
+        # deterministic local adapters, but a production purchase needs her approval.
+        if environment == "PRODUCTION" and step in LAYER_OF_STEP and registry is None:
+            scenes = [int(scene) for scene in sheet["steps"][step]["to_buy"]]
+            return stop(
+                "WAITING",
+                step,
+                "Directoarea nu este disponibilă pentru verificarea prompturilor; "
+                "nu se cumpără nimic fără aprobarea ei.",
+                refusal=NEEDS_PROMPT_APPROVAL,
+                scenes=scenes,
+            )
+        if registry is not None and step in LAYER_OF_STEP:
+            prompt_state = (step, str(sheet["sheet_hash"]))
+            if prompt_state in rewritten_sheets:
+                # A reported rewrite must change the plan before another model call.
+                # Requeuing unchanged words would just move an infinite loop to the queue.
+                return stop(
+                    "WAITING",
+                    step,
+                    "Rescrierea nu a schimbat foaia de filmare; verificarea nu se repetă "
+                    "pe aceleași cuvinte. Este necesară verificarea uneltei de rescriere.",
+                    refusal=NEEDS_PROMPT_APPROVAL,
+                    no_prompt_progress=True,
+                )
+            try:
+                audit = audit_before_purchase(
+                    engine,
+                    registry,
+                    storyboard_id=storyboard_id,
+                    step=step,
+                    scenes=[int(scene) for scene in sheet["steps"][step]["to_buy"]],
+                    correlation_id=correlation,
+                )
+            except Exception:  # noqa: BLE001 - an audit that fell buys nothing
+                logger.exception("prompt_audit_failed", extra={"storyboard_id": storyboard_id})
+                audit = {"approved": [], "rewritten": [], "held": [], "skipped": [], "asked": False}
+                return stop(
+                    "WAITING",
+                    step,
+                    "Verificarea cuvintelor de către Directoare a căzut; nu se cumpără nimic "
+                    "pe cuvinte neverificate.",
+                    refusal=NEEDS_PROMPT_APPROVAL,
+                    audit=audit,
+                )
+            if audit["rewritten"]:
+                rewritten_sheets.add(prompt_state)
+                logger.info(
+                    "prompt_audit_rewrote",
+                    extra={"storyboard_id": storyboard_id, "scenes": audit["rewritten"]},
+                )
+                continue  # the sheet is rebuilt on her words; the new words are audited
+            if audit["held"]:
+                return stop(
+                    "WAITING",
+                    step,
+                    " ".join(item["reason"] for item in audit["held"]),
+                    refusal=NEEDS_PROMPT_APPROVAL,
+                    scenes=[int(item["scene_index"]) for item in audit["held"]],
+                    audit=audit,
+                )
+            if environment == "PRODUCTION":
+                # An audit can skip scenes when her role is missing or its input
+                # cannot be read. Never interpret those omissions as a yes to pay.
+                needed = {int(scene) for scene in sheet["steps"][step]["to_buy"]}
+                confirmed = {int(scene) for scene in audit["approved"]}
+                unaudited = sorted(needed - confirmed)
+                if unaudited:
+                    return stop(
+                        "WAITING",
+                        step,
+                        "Directoarea nu a aprobat prompturile scenelor "
+                        + ", ".join(map(str, unaudited))
+                        + "; nu se cumpără nimic fără aprobarea ei.",
+                        refusal=NEEDS_PROMPT_APPROVAL,
+                        scenes=unaudited,
+                        audit=audit,
+                    )
         try:
             result = run_sheet_step(
                 engine,
@@ -1894,9 +2507,37 @@ def _walk_staircase(
             # His mode was lowered while the stair bought (spec 51): what it bought is in the
             # books, the rest waits on his mode, never on a fault of the film's.
             return stop("WAITING", step, str(result["stopped"]), refusal="BLOCKED_MODE")
+        budget = result.get("budget_stopped")
+        if isinstance(budget, dict) and budget.get("status"):
+            # The stair's next round could not be held within his budget (`StepHold`): what
+            # it bought is in the books, and the film waits on the budget exactly as a stair
+            # refused at its start does (his card when his rule raises one), never on a fault.
+            reason = str(budget.get("reason") or result.get("stopped") or "")
+            return stop("WAITING", step, reason, refusal=str(budget["status"]))
         if result.get("stopped"):
             return stop("WAITING", step, str(result["stopped"]), refusal="STOPPED")
-    return stop("WAITING", None, "Scara filmului nu s-a încheiat în această rulare.")
+    if stop_requested(engine):
+        return stop("WAITING", step, stop_reason_words(engine), refusal="STOPPED")
+    # Rewrites consumed this walk's time, not an Owner decision. Keep the walk bounded,
+    # but hand the changed words to a durable next walk for a fresh purchase audit.
+    continuation = (
+        _ladder_continues(engine, storyboard_id, correlation)
+        if environment == "PRODUCTION"
+        else None
+    )
+    return stop(
+        "WAITING",
+        step,
+        (
+            "Prompturile au fost corectate; filmul continuă automat într-o nouă trecere "
+            "pentru verificarea Directoarei înainte de generare."
+            if continuation
+            else "Prompturile au fost corectate; verificarea Directoarei mai are nevoie "
+            "de o trecere înainte de generare."
+        ),
+        refusal=NEEDS_PROMPT_APPROVAL,
+        continues=continuation,
+    )
 
 
 def _held_stair(
@@ -1926,8 +2567,8 @@ def _held_stair(
 # Owner stopped every later film; its topic counted as in production until a render COMPLETED,
 # so no new topic was chosen either; a film without a shot plan was never asked of the model
 # again. Now: the films are walked oldest first (`_media_staircase`); a film's day is recorded
-# (`FILM_STATE_EVENT`), so a NEEDS_SHOT_PLAN or lint-blocked film is asked again on at most two
-# days (`_reask_shot_plans`) and one that stood still longer than `film_wait_days` is retired
+# (`FILM_STATE_EVENT`), so a NEEDS_SHOT_PLAN or lint-blocked film is asked again once per business
+# day (`_reask_shot_plans`) and one that stood still longer than `film_wait_days` is retired
 # by the Director with a letter (`retire_stale_films`). A film waiting only for his yes, his
 # money or his budget is never retired. In TEST he is told once per film why the day does not
 # buy and what would (`_test_environment_letter`), and every staircase letter says what the
@@ -1943,7 +2584,6 @@ SHOT_PLAN_REASKED_EVENT = "runbook.shot_plan_reasked"
 FILM_RETIRED_LETTER_KIND = "owner_film_retired"
 TEST_ENVIRONMENT_LETTER_KIND = "owner_test_environment"
 #: On how many business days a film's shot plan is asked of the model again.
-SHOT_PLAN_REASK_DAYS = 2
 #: Refusals that are the account's, not the film's: the next film would meet them as well, so
 #: the walk stops there, and a film waiting on the Owner's money or budget is never retired.
 ACCOUNT_WIDE = frozenset(
@@ -1985,7 +2625,7 @@ def _skip(storyboard_id: str, status: str, refusal: Any, reason: str) -> dict[st
         "storyboard_id": storyboard_id,
         "status": status,
         "refusal": refusal,
-        "reason": _no_stop(reason)[:300],
+        "reason": _no_stop(reason),
     }
 
 
@@ -2108,7 +2748,7 @@ def _test_environment_letter(
         message = post_message(
             session,
             intent="ESCALATE",
-            subject=f"Filmul «{title}» așteaptă: studioul este în mediul {environment}"[:200],
+            subject=f"Filmul «{title}» așteaptă: studioul este în mediul {environment}",
             body={
                 "kind": TEST_ENVIRONMENT_LETTER_KIND,
                 "storyboard_id": storyboard_id,
@@ -2145,7 +2785,7 @@ def _note_film_state(
         "status": status,
         "refusal": refusal,
         "step": step,
-        "reason": _no_stop(reason)[:300],
+        "reason": _no_stop(reason),
         "moved": bool(moved),
     }
     try:
@@ -2352,7 +2992,7 @@ def _retire_film(
                 "film_wait_days": limit,
                 "last_status": last.get("status"),
                 "last_refusal": last.get("refusal"),
-                "reason": reason[:300],
+                "reason": reason,
             },
         )
         bought, items = closed["bought_takes"], closed["items"]
@@ -2372,7 +3012,7 @@ def _retire_film(
         post_message(
             session,
             intent="ESCALATE",
-            subject=f"Film retras: «{title}», pe loc de {count(days, 'zi', 'zile')}"[:200],
+            subject=f"Film retras: «{title}», pe loc de {count(days, 'zi', 'zile')}",
             body={
                 "kind": FILM_RETIRED_LETTER_KIND,
                 "storyboard_id": storyboard_id,
@@ -2407,7 +3047,9 @@ def _sheet_letter(
 
     Written once per film, sheet, stair and reason: the same day run again, or tomorrow's
     run finding the same question standing, writes nothing new. Deterministic: the sheet's
-    own facts, never a model's account of them.
+    own facts, never a model's account of them. Whether the stop is the Director's ladder's
+    is read (`_ladders_stop`), never judged again here: the letter's own look approved a
+    still and then wrote him about the scene it had just resolved.
     """
     from app.agents.messages import post_message  # noqa: PLC0415
     from app.decisions.sources import film_budget  # noqa: PLC0415
@@ -2433,11 +3075,15 @@ def _sheet_letter(
         # A prompt/shot-plan refusal is the studio's job, never an Owner questionnaire.
         report = submit_sheet_issues(engine, sheet)
         return report.get("message_id")
+    if status == "NEEDS_PROMPT_APPROVAL":
+        # Her audit of the words before a purchase (2026-10-15): the scene waits for her brief
+        # and the Editor's rewrite, never for the Owner; no letter.
+        return None
     if status == "OWNER_HOLD":
         # His own «Oprește GPU acum» stopped the step (2026-10-12): his card in «Decizii» says
         # it once for every film; a letter per film would repeat his own press back to him.
         return None
-    if status in LADDER_REFUSALS and _ladder_scenes(engine, storyboard_id, film):
+    if status in LADDER_REFUSALS and _ladders_stop(engine, storyboard_id, film):
         # Quality control's refusal of a scene is the Director's to answer — her ladder in
         # the walk, the `ladder_retry` pass after it — never a letter to the Owner
         # (2026-10-12, 08:10, «The Zero Script Club» scene 3 after two re-rolls: «Foaia de
@@ -2514,7 +3160,7 @@ def _sheet_letter(
         message = post_message(
             session,
             intent="ESCALATE",
-            subject=f"Foaia de filmare: «{title}» {headline}"[:200],
+            subject=f"Foaia de filmare: «{title}» {headline}",
             body=body,
             body_text="\n".join(line for line in lines if line),
             from_agent_id=director.id if director else None,
@@ -2611,6 +3257,7 @@ def _assemble_from_takes(
     *,
     sheet_hash: str | None = None,
     registry: ProviderRegistry | None = None,
+    free: bool = False,
 ) -> dict[str, Any]:
     """Assemble a film whose sheet has nothing left to buy: from its takes, buying no still
     and no shot. Only the narration is paid, so only the narration is asked and held.
@@ -2618,13 +3265,18 @@ def _assemble_from_takes(
 
     The question is the sheet's own (`shooting_sheet.narration_gate`'s action, subject and
     context): bound to ``sheet_hash`` and the assemble step, so the Owner's one yes for that
-    plan is spent once, whether the day or his own click on the sheet assembles the film."""
+    plan is spent once, whether the day or his own click on the sheet assembles the film.
+
+    ``free``: the caller read that nothing is voiced anew (`_narration_left_to_voice`, the film
+    rejoined under the cap): the mode is still asked, nothing is held, and a budget already
+    spent writes no letter for a rejoin that spends nothing."""
     from app.economy.accountant import (  # noqa: PLC0415
         budget_refusal_letter,
         record_render_costs,
     )
     from app.economy.services import format_micros  # noqa: PLC0415
     from app.media.assembler import (  # noqa: PLC0415 - media imports runbook
+        FilmOverTheWall,
         RenderEngineUnavailable,
         RenderStopped,
         TakesMissing,
@@ -2656,13 +3308,17 @@ def _assemble_from_takes(
             "reason": str(refusal.get("reason") or ""),
             "approval_id": refusal.get("approval_id"),
         }
-    hold = reserve_spend(
-        engine,
-        narration,
-        f"film {storyboard_id}",
-        correlation,
-        note=f"narațiunea filmului din preluări: {format_micros(narration)} USD"
-        + (f"; {caveat}" if caveat else ""),
+    hold: dict[str, Any] = (
+        {"allowed": True, "reservation_id": None}
+        if free and narration <= 0
+        else reserve_spend(
+            engine,
+            narration,
+            f"film {storyboard_id}",
+            correlation,
+            note=f"narațiunea filmului din preluări: {format_micros(narration)} USD"
+            + (f"; {caveat}" if caveat else ""),
+        )
     )
     if not hold["allowed"]:
         budget_refusal_letter(engine, hold["reason"], correlation)
@@ -2685,6 +3341,12 @@ def _assemble_from_takes(
             settings=settings,
             registry=registry,
         )
+    except FilmOverTheWall as exc:
+        # Longer than its wall even at every pause's floor («pauza vocii»): held before the
+        # sound is mastered; the voice the render bought for it is costed.
+        failed = _record_failed_attempt(engine, storyboard_id, correlation)
+        _release(engine, reservation_id, f"peste zid: {exc}"[:120], correlation)
+        return {"status": "HELD", "reason": str(exc), "costs_recorded": failed}
     except TakesMissing as exc:
         _release(engine, reservation_id, f"preluări lipsă: {exc}"[:120], correlation)
         return {"status": "HELD", "reason": str(exc)}
@@ -2776,6 +3438,7 @@ def _media_staircase(
     serial_assets: list[str] = []
     awaiting_owner: list[dict[str, Any]] = []
     waiting: list[str] = []
+    director_waiting: list[str] = []
     bought_lines: list[str] = []
     bought_steps: list[dict[str, Any]] = []
     refused: list[dict[str, Any]] = []
@@ -2789,7 +3452,7 @@ def _media_staircase(
             waiting_approvals_letter(engine, asked_correlation)
         return _outcome(
             BLOCKED,
-            f"{stop_reason_words(engine)} {said}"[:500],
+            f"{stop_reason_words(engine)} {said}",
             assets=produced,
             serial_assets=serial_assets,
             stopped_storyboard=storyboard_id,
@@ -2950,7 +3613,7 @@ def _media_staircase(
             }
         )
         # One full stop at the end of each film's reason: the day's sentence adds its own.
-        reason = _no_stop(" ".join(str(film.get("reason") or "").split())[:400])
+        reason = _no_stop(" ".join(str(film.get("reason") or "").split()))
         if factual_film:
             _note_film_state(
                 engine,
@@ -2986,7 +3649,14 @@ def _media_staircase(
             if film.get("approval_id") and not asked_correlation:
                 asked_correlation = correlation
         elif film["status"] == "WAITING":
-            waiting.append(f"«{title}»: {reason}")
+            if _ladders_stop(engine, storyboard_id, film) or (
+                film.get("refusal") == "NEEDS_PROMPT_APPROVAL"
+            ):
+                # Her rounds on the words (no cap, 18:15Z) are hers, never «așteaptă
+                # Proprietarul» (15:41Z, a4ecf40a: the register said so of her audit).
+                director_waiting.append(f"«{title}»: {reason}")
+            else:
+                waiting.append(f"«{title}»: {reason}")
         else:
             held.append(f"{storyboard_id[:8]}: {reason}")
         _sheet_letter(engine, storyboard_id, film, plan_cost, correlation)
@@ -3009,6 +3679,8 @@ def _media_staircase(
             + "; ".join(waiting)
             + ". Foaia de filmare și scrisoarea i-au fost trimise."
         )
+    if director_waiting:
+        parts.append("Directoarea preia remedierea: " + "; ".join(director_waiting) + ".")
     if refused:
         parts.append(f"{count(len(refused), *REFUSED_RENDERS)}: {_no_stop(refused[0]['said'])}.")
     if held:
@@ -3022,7 +3694,7 @@ def _media_staircase(
     status = COMPLETED if produced or bought_steps else SKIPPED
     return _outcome(
         status,
-        reason_text[:1500],
+        reason_text,
         assets=produced,
         serial_assets=serial_assets,
         awaiting_owner=awaiting_owner,
@@ -3057,7 +3729,7 @@ def _media(
             + "; ".join(f"«{item['title']}»" for item in retired)
             + "."
         )
-        outcome["reason"] = (str(outcome.get("reason") or "").rstrip() + " " + said).strip()[:1500]
+        outcome["reason"] = (str(outcome.get("reason") or "").rstrip() + " " + said).strip()
     return outcome
 
 
@@ -3081,7 +3753,12 @@ def _media_films(
     waited a day behind the factual one, or taken its place.
     """
     from app.economy.credits import credit_balances, record_credit_spend
-    from app.media.assembler import RenderEngineUnavailable, RenderStopped, assemble_video_job
+    from app.media.assembler import (
+        FilmOverTheWall,
+        RenderEngineUnavailable,
+        RenderStopped,
+        assemble_video_job,
+    )
     from app.media.factory import (
         PaidVendorRefused,
         abandon_unfinished_renders,
@@ -3279,7 +3956,7 @@ def _media_films(
                 waiting_approvals_letter(engine, asked_correlation)
             return _outcome(
                 BLOCKED,
-                f"{stop_reason_words(engine)} Filmul următor nu a fost început."[:500],
+                f"{stop_reason_words(engine)} Filmul următor nu a fost început.",
                 assets=produced,
                 serial_assets=serial_assets,
                 stopped_storyboard=storyboard_id,
@@ -3513,7 +4190,7 @@ def _media_films(
             _release(engine, reservation_id, f"randare oprită: {error_words(exc)}", correlation)
             return _outcome(
                 BLOCKED,
-                f"{stop_reason_words(engine)} {sentence(error_words(exc))}"[:500],
+                f"{stop_reason_words(engine)} {sentence(error_words(exc))}",
                 assets=produced,
                 serial_assets=serial_assets,
                 stopped_storyboard=storyboard_id,
@@ -3529,6 +4206,25 @@ def _media_films(
                 assets=produced,
                 **error_fields(exc),
             )
+        except FilmOverTheWall as exc:
+            # Not a fault: the film is longer than its channel's wall even with every pause at
+            # its floor («pauza vocii», 2026-10-16), refused before anything more was bought
+            # for it. What its render had already bought (its voice) is costed, the hold goes
+            # back, and its words must be shortened before it is made.
+            failed_cost = _record_failed_attempt(engine, storyboard_id, correlation)
+            _release(engine, reservation_id, f"peste zid: {error_words(exc)}"[:120], correlation)
+            refused.append(
+                {
+                    "storyboard_id": storyboard_id,
+                    "error": str(exc)[:200],
+                    "error_class": type(exc).__name__,
+                    "said": error_words(exc),
+                    "costs_recorded": failed_cost,
+                }
+            )
+            costs_recorded += failed_cost
+            logger.info("render_over_the_wall", extra={"storyboard_id": storyboard_id})
+            continue
         except ReferenceRequired as exc:
             # Not a vendor's refusal and not a fault: the studio refusing to invent the face
             # of a character whose look the Owner locked. The film is not made, so what was
@@ -3632,7 +4328,7 @@ def _media_films(
         # in the runbook's own vocabulary, with the Owner's reason and the request he answers.
         return _outcome(
             SKIPPED,
-            awaiting_owner[0]["reason"][:500],
+            awaiting_owner[0]["reason"],
             awaiting_owner=awaiting_owner,
             approval_id=awaiting_owner[0]["approval_id"],
             skipped=skipped,
@@ -3822,8 +4518,9 @@ def _edit_and_qc(
 # the sound remastered) and a scene's paid redo (a new picture, new motion) were applied by
 # code, every scene the report named: the paid ones only through `redo_scene`, whose purchase
 # passes `may_act` for media.scene_redo with the redo's own plan_hash (his paid-media rule, the
-# mode, the budgets, the film's ceiling, the lease), within `film_max_paid_redos_per_scene` and
-# `film_max_paid_redos`.
+# mode, the budgets, the film's ceiling, the lease), within the paid redos per scene
+# (`renders_cap.paid_redos_per_scene`: what the Owner's renders cap leaves, or his lower
+# `film_max_paid_redos_per_scene`) and `film_max_paid_redos`.
 #
 # 2026-10-10 (film babcf272, report d4ea68d2). That mechanical repair redid scenes 1 and 2
 # unasked: the report had read the studio's own burned-in subtitles as «text or a logo» on
@@ -4175,7 +4872,9 @@ def director_decides_failed_film(
             outcome["repairs"].append(repair)
         kind = step.get("outcome")
         if kind == "ACCEPTED":
-            outcome["passed_asset"] = asset
+            # Her ACCEPT under the cap may be on the film rejoined from the kept takes
+            # (`_ship_under_cap`): that film is the one published.
+            outcome["passed_asset"] = str(step.get("passed_asset") or asset)
             break
         if kind == "REPAIRED" and repair:
             if repair.get("requalified") == "PASSED" and repair.get("new_asset"):
@@ -4227,6 +4926,7 @@ def _yield_next_round(engine: Engine, asset_id: str, new_report: str) -> str | N
         return None
     try:
         with Session(engine) as session, session.begin():
+            lock_for_write(session)
             others = [
                 task
                 for task in session.scalars(
@@ -4259,6 +4959,997 @@ def _film_of(engine: Engine, asset_id: str) -> dict[str, Any]:
         return {"storyboard_id": job.storyboard_id if job is not None else None}
 
 
+# The Owner, 2026-10-15 12:20Z: «Randările odată făcute, de maxim 3x pentru fiecare imagine sau
+# mișcare»; 2026-10-16 ~12:00Z: «limităm acum la 2 randări … maxim încă o randare». A scene's
+# stills, and its shots, are made at most `Settings.renders_per_layer` times, read now through
+# `renders_cap.renders_per_layer` (the first purchase, the re-rolls, the retries and the paid
+# redos all counted, `_renders_made`): past it nothing of that layer is bought for the scene
+# again, and the best take there is stands.
+#: A failed report's repair is bought at most this many times (`_report_repair_rounds`:
+#: her BOUGHT_WAITING decisions on it). Past either limit her list is not bought and the film
+#: ships as it stands: «Nu putem să ne învârtim la nesfârșit la același subiect, cheltuim toți
+#: banii și fără să publicăm!» — her ACCEPT under the cap (`director_qc.accepted_by_cap`),
+#: no card to him (the card «ce se întâmplă cu filmul» of 2026-10-12 is answered for good).
+REPAIR_ROUNDS_PER_REPORT = 2
+
+
+def _renders_made(session: Session, storyboard_id: str) -> dict[tuple[int, str], int]:
+    """How many times each scene's picture («still») and its shot («motion») were made, by
+    (scene, layer): every paid request among the scene's takes, whatever became of it
+    (`assembler._paid_attempts`: a stills request's candidates share its task id)."""
+    from app.media.assembler import SHOT_TAKE_KINDS, _paid_attempts  # noqa: PLC0415
+    from app.media.models import SceneTake  # noqa: PLC0415
+
+    by_scene: dict[tuple[int, str], list[SceneTake]] = {}
+    for row in session.scalars(select(SceneTake).where(SceneTake.storyboard_id == storyboard_id)):
+        if row.kind == "still":
+            layer = "still"
+        elif row.kind in SHOT_TAKE_KINDS:
+            layer = "motion"
+        else:
+            continue
+        by_scene.setdefault((int(row.scene_number), layer), []).append(row)
+    return {key: _paid_attempts(rows, key[1]) for key, rows in by_scene.items()}
+
+
+def _over_renders(
+    renders: dict[tuple[int, str], int],
+    scene: int,
+    layers: list[str],
+    cap: int,
+    *,
+    motion_spent: bool = False,
+) -> dict[str, int]:
+    """The layers of ``layers`` the scene may not buy again under the Owner's renders cap
+    (layer -> renders made): a layer made ``cap`` times, and the picture when the scene's
+    motion has had its renders (a new still could not be animated). ``motion_spent``
+    (`renders_cap.motion_spent`): the motion has nothing left to buy though it had fewer
+    renders, its picture at the cap and the picture kept not to be animated again (2026-10-16,
+    87c05891 scene 1): the motion is over the cap exactly as at its own, said with the
+    picture's renders that put it there."""
+    over = {
+        layer: renders.get((scene, layer), 0)
+        for layer in layers
+        if renders.get((scene, layer), 0) >= cap
+    }
+    if "still" in layers and renders.get((scene, "motion"), 0) >= cap:
+        over.setdefault("motion", renders.get((scene, "motion"), 0))
+    if "motion" in layers and motion_spent and "motion" not in over:
+        over["motion"] = renders.get((scene, "motion"), 0)
+        over.setdefault("still", renders.get((scene, "still"), 0))
+    return over
+
+
+def _report_repair_rounds(session: Session, report_id: str) -> int:
+    """How many times her repair of this report bought something (her BOUGHT_WAITING
+    decisions on it)."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    return sum(
+        1
+        for event in session.scalars(
+            select(DomainEvent).where(
+                DomainEvent.event_type == director_qc.DECISION_EVENT,
+                DomainEvent.aggregate_id == report_id,
+            )
+        )
+        if str((event.payload or {}).get("outcome") or "") == "BOUGHT_WAITING"
+    )
+
+
+# ------------------------------------ her REPAIR that nothing can carry out under the caps
+#
+# 2026-10-16, «The Zero Script Club» (f06808c9, report 928af1a7): from 14 October her REPAIR of
+# scene 4 came back «nimic din refacerea hotărâtă nu se putea face» on every reading — the
+# Accountant refusing a fifth paid motion on the cap's own words, a prompt the lint blocked on
+# a scene that had had 18 stills and 3 shots — and the film waited, rendered and never
+# published, while its sheet repair kept asking for whole-film shot plans. The Owner that night:
+# «Vreau să publice… Aș vrea să publicăm ce avem să putem începe altele cu noul cod». A REPAIR
+# none of whose redos can be carried out because of his caps (the renders cap, the paid redos
+# per scene or per film, the repairs bought on one report, the Accountant's refusal on a scene
+# at one of them) or because the redo cannot be made by construction never waits: the capped
+# scenes are settled under the cap and the film is published with what it has
+# (`_ship_under_cap`). Money alone is not this (the day's budget, the film's ceiling, the
+# provider's balance and his yes keep their cards), and a prompt blocker on a scene below the
+# cap keeps the ladder, under a loop guard (`_impossible_repair_note`).
+#
+# The review of 2026-10-17 narrowed it: the Accountant's refusal is the cap's only on a layer
+# past its renders (below it the caps let the purchase through — the continuation of a still
+# round — and her refusal, or no verdict at all, is hers or a model's); a redo «impossible» is
+# only his final take, and only once she has read the report again knowing it; a REPAIR
+# with a verdict that is not hers (rights, claims, placeholder pictures, the production path,
+# the file) is never accepted under the cap (`ships_under_cap`, `ACCEPT_REFUSED`).
+
+#: The redo path's refusals that are the Owner's caps themselves (`assembler.RENDERS_CAP`, the
+#: per-film limit `_apply_repairs` raises before a purchase).
+CAP_REFUSALS = frozenset({"RENDERS_CAP", "REDO_LIMIT"})
+#: What no walk can carry out for this film whatever is spent: a take the Owner approved as
+#: final (his alone to retire), and her motion that needed a new still of such a scene. Her own
+#: mislabels (a card redo of a filmed scene, a motion for his LOCAL_MOVE scene where a still
+#: and a rejoin remain, a kind the redo path does not know), a plan with nothing to buy (a
+#: request still at the vendor, his hold, no capable model connected) and a film not cut from
+#: takes are not: she reads the report again knowing why, and the loop guard ends a repeat.
+IMPOSSIBLE_REDOS = frozenset({"OWNER_APPROVED", "STILL_SKIPPED"})
+#: Money: the day's budget, the film's ceiling, the provider's balance, his yes. Never shipped
+#: for it: today's path (cards, the budget) decides.
+MONEY_REFUSALS = frozenset(
+    {
+        "OVER_DAILY_BUDGET",
+        "OVER_BUDGET",
+        "BLOCKED_NO_BUDGET",
+        "OVER_FILM_BUDGET",
+        "LOW_BALANCE",
+        "NEEDS_APPROVAL",
+    }
+)
+#: The true words of a film published under the renders cap (the Owner's, 2026-10-16 night).
+SHIPPED_UNDER_RENDERS_CAP_RO = "limita de randări a fost atinsă; filmul se publică cu ce are"
+#: The same under his paid-redo limits (per scene, per film, per report), when no scene of
+#: her list had had its renders.
+SHIPPED_UNDER_REDO_CAP_RO = "limita de refaceri plătite a fost atinsă; filmul se publică cu ce are"
+#: When nothing of her list can be done by construction and no cap was reached.
+SHIPPED_IMPOSSIBLE_RO = "refacerea hotărâtă nu se poate face; filmul se publică cu ce are"
+#: The record of a film published with what it has (`_ship_under_cap`).
+SHIPPED_UNDER_CAP_EVENT = "media.director_qc_shipped_under_cap"
+
+
+def _entry_scene(item: Mapping[str, Any]) -> int | None:
+    scene = item.get("scene_index")
+    return scene if isinstance(scene, int) and not isinstance(scene, bool) else None
+
+
+def repair_stopped_by_caps(
+    engine: Engine,
+    settings: Settings | None,
+    storyboard_id: str,
+    repair: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Whether her REPAIR (``repair``: `_director_repairs`' result, or the ``done`` of a
+    decision recorded from one) could carry out nothing of her list only because of the
+    Owner's caps or because it cannot be made by construction: {"capped": [scene],
+    "by_renders": [scene], "impossible": [scene]}; None when anything was applied, bought,
+    asked, made or noted, when a purchase waits, or when any stop is money's or another kind
+    (a prompt blocker on a scene below the cap, a failed rejoin, a free fix spent, the
+    Accountant's refusal or her silence on a layer with renders left). The cap's own ship
+    (``repair['ship']``, `_apply_repairs`) is always this, as it was: its other stops are
+    neither weighed nor called impossible. Read only.
+
+    Whether the film is then published also asks `ships_under_cap` (her verdicts, and her
+    reading again of an impossible redo)."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    if not storyboard_id or any(
+        repair.get(key)
+        for key in (
+            "applied",
+            "bought",
+            "asked",
+            "made",
+            "new_asset",
+            "card_id",
+            "developer_note",
+        )
+    ):
+        return None
+    shipped = bool(repair.get("ship"))
+    stops: list[tuple[str, Mapping[str, Any]]] = []
+    for kind in ("limited", "refused", "skipped"):
+        stops += [(kind, item) for item in repair.get(kind) or [] if isinstance(item, Mapping)]
+    for item in repair.get("waiting") or []:
+        if not isinstance(item, Mapping):
+            continue
+        if item.get("kind") != director_qc.REJOIN:
+            return None  # something bought for her list waits to be approved or delivered
+        stops.append(("waiting", item))
+    if not stops:
+        return None
+    cap = renders_per_layer(settings)
+    with Session(engine) as session:
+        made = _renders_made(session, storyboard_id)
+    capped: set[int] = set()
+    by_renders: set[int] = set()
+    impossible: set[int] = set()
+    for kind, item in stops:
+        status = str(item.get("status") or "")
+        scene = _entry_scene(item)
+        if status in MONEY_REFUSALS:
+            if shipped:
+                continue
+            return None
+        # The layer her redo would make has had its renders (a new picture also when its
+        # motion has: it could not be animated); a stop that names no layer, either layer.
+        layer = str(item.get("redo") or "")
+        layers = [layer] if layer in ("still", "motion") else ["still", "motion"]
+        with Session(engine) as session:
+            spent = scene is not None and motion_spent(session, storyboard_id, scene, settings)
+        renders_full = scene is not None and bool(
+            _over_renders(made, scene, layers, cap, motion_spent=spent)
+        )
+        if kind == "limited" or status in CAP_REFUSALS:
+            if scene is None:
+                return None
+            capped.add(scene)
+            if renders_full or item.get("renders"):
+                by_renders.add(scene)
+            continue
+        if scene is None:
+            if shipped:
+                continue
+            return None  # a film-level stop (a free fix spent, a rejoin refused): not this
+        if renders_full:
+            # At the renders cap nothing of the scene is bought on any route, whatever refused
+            # it first (the Accountant, the lint, an uncorrected prompt): the cap is the stop.
+            capped.add(scene)
+            by_renders.add(scene)
+            continue
+        if shipped:
+            continue
+        # Below the renders cap the Accountant's refusal is not the cap's: `_apply_repairs`
+        # stops a scene at its paid-redo limits before she is asked, so only the continuation
+        # of a still round (which the caps let through) or a scene below every limit reaches
+        # her, and REPURCHASE_UNDECIDED is no verdict at all (a model's silence, held for the
+        # next try). The review of 2026-10-17: a paid still approved, its motion with a render
+        # left, Nadia's model silent — the film was accepted with the old scene and the still
+        # never reached a film.
+        if status in IMPOSSIBLE_REDOS:
+            impossible.add(scene)
+            continue
+        return None
+    if not capped and not impossible:
+        return None
+    return {
+        "capped": sorted(capped),
+        "by_renders": sorted(by_renders),
+        "impossible": sorted(impossible - capped),
+    }
+
+
+def not_hers(decided: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Her verdicts on findings that are not hers to pass (`director_qc.is_not_yours`: rights,
+    claims, placeholder pictures, the production path, the file, unlicensed music): her ACCEPT
+    does not reach them (`_carry_out`: ACCEPT_REFUSED), and neither does the cap's."""
+    return [
+        item
+        for item in decided.get("verdicts") or []
+        if isinstance(item, Mapping) and item.get("not_yours")
+    ]
+
+
+def _told_why(
+    engine: Engine, report_id: str, impossible: Sequence[int], *, skip_newest: bool
+) -> bool:
+    """Whether she already met these impossible redos on this report: her decision before
+    (the newest one, or the one before it with ``skip_newest``, when the newest is the one
+    being weighed) was a REPAIR that did nothing and was stopped on each of these scenes by a
+    redo that cannot be made (`IMPOSSIBLE_REDOS`). Her reading again in the same walk, or her
+    next one, read that stop in her inbox note («nimic din refacerea hotărâtă…»)."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    if not report_id or not impossible:
+        return False
+    with Session(engine) as session:
+        events = list(
+            session.scalars(
+                select(DomainEvent)
+                .where(
+                    DomainEvent.event_type == director_qc.DECISION_EVENT,
+                    DomainEvent.aggregate_id == report_id,
+                )
+                .order_by(DomainEvent.sequence.desc())
+                .limit(2)
+            )
+        )
+    if skip_newest:
+        events = events[1:]
+    if not events:
+        return False
+    payload = events[0].payload if isinstance(events[0].payload, dict) else {}
+    if payload.get("outcome") != "NOTHING_DONE" or payload.get("decision") != "REPAIR":
+        return False
+    said = payload.get("done")
+    done: Mapping[str, Any] = said if isinstance(said, dict) else {}
+    told = {
+        scene
+        for kind in ("skipped", "refused")
+        for item in done.get(kind) or []
+        if isinstance(item, Mapping)
+        and str(item.get("status") or "") in IMPOSSIBLE_REDOS
+        and (scene := _entry_scene(item)) is not None
+    }
+    return set(impossible) <= told
+
+
+def ships_under_cap(
+    engine: Engine,
+    settings: Settings | None,
+    decided: Mapping[str, Any],
+    repair: Mapping[str, Any],
+    *,
+    skip_newest: bool = False,
+) -> dict[str, Any] | None:
+    """Whether her REPAIR ``decided``, which carried out ``repair``, publishes the film with
+    what it has (`_ship_under_cap`): `repair_stopped_by_caps` says so, and a redo that cannot be
+    made at all (``impossible``) was met by her once already (`_told_why`: her first reading
+    records it and reads the report again knowing why; only the same impossibility on that
+    reading ships). Her verdicts that are not hers are weighed by the caller (`not_hers`):
+    such a film is never published by the cap. ``skip_newest``: ``decided`` is the newest
+    decision recorded on the report (her stored REPAIR), not one being carried out now.
+    The stopped scenes, or None. Read only."""
+    if str(decided.get("decision") or "") != "REPAIR":
+        return None
+    storyboard_id = str(decided.get("storyboard_id") or "")
+    stopped = repair_stopped_by_caps(engine, settings, storyboard_id, repair)
+    if stopped is None:
+        return None
+    if stopped["impossible"] and not _told_why(
+        engine,
+        str(decided.get("report_id") or ""),
+        stopped["impossible"],
+        skip_newest=skip_newest,
+    ):
+        return None
+    return stopped
+
+
+def stored_repair_ships_under_cap(
+    engine: Engine, settings: Settings | None, decision: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """Her newest decision on a report, as recorded (`director_qc.decision_state`'s
+    ``decision``): a REPAIR that carried out nothing (NOTHING_DONE), with no verdict that is not
+    hers, whose stops publish the film with what it has now (`ships_under_cap`, read under the
+    caps and the takes as they are now). Then nothing is asked of her again: the walk publishes
+    it from this decision (`_ship_stored_repair`), the review pass walks it until it is
+    (`passes.director_qc_review`), and its sheet is not repaired (`blocker_repair`). The
+    stopped scenes, or None. Read only."""
+    if not isinstance(decision, Mapping):
+        return None
+    said = decision.get("done")
+    if (
+        decision.get("outcome") != "NOTHING_DONE"
+        or str(decision.get("decision") or "") != "REPAIR"
+        or not isinstance(said, Mapping)
+        or not_hers(decision)
+    ):
+        return None
+    return ships_under_cap(engine, settings, decision, said, skip_newest=True)
+
+
+def _stand_reading(engine: Engine, storyboard_id: str) -> dict[str, Any]:
+    """What `_scenes_stand` reads once per film: the scenes shown as a still moved locally
+    (his LOCAL_MOVE, hers under the cap) and the studio's environment."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+    from app.media.production_policy import LOCAL_MOVE  # noqa: PLC0415
+    from app.media.renders_cap import cap_local_moves  # noqa: PLC0415
+
+    with Session(engine) as session:
+        moved = {
+            scene
+            for scene, choice in director_qc.owner_scene_choices(session, storyboard_id).items()
+            if choice == LOCAL_MOVE
+        } | cap_local_moves(session, storyboard_id)
+    return {"moved": moved, "environment": studio_environment(engine)}
+
+
+def _scenes_stand(
+    engine: Engine,
+    storyboard_id: str,
+    production: Mapping[str, Any],
+    *,
+    only: set[int] | None = None,
+    skip: set[int] | None = None,
+) -> bool:
+    """Whether the film (its render record, ``production``) stands on the takes its filmed
+    scenes have now — the still approved for the scene's words as they are, and the clip the
+    assembly would cut (or, where it shows none, the still moved locally) — for the scenes in
+    ``only`` (all when None) except ``skip``. A rejoin from the takes then reproduces those
+    scenes as the film has them. Read only; False when unreadable."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+    from app.media.assembler import (  # noqa: PLC0415 - media imports runbook
+        LIVE_KIND,
+        _cuts_a_clip,
+        scene_approved_still,
+        scene_kind_of,
+        scene_readiness,
+    )
+
+    in_film = director_qc.film_takes(production)
+    kinds = {
+        int(entry["scene_index"]): scene_kind_of(dict(entry))
+        for entry in production.get("scenes") or []
+        if isinstance(entry, Mapping) and isinstance(entry.get("scene_index"), int)
+    }
+    try:
+        context = _stand_reading(engine, storyboard_id)
+        for scene in sorted(in_film):
+            if (only is not None and scene not in only) or scene in (skip or set()):
+                continue
+            if kinds.get(scene, LIVE_KIND) != LIVE_KIND:
+                continue
+            takes = in_film.get(scene) or {}
+            still = scene_approved_still(engine, storyboard_id, scene)
+            if still is None or str(still.id) != str(takes.get("still") or ""):
+                return False
+            reading = scene_readiness(
+                engine, storyboard_id, scene, environment=context["environment"]
+            )
+            if reading is not None and _cuts_a_clip(reading):
+                if str(reading.get("take_id") or "") != str(takes.get("motion") or ""):
+                    return False
+                continue
+            if takes.get("motion") or scene not in context["moved"]:
+                return False
+    except Exception as exc:  # noqa: BLE001 - unread, the film is published as it stands
+        logger.warning(
+            "film_takes_unread",
+            extra={"storyboard_id": storyboard_id, "error": type(exc).__name__},
+        )
+        return False
+    return True
+
+
+def _settle_capped(
+    engine: Engine,
+    settings: Settings,
+    registry: ProviderRegistry | None,
+    storyboard_id: str,
+    scenes: Sequence[int],
+    correlation: str,
+) -> list[int]:
+    """Each capped scene settled under the cap by the walk's own mechanism
+    (`stills_stage.settle_scene_under_cap`: the closest still kept, the Director's choice among
+    two or more takes, `cap_choice`; her 0-credit local move when no clip can carry it). The
+    scenes something changed for. Nothing is bought."""
+    from app.media.stills_stage import settle_scene_under_cap  # noqa: PLC0415
+
+    settled: list[int] = []
+    for scene in scenes:
+        try:
+            if settle_scene_under_cap(
+                engine,
+                storyboard_id,
+                int(scene),
+                correlation,
+                registry=registry,
+                ffmpeg_path=getattr(settings, "ffmpeg_path", None),
+            ):
+                settled.append(int(scene))
+        except Exception as exc:  # noqa: BLE001 - the scene stays as the film has it
+            logger.warning(
+                "capped_repair_scene_not_settled",
+                extra={"storyboard_id": storyboard_id, "scene": scene, "error": type(exc).__name__},
+            )
+    return settled
+
+
+def _rebuild_under_cap(
+    engine: Engine,
+    settings: Settings,
+    vault: Any,
+    registry: ProviderRegistry | None,
+    storyboard_id: str,
+    scenes: Sequence[int],
+    correlation: str,
+) -> dict[str, Any]:
+    """The film rejoined from the takes kept under the cap (`_reencode_from_takes`, free only:
+    a rejoin that would voice new narration is refused, nothing is bought), then measured once
+    (`evaluate_media_qc`). {"new_asset", "requalified", "requalified_report_id", "words"}, or
+    {"new_asset": None, "refused": [...]} when it could not be rejoined."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+    from app.media.assembler import release_after_qc  # noqa: PLC0415
+
+    words = (
+        f"{_scenes_ro(list(scenes)).capitalize()}: filmul reasamblat din preluările păstrate "
+        "sub plafon, fără credite"
+    )
+    made: dict[str, Any] = {"applied": [], "made": [], "new_asset": None, "refused": []}
+    try:
+        _reencode_from_takes(
+            engine,
+            settings,
+            vault,
+            storyboard_id,
+            made,
+            correlation,
+            redo=director_qc.REJOIN,
+            words=words,
+            registry=registry,
+            free_only=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - the film is published as it stands
+        made["refused"].append({"what": "reasamblarea filmului", "reason": error_words(exc)[:300]})
+    new_asset = made.get("new_asset")
+    if not new_asset:
+        return {"new_asset": None, "refused": list(made.get("refused") or []), "words": words}
+    report = evaluate_media_qc(
+        engine,
+        str(new_asset),
+        str(uuid4()),
+        settings=settings,
+        registry=registry,
+        ffmpeg_path=settings.ffmpeg_path,
+    )
+    release_after_qc(engine, str(new_asset), str(uuid4()))
+    return {
+        "new_asset": str(new_asset),
+        "requalified": report.get("status"),
+        "requalified_report_id": report.get("id"),
+        "words": words,
+    }
+
+
+def _shipped_words(stopped: Mapping[str, Any], how_ro: str) -> str:
+    """Her ACCEPT's true words: which limit was reached (the renders cap, his paid-redo limits)
+    or that nothing of her list can be made, the scenes, and how the film goes out."""
+    capped = [int(scene) for scene in stopped.get("capped") or []]
+    impossible = [int(scene) for scene in stopped.get("impossible") or []]
+    if stopped.get("by_renders"):
+        head = SHIPPED_UNDER_RENDERS_CAP_RO
+    elif capped:
+        head = SHIPPED_UNDER_REDO_CAP_RO
+    else:
+        head = SHIPPED_IMPOSSIBLE_RO
+    parts = [f"{head[0].upper()}{head[1:]}."]
+    if capped:
+        parts.append(
+            f"{_scenes_ro(capped).capitalize()}: plafonul Proprietarului ({renders_ro()} pe "
+            "imagine sau mișcare pe scenă, STUDIO_RENDERS_PER_LAYER, și refacerile plătite "
+            "permise) nu mai lasă nimic de cumpărat; nu se cumpără nimic nou."
+        )
+    if impossible:
+        parts.append(
+            f"{_scenes_ro(impossible).capitalize()}: refacerea cerută nu se poate face deloc "
+            "(o preluare aprobată de Proprietar ca finală, alegerea lui pe foaie, sau nimic de "
+            "cumpărat)."
+        )
+    parts.append(how_ro)
+    return " ".join(part for part in parts if part)
+
+
+def _ship_under_cap(
+    engine: Engine,
+    settings: Settings | None,
+    vault: Any,
+    registry: ProviderRegistry | None,
+    reading: dict[str, Any],
+    decided: dict[str, Any],
+    repair: dict[str, Any],
+    stopped: Mapping[str, Any],
+    correlation: str,
+    *,
+    made: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Her REPAIR that nothing can carry out under the caps (`repair_stopped_by_caps`), made the
+    film's publication with what it has; nothing is bought, no letter reaches the Owner (hers
+    is redirected to her own inbox, `messages.directors_matter`). Returns the walk's step.
+
+    ``made``: the film her free fix made in this walk while the cap stopped the rest of her
+    list ({new_asset, requalified, requalified_report_id, words}): it is the best film there is,
+    and it is the one published (passed, as REPAIRED; failed again, her ACCEPT under the cap on
+    its report); nothing is settled or rejoined then.
+
+    - When the film's other scenes still stand on the takes it was cut from (`_scenes_stand`),
+      every capped scene is settled under the cap (`_settle_capped`). If the film then stands
+      on the capped scenes' takes too, it is ACCEPTED as it stands; otherwise it is rejoined
+      free from the kept takes and measured once (`_rebuild_under_cap`): passed, it goes on as
+      REPAIRED; failed again, her ACCEPT under the cap is written on the new report.
+    - When the other scenes no longer stand on the film's takes (their words rewritten since,
+      newer takes approved), no rejoin could make the same film: it is ACCEPTED as quality
+      control measured it, and nothing is settled for it. So is a film whose rejoin was refused.
+
+    Her ACCEPT is `director_qc.accept_film`'s (as `redo_cap.apply_film_publish_as_is` does),
+    decided by the Director, its summary the true `_shipped_words`; an event records how
+    (`SHIPPED_UNDER_CAP_EVENT`), and the film's sheet repairs are withdrawn
+    (`blocker_repair.withdraw_sheet_repairs`): nothing more is filmed for it.
+
+    Reached only through `ships_under_cap` with no verdict that is not hers (`not_hers`: the
+    callers, `_carry_out` and `_ship_stored_repair`, refuse those as her own ACCEPT is)."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    storyboard_id = str(reading.get("storyboard_id") or "")
+    asset_id = str(reading["media_asset_id"])
+    report_id = str(reading["report_id"])
+    production = reading.get("production") or {}
+    capped = [int(scene) for scene in stopped.get("capped") or []]
+    settled: list[int] = []
+    rebuilt: dict[str, Any] | None = dict(made) if made else None
+    others_stand = made is None and bool(capped) and settings is not None and storyboard_id != ""
+    if others_stand:
+        others_stand = _scenes_stand(engine, storyboard_id, production, skip=set(capped))
+    if others_stand and settings is not None:
+        settled = _settle_capped(engine, settings, registry, storyboard_id, capped, correlation)
+        if not _scenes_stand(engine, storyboard_id, production, only=set(capped)):
+            rebuilt = _rebuild_under_cap(
+                engine, settings, vault, registry, storyboard_id, capped, correlation
+            )
+    repair["settled_under_cap"] = settled
+    step: dict[str, Any]
+    new_asset = (rebuilt or {}).get("new_asset")
+    if new_asset:
+        if made is None:
+            repair.update(
+                new_asset=new_asset,
+                made=[new_asset],
+                requalified=rebuilt.get("requalified") if rebuilt else None,
+                requalified_report_id=rebuilt.get("requalified_report_id") if rebuilt else None,
+                rebuilt_under_cap=True,
+            )
+        passed = (rebuilt or {}).get("requalified") == "PASSED"
+        how = (
+            f"{rebuilt.get('words') if rebuilt else ''}; filmul nou a trecut controlul calității "
+            "și merge la publicare."
+            if passed
+            else f"{rebuilt.get('words') if rebuilt else ''}; filmul nou a picat din nou "
+            "controlul și se publică așa, sub plafon."
+        )
+        words = _shipped_words(stopped, how)
+        decided_now = {
+            **decided,
+            "summary": f"{' '.join(str(decided.get('summary') or '').split())} {words}".strip(),
+            "shipped_under_cap": {
+                **dict(stopped),
+                "settled": settled,
+                "how": "FREE_FIX" if made else "REJOINED",
+            },
+        }
+        # Her decision on the failed report: carried out, with the film it made.
+        old_event = director_qc.record_decision(
+            engine,
+            {
+                **decided_now,
+                "outcome": "REPAIRED",
+                "final": True,
+                "done": {
+                    "applied": list(repair.get("applied") or [])
+                    if made
+                    else [{"redo": director_qc.REJOIN, "scene_index": None, "reason": words}],
+                    "limited": repair.get("limited") or [],
+                    "refused": repair.get("refused") or [],
+                    "skipped": repair.get("skipped") or [],
+                    "new_asset": new_asset,
+                    "requalified": repair.get("requalified"),
+                    "requalified_report_id": repair.get("requalified_report_id"),
+                    "settled_under_cap": settled,
+                },
+            },
+            correlation,
+        )
+        if passed or not repair.get("requalified_report_id"):
+            # Passed: the walk publishes the new film. Unmeasured (no report written): the
+            # next walk measures it like any new film.
+            step = {"decision": decided_now, "outcome": "REPAIRED", "event_id": old_event}
+        else:
+            new_report = str(repair["requalified_report_id"])
+            new_reading = failed_render_reading(engine, new_report)
+            payload = {
+                "report_id": new_report,
+                "media_asset_id": new_asset,
+                "storyboard_id": storyboard_id,
+                "decided_by": director_qc.DIRECTOR,
+                "agent_id": decided.get("agent_id"),
+                "agent_name": decided.get("agent_name"),
+                "run_id": decided.get("run_id"),
+                "decision": "ACCEPT",
+                "verdicts": [],
+                "repairs": [],
+                "of_report": report_id,
+                "film_kind": decided.get("film_kind"),
+                "summary": words,
+                "accepted_under_cap": {"limited": capped, "reason_ro": words},
+                "shipped_under_cap": decided_now["shipped_under_cap"],
+            }
+            hard = [
+                item
+                for item in director_qc.report_findings(new_reading.get("report") or {})
+                if item.get("not_yours")
+            ]
+            if hard:
+                # The rebuilt file has its own rights/provenance/file checks. The original
+                # film's cap cannot waive a new hard failure or manufacture a PASSED report.
+                payload["summary"] = (
+                    "Filmul refăcut nu se publică: noul control conține constatări care nu "
+                    "pot fi trecute sub plafon. "
+                    + "; ".join(str(item.get("text") or "") for item in hard)[:600]
+                )
+                payload["verdicts"] = [
+                    {**item, "finding": item.get("id"), "verdict": "REAL"} for item in hard
+                ]
+                payload.pop("accepted_under_cap", None)
+                payload.pop("shipped_under_cap", None)
+                event_id = director_qc.record_decision(
+                    engine, {**payload, "outcome": "ACCEPT_REFUSED", "final": True}, correlation
+                )
+                return {
+                    "decision": payload,
+                    "outcome": "ACCEPT_REFUSED",
+                    "event_id": event_id,
+                    "repair": repair,
+                }
+            accepted = director_qc.accept_film(engine, new_reading, payload, correlation)
+            step = {
+                "decision": payload,
+                "outcome": "ACCEPTED",
+                "passed_asset": new_asset,
+                **accepted,
+            }
+    else:
+        if rebuilt is not None:
+            why = "; ".join(_no_stop(item.get("reason")) for item in rebuilt.get("refused") or [])
+            how = (
+                "Reasamblarea din preluările păstrate nu s-a putut face"
+                + (f" ({why})" if why else "")
+                + "; filmul se publică așa cum l-a măsurat controlul."
+            )
+        elif capped and not others_stand:
+            how = (
+                "Celelalte scene nu mai au exact preluările din care a fost tăiat filmul "
+                "(cuvinte rescrise de atunci, preluări mai noi sau fișiere schimbate), deci o "
+                "reasamblare n-ar face același film: se publică filmul așa cum l-a măsurat "
+                "controlul."
+            )
+        elif capped:
+            how = "Filmul stă deja pe preluările păstrate și se publică așa cum este."
+        else:
+            how = "Filmul se publică așa cum l-a măsurat controlul."
+        words = _shipped_words(stopped, how)
+        ship = {
+            "limited": [{"scene_index": scene} for scene in capped],
+            "reason_ro": words,
+        }
+        shipped = {
+            **director_qc.accepted_by_cap(decided, ship),
+            "shipped_under_cap": {
+                **dict(stopped),
+                "settled": settled,
+                "how": "AS_IT_STANDS",
+            },
+        }
+        accepted = director_qc.accept_film(engine, reading, shipped, correlation)
+        step = {"decision": shipped, "outcome": "ACCEPTED", **accepted}
+    step["repair"] = repair
+    try:
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            append_event(
+                session,
+                SHIPPED_UNDER_CAP_EVENT,
+                "storyboard",
+                storyboard_id or asset_id,
+                1,
+                {
+                    "report_id": report_id,
+                    "media_asset_id": asset_id,
+                    "storyboard_id": storyboard_id or None,
+                    "capped": capped,
+                    "by_renders": list(stopped.get("by_renders") or []),
+                    "impossible": list(stopped.get("impossible") or []),
+                    "settled": settled,
+                    "others_stand": others_stand,
+                    "rebuilt": bool(new_asset),
+                    "new_asset": new_asset,
+                    "requalified": repair.get("requalified") if new_asset else None,
+                    "outcome": step["outcome"],
+                    "passed_asset": step.get("passed_asset")
+                    or (asset_id if step["outcome"] == "ACCEPTED" else None),
+                    "summary": _short_words(
+                        str((step.get("decision") or {}).get("summary") or ""), 600
+                    ),
+                    # Published from her recorded REPAIR, without asking her again.
+                    "from_stored_decision": bool(stopped.get("from_stored_decision")),
+                    "bought": [],
+                },
+                correlation,
+            )
+    except SQLAlchemyError:
+        logger.warning("shipped_under_cap_not_recorded", extra={"report_id": report_id})
+    if storyboard_id:
+        try:
+            from app.media.blocker_repair import withdraw_sheet_repairs  # noqa: PLC0415
+
+            withdraw_sheet_repairs(
+                engine,
+                storyboard_id,
+                "Filmul se publică cu ce are (limita de randări sau de refaceri a fost atinsă): "
+                "foaia lui nu se mai remediază și nu se cumpără nimic pentru el.",
+            )
+        except Exception as exc:  # noqa: BLE001 - the acceptance stands without it
+            logger.warning(
+                "sheet_repairs_not_withdrawn",
+                extra={"storyboard_id": storyboard_id, "error": type(exc).__name__},
+            )
+    return step
+
+
+def _short_words(text: str, limit: int) -> str:
+    said = " ".join(text.split())
+    return said if len(said) <= limit else said[: limit - 1].rstrip() + "…"
+
+
+#: Walks in a row on one report whose REPAIR carried out nothing for the same lasting stops,
+#: before it is the studio's own defect (as `prompt_audit.SAME_FINDING_ROUNDS`). Walks, not
+#: decisions: one walk writes two of them (her reading, and her reading again knowing why), so
+#: three decisions were one walk and a half — 22:22Z and 23:35Z on 13 October would have
+#: abandoned 928af1a7, whose ladder bought scene 4 a new still the next afternoon.
+SAME_IMPOSSIBLE_WALKS = 3
+#: Decisions on one report this close together are one walk's: her reading again follows her
+#: reading within minutes, and the review pass walks a report at most once an hour.
+WALK_GAP_MINUTES = 30
+#: How long the developer's note keeps the review pass from asking her about the report
+#: (`passes.director_qc_review._developer_waits`). Then she is asked again; the same stop
+#: writes a new note at once. Never for good, never every hour.
+IMPOSSIBLE_NOTE_HOURS = 24
+#: The stops below the caps that come back the same until someone changes the film, its sheet
+#: or the tool: the prompt lint's blockers, the Accountant's refusal (her and the Director's
+#: closing of the scene), a take he approved as final, and her own mislabels of a scene. Every
+#: other stop is of the moment — a rewrite the model did not finish or did not treat (its own
+#: loop guard is the prompt audit's), the film's lease held, a vendor that delivered nothing,
+#: a request still at the vendor, no verdict — and never makes the defect: a Kael or GPU
+#: outage spanning a few walks strands no film.
+LASTING_STOPS = frozenset(
+    {
+        "LINT_BLOCKED",
+        "REPURCHASE_REFUSED",
+        "OWNER_APPROVED",
+        "STILL_SKIPPED",
+        "OWNER_CHOICE",
+        "NOT_A_CARD",
+        "UNKNOWN",
+        "NOT_TAKES",
+        "FREE_FIX_USED",
+    }
+)
+#: The developer's note when her REPAIR keeps meeting the same stop below the caps.
+IMPOSSIBLE_DEFECT = "repair_impossible"
+IMPOSSIBLE_NOTE_SUBJECT = "Pentru dezvoltator: refacerea hotărâtă nu se poate face"
+
+
+def _impossibility_key(repair: Mapping[str, Any]) -> tuple[tuple[str, str, str], ...] | None:
+    """What stopped her list, as (scene, layer, status); None when any stop is money's (the
+    budget's path decides), of the moment (not in `LASTING_STOPS`, or one with no status of its
+    own), or nothing is said."""
+    found: set[tuple[str, str, str]] = set()
+    for kind in ("refused", "skipped", "limited"):
+        for item in repair.get(kind) or []:
+            if not isinstance(item, Mapping):
+                continue
+            status = str(item.get("status") or "")
+            if status not in LASTING_STOPS:
+                return None
+            scene = _entry_scene(item)
+            found.add(
+                (str(scene) if scene is not None else "film", str(item.get("redo") or ""), status)
+            )
+    return tuple(sorted(found)) or None
+
+
+def _moment(value: Any) -> datetime | None:
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def impossible_note_holds(created_at: Any, now: datetime | None = None) -> bool:
+    """Whether a developer's note of the loop guard, written at ``created_at``, still keeps the
+    review pass from asking her about its report (`IMPOSSIBLE_NOTE_HOURS`)."""
+    written = _moment(created_at)
+    if written is None:
+        return False
+    moment = now or _moment(utc_now()) or datetime.now(UTC)
+    return (moment - written).total_seconds() < IMPOSSIBLE_NOTE_HOURS * 3600
+
+
+def _impossible_repair_note(
+    engine: Engine, reading: Mapping[str, Any], repair: Mapping[str, Any]
+) -> str | None:
+    """The loop guard of a REPAIR that keeps carrying out nothing below the caps: the same
+    lasting stops (`_impossibility_key`) on `SAME_IMPOSSIBLE_WALKS` walks in a row on this
+    report (this one included; decisions within `WALK_GAP_MINUTES` of each other are one walk)
+    are a tool's defect — a note for the developer in the Director's own thread, resolved at
+    once, never a letter to the Owner — and the review pass does not ask her about the report
+    for `IMPOSSIBLE_NOTE_HOURS` (`passes.director_qc_review._developer_waits`). A note still in
+    force is returned as it is; after it, the same stop writes a new one. Returns the note's
+    id, or None while the guard does not hold. Never raises."""
+    from app.agents.director import DEVELOPER_DEFECT_KIND  # noqa: PLC0415 - agents import runbook
+    from app.agents.messages import post_message, resolve_message  # noqa: PLC0415
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    key = _impossibility_key(repair)
+    storyboard_id = str(reading.get("storyboard_id") or "")
+    report_id = str(reading.get("report_id") or "")
+    if key is None or not storyboard_id or not report_id:
+        return None
+    now = _moment(utc_now()) or datetime.now(UTC)
+    try:
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            for row in session.scalars(
+                select(AgentMessage).where(AgentMessage.subject.like(f"{IMPOSSIBLE_NOTE_SUBJECT}%"))
+            ):
+                body = row.body_json if isinstance(row.body_json, dict) else {}
+                if (
+                    body.get("defect") == IMPOSSIBLE_DEFECT
+                    and body.get("report_id") == report_id
+                    and impossible_note_holds(row.created_at, now)
+                ):
+                    return str(row.id)
+            walks = 1
+            last = now
+            gap = WALK_GAP_MINUTES * 60
+            for event in session.scalars(
+                select(DomainEvent)
+                .where(
+                    DomainEvent.event_type == director_qc.DECISION_EVENT,
+                    DomainEvent.aggregate_id == report_id,
+                )
+                .order_by(DomainEvent.sequence.desc())
+            ):
+                payload = event.payload if isinstance(event.payload, dict) else {}
+                said = payload.get("done")
+                done: Mapping[str, Any] = said if isinstance(said, dict) else {}
+                if payload.get("outcome") != "NOTHING_DONE" or _impossibility_key(done) != key:
+                    break
+                moment = _moment(event.timestamp) or last
+                if (last - moment).total_seconds() >= gap:
+                    walks += 1
+                last = moment
+            if walks < SAME_IMPOSSIBLE_WALKS:
+                return None
+            director = agent_for_role(session, "Director")
+            if director is None:
+                return None
+            board = session.get(Storyboard, storyboard_id)
+            title = str(getattr(board, "title", "") or storyboard_id[:8]).strip()[:120]
+            stops = "; ".join(
+                _no_stop(item.get("reason"))
+                for kind in ("refused", "skipped")
+                for item in repair.get(kind) or []
+                if isinstance(item, Mapping) and item.get("reason")
+            )
+            note = (
+                f"Filmul «{title}»: refacerea hotărâtă de Directoare nu s-a putut face la "
+                f"{walks} treceri la rând, din aceleași motive, sub plafoane"
+                + (f" ({stops[:500]})" if stops else "")
+                + ". E un defect al uneltei: filmul așteaptă dezvoltatorul, nu Proprietarul; "
+                f"Directoarea nu mai este întrebată de el {IMPOSSIBLE_NOTE_HOURS} de ore; nu se "
+                "cumpără nimic."
+            )
+            row = post_message(
+                session,
+                intent="STATUS",
+                subject=f"{IMPOSSIBLE_NOTE_SUBJECT} «{title}»"[:200],
+                body={
+                    "kind": DEVELOPER_DEFECT_KIND,
+                    "defect": IMPOSSIBLE_DEFECT,
+                    "storyboard_id": storyboard_id,
+                    "report_id": report_id,
+                    "stops": [list(entry) for entry in key],
+                    "walks": walks,
+                    "note": note,
+                },
+                body_text=note,
+                from_agent_id=director.id,
+                to_agent_id=director.id,
+                correlation_id=report_id,
+            )
+            resolve_message(
+                session,
+                row.id,
+                resolution="Notat pentru dezvoltator.",
+                resolved_by=director.display_name,
+                status="RESOLVED",
+                correlation_id=report_id,
+            )
+            return str(row.id)
+    except Exception as exc:  # noqa: BLE001 - the decision's own words stand without the note
+        logger.warning(
+            "impossible_repair_note_not_written",
+            extra={"storyboard_id": storyboard_id, "error": type(exc).__name__},
+            exc_info=exc,
+        )
+        return None
+
+
 def _redo_allowance(
     engine: Engine, settings: Settings | None, reading: dict[str, Any]
 ) -> tuple[dict[str, Any], bool]:
@@ -4273,7 +5964,7 @@ def _redo_allowance(
             session, storyboard_id, str(reading.get("media_asset_id") or "")
         )
     limits = {
-        "per_scene": int(getattr(settings, "film_max_paid_redos_per_scene", 1)),
+        "per_scene": paid_redos_per_scene(settings),
         "per_film": int(getattr(settings, "film_max_paid_redos", 2)),
         "spent": spent,
         "open_motion": sorted(open_rounds),
@@ -4397,6 +6088,17 @@ def _director_reads(
                     else "Directoarea a decis deja acest raport."
                 ),
             }
+    else:
+        # Her newest REPAIR did nothing and only the caps stop it now: the film is published
+        # from that decision, without asking her again (the review of 2026-10-17: a walk that
+        # asked her could end on an answer that did not validate, and f06808c9's one walk
+        # would have left it standing; since 10-10 eight of its waits read «Decizia
+        # Directoarei nu respectă forma cerută nici a doua oară»).
+        shipped = _ship_stored_repair(
+            engine, settings, vault, registry, report_id, asset_id, standing, correlation
+        )
+        if shipped is not None:
+            return shipped
     _confirm_lessons_quietly(engine, report_id)
     reading = failed_render_reading(engine, report_id)
     limits, free_used = _redo_allowance(engine, settings, reading)
@@ -4461,6 +6163,74 @@ def _director_reads(
     return _carry_out(engine, settings, vault, registry, reading, decided, correlation)
 
 
+def _ship_stored_repair(
+    engine: Engine,
+    settings: Settings | None,
+    vault: Any,
+    registry: ProviderRegistry | None,
+    report_id: str,
+    asset_id: str,
+    standing: Mapping[str, Any],
+    correlation: str,
+) -> dict[str, Any] | None:
+    """Her newest decision on the report, a REPAIR that did nothing, published under the cap
+    as it stands (`stored_repair_ships_under_cap`: only the caps, or a redo she already met as
+    impossible, stop it now, and no verdict of hers is one that is not hers): the capped scenes
+    settled and the film accepted or rejoined free (`_ship_under_cap`), with no model call, no
+    purchase and no letter to the Owner; her decision told as any final one. None when it does
+    not hold: she reads the report as before."""
+    decision = dict(standing.get("decision") or {})
+    if str(decision.get("media_asset_id") or asset_id) != asset_id:
+        return None
+    stopped = stored_repair_ships_under_cap(engine, settings, decision)
+    if stopped is None:
+        return None
+    reading = failed_render_reading(engine, report_id)
+    said = decision.get("done")
+    done: Mapping[str, Any] = said if isinstance(said, Mapping) else {}
+    decided = {
+        key: value
+        for key, value in decision.items()
+        if key not in ("outcome", "final", "done", "passed_report_id", "event_id")
+    }
+    repair: dict[str, Any] = {
+        "report_id": report_id,
+        "storyboard_id": reading.get("storyboard_id"),
+        "of_asset": asset_id,
+        "new_asset": None,
+        "decided_by": decision.get("decided_by"),
+        "applied": [],
+        "bought": [],
+        "asked": [],
+        "made": [],
+        "requalified": None,
+        **{
+            key: list(done.get(key) or [])
+            for key in ("refused", "limited", "skipped", "waiting", "overturned")
+        },
+    }
+    logger.info(
+        "director_repair_shipped_from_decision",
+        extra={"report_id": report_id, "capped": stopped.get("capped")},
+    )
+    step: dict[str, Any] = {"decision": decided}
+    step.update(
+        _ship_under_cap(
+            engine,
+            settings,
+            vault,
+            registry,
+            reading,
+            decided,
+            repair,
+            {**stopped, "from_stored_decision": True},
+            correlation,
+        )
+    )
+    _tell_decision(engine, reading, step, correlation, _repair_lines(repair))
+    return step
+
+
 def _director_looks(
     engine: Engine,
     settings: Settings | None,
@@ -4520,7 +6290,12 @@ def _director_looks(
                 return wait("niciun model de limbaj nu este configurat")
             try:
                 answer = review_bought_pictures(
-                    engine, registry, entry["shown"], entry["images"], correlation
+                    engine,
+                    registry,
+                    entry["shown"],
+                    entry["images"],
+                    correlation,
+                    storyboard_id=str(decision.get("storyboard_id") or "") or None,
                 )
             except (NoReviewer, ReviewError, ValueError) as exc:
                 return wait(error_words(exc))
@@ -4636,9 +6411,115 @@ def _carry_out(
             )
             else None
         )
+        # Nothing of her list can be carried out, and only the Owner's caps (or a redo that
+        # cannot be made at all) stopped it: the film is not left waiting (2026-10-15, his cap;
+        # 2026-10-16 night, f06808c9: «Vreau să publice… să publicăm ce avem»).
+        weighed = {
+            **decided,
+            "report_id": report_id,
+            "storyboard_id": str(reading.get("storyboard_id") or ""),
+        }
+        stopped = (
+            ships_under_cap(engine, settings, weighed, repair)
+            if by_looks is None and kind == "REPAIR"
+            else None
+        )
+        free_made: dict[str, Any] | None = None
+        if (
+            stopped is None
+            and by_looks is None
+            and kind == "REPAIR"
+            and repair.get("ship")
+            and repair.get("new_asset")
+            and not (repair.get("bought") or repair.get("asked"))
+        ):
+            # Her free fix (the sound, an encode, a card) made a new film and the cap stopped
+            # the rest of her list: that film is the best there is, and it is the one published
+            # under the cap — never the older film the free fix replaced, and never a wait for
+            # a reading that can only ask the same capped redo again.
+            stopped = ships_under_cap(
+                engine,
+                settings,
+                weighed,
+                {
+                    key: value
+                    for key, value in repair.items()
+                    if key not in ("applied", "made", "new_asset")
+                },
+            )
+            if stopped is not None:
+                free_made = {
+                    "new_asset": repair.get("new_asset"),
+                    "requalified": repair.get("requalified"),
+                    "requalified_report_id": repair.get("requalified_report_id"),
+                    "words": "Reparația gratuită hotărâtă de ea a făcut un film nou",
+                }
+        # A verdict that is not hers (rights, claims, placeholder pictures, the production path,
+        # the file, his music) is never passed by the cap, as her own ACCEPT is not (the review
+        # of 2026-10-17: a film bought whole on the old path, «nu se publică», would have been
+        # published under the cap). A new film her free fix made goes its own way (it is
+        # measured and read); the film as it stands is her ACCEPT refused: it waits for him or
+        # the sources, never for another reading of hers that can only meet the cap again.
+        hard = not_hers(decided) if stopped is not None else []
+        refused_by_hard = stopped is not None and bool(hard) and free_made is None
+        if hard and free_made is not None:
+            stopped, free_made = None, None
         if by_looks is not None:
             accepted = director_qc.accept_film(engine, reading, by_looks, correlation)
             step.update(decision=by_looks, outcome="ACCEPTED", repair=repair, **accepted)
+            done_lines = _repair_lines(repair)
+        elif refused_by_hard and stopped is not None:
+            stuck = sorted({int(scene) for scene in [*stopped["capped"], *stopped["impossible"]]})
+            words = (
+                f"{_scenes_ro(stuck).capitalize()}: din lista ei nu se mai poate face nimic "
+                "(plafonul Proprietarului sau o preluare aprobată de el ca finală), dar ce a "
+                "picat nu este al Directoarei de trecut ("
+                + "; ".join(
+                    _no_stop(str(item.get("text") or item.get("check") or "")) for item in hard[:3]
+                )[:400]
+                + "): filmul nu se publică sub plafon și așteaptă rezolvarea acestor constatări; "
+                "nu se cumpără nimic."
+            )
+            said = " ".join(str(decided.get("summary") or "").split())
+            held = {
+                **decided,
+                "decision": "ACCEPT",
+                "summary": f"{said} {words}".strip(),
+                "held_under_cap": {**dict(stopped), "how": "NOT_HERS", "reason_ro": words},
+            }
+            step.update(decision=held, outcome="ACCEPT_REFUSED", repair=repair)
+            step["event_id"] = director_qc.record_decision(
+                engine,
+                {
+                    **held,
+                    "outcome": "ACCEPT_REFUSED",
+                    "final": True,
+                    "done": {
+                        key: repair.get(key)
+                        for key in ("applied", "refused", "limited", "skipped", "waiting")
+                    },
+                },
+                correlation,
+            )
+            done_lines = _repair_lines(repair)
+        elif stopped is not None:
+            # The capped scenes settled under the cap, and the film published with what it
+            # has: as it stands, or rejoined free from the kept takes (`_ship_under_cap`).
+            # Nothing is bought and nothing waits for the Owner.
+            step.update(
+                _ship_under_cap(
+                    engine,
+                    settings,
+                    vault,
+                    registry,
+                    reading,
+                    decided,
+                    repair,
+                    stopped,
+                    correlation,
+                    made=free_made,
+                )
+            )
             done_lines = _repair_lines(repair)
         else:
             bought_so_far = before + [
@@ -4683,6 +6564,13 @@ def _carry_out(
                 result = "BOUGHT_WAITING"
             else:
                 result = "NOTHING_DONE"
+            if result == "NOTHING_DONE" and not repair.get("developer_note"):
+                # The same stop below the caps, decision after decision (a prompt blocker the
+                # ladder cannot lift): a tool's defect for the developer after
+                # SAME_IMPOSSIBLE_ROUNDS, and she is not asked again about this report.
+                note = _impossible_repair_note(engine, reading, repair)
+                if note:
+                    repair["developer_note"] = note
             step.update(outcome=result, repair=repair, bought_so_far=bought_so_far)
             done_lines = _repair_lines(repair)
             step["event_id"] = director_qc.record_decision(
@@ -4712,6 +6600,7 @@ def _carry_out(
                             "new_asset",
                             "requalified",
                             "requalified_report_id",
+                            "developer_note",
                         )
                     },
                 },
@@ -4720,12 +6609,30 @@ def _carry_out(
             # Her lessons whose scenes the film her repair made passes worked: confirmed, hers of
             # this very decision among them now that it is recorded (2026-10-12 review).
             _confirm_lessons_quietly(engine, repair.get("requalified_report_id"))
+    _tell_decision(engine, reading, step, correlation, done_lines)
+    return step
+
+
+def _tell_decision(
+    engine: Engine,
+    reading: Mapping[str, Any],
+    step: dict[str, Any],
+    correlation: str,
+    done_lines: list[str],
+) -> None:
+    """Her decision told once it is final (`director_qc.director_letter`, her inbox note about
+    the report answered), or, when nothing of her list could be done, the report waits for her
+    next reading with why (`director_qc.wait_for_director`)."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
     if step["outcome"] in director_qc.FINAL_OUTCOMES:
         try:
             step["letter_id"] = director_qc.director_letter(
                 engine, reading, step, correlation, done_lines=done_lines
             )
-            director_qc.settle_inbox(engine, report_id, step["outcome"], correlation)
+            director_qc.settle_inbox(
+                engine, str(reading["report_id"]), step["outcome"], correlation
+            )
         except Exception as exc:  # noqa: BLE001 - her decision stands; the letter is logged
             logger.warning("director_qc_letter_not_written", extra={"error": type(exc).__name__})
     else:
@@ -4737,7 +6644,6 @@ def _carry_out(
             + "; ".join(line.lstrip("- ") for line in done_lines)[:300],
             correlation,
         )
-    return step
 
 
 def _director_repairs(
@@ -4941,7 +6847,7 @@ def _free_fix_defect_note(
             row = post_message(
                 session,
                 intent="STATUS",
-                subject=f"{FREE_FIX_NOTE_SUBJECT} «{title}»"[:200],
+                subject=f"{FREE_FIX_NOTE_SUBJECT} «{title}»",
                 body={
                     "kind": DEVELOPER_DEFECT_KIND,
                     "defect": FREE_FIX_DEFECT,
@@ -4989,7 +6895,7 @@ def _decisions_words(decisions: list[dict[str, Any]]) -> str:
             "refaceri în așteptarea răspunsului tău",
         ),
         "BOUGHT_WAITING": (
-            "refacere cumpărată care așteaptă aprobarea preluării noi",
+            "refacere cumpărată în curs de verificare și continuare de către studio",
             "refaceri cumpărate care așteaptă aprobarea preluărilor noi",
         ),
         "CLOSED": ("film închis", "filme închise"),
@@ -5052,23 +6958,94 @@ def _still_newer_than_film(session: Session, storyboard_id: str, scene: int, ass
     in_film = (
         director_qc.film_takes(production).get(scene, {}) if isinstance(production, dict) else {}
     )
-    approved = session.scalar(
-        select(SceneTake)
-        .where(
-            SceneTake.storyboard_id == storyboard_id,
-            SceneTake.scene_number == scene,
-            SceneTake.kind == "still",
-            SceneTake.status == "APPROVED",
-        )
-        .order_by(SceneTake.created_at.desc())
-        .limit(1)
-    )
+    approved = director_qc.current_approved_still(session, storyboard_id, scene)
     if approved is None:
         return False
     clip = session.get(SceneTake, in_film.get("motion")) if in_film.get("motion") else None
     if clip is not None:
         return str(approved.created_at) > str(clip.created_at)
     return str(approved.id) != in_film.get("still")
+
+
+def _corrected_for_film(
+    session: Session, storyboard_id: str, scene: int, asset_id: str
+) -> dict[str, Any] | None:
+    """The scene's words as the Director's ladder corrected them for the failed film
+    ``asset_id`` and nobody bought on yet: her newest ``media.prompts_rewritten`` for the
+    scene, written after the film was rendered and after every take of the scene — {"layer",
+    "event_id"}; None when there is none (nothing corrected for this film, or a take bought on
+    the correction since).
+
+    2026-10-13: a paid redo under his ask-me rule is corrected first (`_correct_before_redo`)
+    and then asked, his yes bound to the corrected plan; the walk that resumed after his yes
+    corrected the scene AGAIN before spending it — the same words came back and the redo was
+    refused PROMPT_NOT_CORRECTED, or new words made a new plan and he was asked again — so the
+    redo he approved was never bought. On the resume, words corrected for this film and not
+    bought yet are the words his yes was asked on: neither her look nor his rewrite is asked
+    again before it is spent (`_apply_repairs`)."""
+    from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT  # noqa: PLC0415
+    from app.media.models import SceneTake, StoryboardScene  # noqa: PLC0415
+    from app.media.prompt_agent import incomplete_plan_fields  # noqa: PLC0415
+    from app.media.scene_rewrite import DECIDED_BY, REWRITE_REASON, _after  # noqa: PLC0415
+
+    film = session.get(MediaAsset, asset_id) if asset_id else None
+    if film is None:
+        return None
+    newest_take = session.scalar(
+        select(SceneTake.created_at)
+        .where(SceneTake.storyboard_id == storyboard_id, SceneTake.scene_number == scene)
+        .order_by(SceneTake.created_at.desc())
+        .limit(1)
+    )
+    floor = str(film.created_at or "")
+    if newest_take and _after(newest_take, floor):
+        floor = str(newest_take)
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(
+            DomainEvent.event_type == SCENE_PROMPTS_REWRITTEN_EVENT,
+            DomainEvent.aggregate_id == storyboard_id,
+        )
+        .order_by(DomainEvent.sequence.desc())
+    ):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if payload.get("scene_index") != scene:
+            continue
+        # Only her brief's rewrite (`scene_rewrite.REWRITE_REASON`): the serial's
+        # recomposition and its technical re-roll write the same event as the Director's,
+        # on words that may not have changed (the Codex review of c6dc05c).
+        if (
+            payload.get("decided_by") != DECIDED_BY
+            or payload.get("reason") != REWRITE_REASON
+            or not _after(event.timestamp, floor)
+        ):
+            return None
+        row = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == storyboard_id,
+                StoryboardScene.scene_index == scene,
+            )
+        )
+        if row is None:
+            return None
+        package = dict(row.prompt_json or {})
+        layer = str(payload.get("layer") or "")
+        review = payload.get("review")
+        if (
+            layer not in ("still", "motion")
+            or not isinstance(review, dict)
+            or review.get("verdict") != "TREATS"
+            or incomplete_plan_fields(package, layers=(layer,))
+        ):
+            return None
+        for field in ("still_prompt", "motion_prompt"):
+            actual = str(
+                package.get(field) or (row.visual_prompt if field == "still_prompt" else "")
+            )
+            if " ".join(actual.split()) != " ".join(str(payload.get(field) or "").split()):
+                return None
+        return {"layer": payload.get("layer"), "event_id": str(event.event_id)}
+    return None
 
 
 def _correct_before_redo(
@@ -5096,6 +7073,8 @@ def _correct_before_redo(
     picture: the still is rewritten and bought with its motion — unless a newer approved still
     is already waiting (`_still_newer_than_film`), and then the motion is bought from it."""
     from app.agents.reviews import _names_scene  # noqa: PLC0415 - agents read the same words
+    from app.media.models import StoryboardScene  # noqa: PLC0415
+    from app.media.prompt_agent import incomplete_plan_fields  # noqa: PLC0415
     from app.media.scene_rewrite import rewrite_for_redo  # noqa: PLC0415 - media imports runbook
 
     layer = "still" if "still" in kinds else "motion"
@@ -5126,6 +7105,15 @@ def _correct_before_redo(
         if str(verdict.get("cause") or "").strip()
     ]
     reasons += [str(reason) for reason in extra_reasons if str(reason).strip()]
+    with Session(engine) as session:
+        row = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == storyboard_id,
+                StoryboardScene.scene_index == scene,
+            )
+        )
+        if row is not None:
+            reasons += incomplete_plan_fields(dict(row.prompt_json or {}), layers=(layer,))
     try:
         done = rewrite_for_redo(engine, registry, storyboard_id, scene, layer, reasons, correlation)
         turn = done.get("same_prompt") or done.get("layer_exhausted")
@@ -5175,7 +7163,7 @@ def _correct_before_redo(
         "reason": (
             f"promptul nu a fost corectat ({done.get('reason') or 'fără motiv'}); nu se cumpără "
             "din nou aceleași cuvinte"
-        )[:300],
+        ),
     }
 
 
@@ -5333,19 +7321,21 @@ def _failed_film_frames(
     if not film:
         return []
     cut = frames_at(film, ffmpeg_path, [number for _at, number in chosen], Path(folder) / "film")
-    frames = [cut.get(number) for _at, number in chosen]
-    if not all(frames):
+    picture_paths = [cut.get(number) for _at, number in chosen]
+    if not all(picture_paths):
         return []
     rows = caption_rows(production)
     if rows is None:
-        return [frame for frame in frames if frame is not None]
+        return [frame for frame in picture_paths if frame is not None]
     # The film burns the narration's subtitles in: shown the picture above the rows they draw
     # in, never our own words (a frame with the rows painted over would read as a band).
     above: list[Any] = []
-    for (at, _number), frame in zip(chosen, frames, strict=True):
+    for (at, _number), picture_path in zip(chosen, picture_paths, strict=True):
+        if picture_path is None:
+            return []
         pieces = cut_caption_rows(
             ffmpeg,
-            Path(frame),
+            Path(picture_path),
             rows,
             Path(folder) / f"film_{at}_deasupra.png",
             Path(folder) / f"film_{at}_dedesubt.png",
@@ -5500,7 +7490,7 @@ def _overturned_entry(
         "status": SECOND_LOOK_OVERTURNED,
         "verdict": str(look.get("verdict") or ""),
         "severity": str(look.get("severity") or ""),
-        "reason": str(look.get("reason_ro") or "")[:300],
+        "reason": str(look.get("reason_ro") or ""),
         "run_id": look.get("run_id"),
         "takes": {"still": takes.get("still"), "clip": takes.get("motion")},
         "checks": families,
@@ -5522,6 +7512,33 @@ def _look_drops_redo(look: Mapping[str, Any], *, measured: bool = False) -> bool
     return severity == "none" if measured else severity in ("none", "minor")
 
 
+def _redo_ended_without_delivery(
+    engine: Engine,
+    storyboard_id: str,
+    scene: int,
+    kind: str,
+    done: dict[str, Any],
+    since: str,
+) -> bool:
+    from app.media.director_qc import bought_since  # noqa: PLC0415
+
+    if kind == "still" and str((done.get("still") or {}).get("status") or "") in (
+        "REFUSED",
+        "FAILED",
+        "CANCELLED",
+        "NOT_BOUGHT",
+        "UNSENT",
+    ):
+        return True
+    if not done.get("given_back"):
+        return False
+    with Session(engine) as session:
+        candidates = bought_since(session, storyboard_id, scene, kind, since)
+        # Keep uncertain requests and delivered pictures rejected by QC available for
+        # recovery/Sarah's look. A restored old take is excluded by bought_since.
+        return not any(row.status == "SUBMITTED" or (row.path and row.sha256) for row in candidates)
+
+
 def _apply_repairs(
     engine: Engine,
     settings: Settings,
@@ -5536,9 +7553,11 @@ def _apply_repairs(
     since: str | None = None,
 ) -> None:
     """Carry out ``reading['proposals']`` (the Director's list, `_director_repairs`): the free
-    fixes once per film, the paid redos scene by scene through `redo_scene` (unasked), within
+    fixes once per film, the paid redos prepared through `redo_scene` (unasked), within
     his limits, the film rejoined from its takes where her list says so (`director_qc.REJOIN`),
-    and the film that came of them measured once more. A paid redo whose plan would retire a
+    and the film that came of them measured once more. Compatible ready RunPod repairs share
+    a GPU batch after all corrections/reviews; images precede motion with accepted frames.
+    Every purchase keeps its own approval and budget hold. A paid redo whose plan would retire a
     take the Owner approved is refused before anything is priced (2026-10-10: babcf272's
     approved still, motion and test shot were retired by an unasked repair).
 
@@ -5558,9 +7577,19 @@ def _apply_repairs(
     nothing for the scene: it is listed in ``result['overturned']`` with her reason, the takes
     and the carry key of the picture it was about, and her next reading counts its findings as
     settled (`picture_qc.earlier_acceptances`). Her look confirming it adds her words to what
-    the rewrite before the purchase reads; no look (no model, no frames) changes nothing."""
+    the rewrite before the purchase reads; no look (no model, no frames) changes nothing.
+
+    Money spent again on a layer the film already paid for once (a second still, a second
+    clip of the scene) passes the Accountant after the correction and before the purchase
+    (`economy.repurchase_gate.before_paid_redo`, the Owner's rule of 2026-10-13): her refusal
+    is discussed with the Director, who insists (bought, both opinions recorded), accepts the
+    defect as minor (listed ``overturned``, like her look) or closes the scene (held, in
+    ``result['refused']``); no verdict holds the scene for the next try. The first purchase of
+    a layer, a redo his ceiling or the day's budget refuses, and a resumed walk on a plan they
+    already decided are not asked of her."""
     from app.media import director_qc  # noqa: PLC0415 - media imports runbook
     from app.media.assembler import (  # noqa: PLC0415 - media imports runbook
+        REDO_STEP,
         SceneRedoRefused,
         SpentStageError,
         redo_plan,
@@ -5605,7 +7634,7 @@ def _apply_repairs(
                 requester="director",
             )
         except SceneRedoRefused as exc:
-            result["refused"].append({"what": words, "reason": exc.reason_ro[:300]})
+            result["refused"].append({"what": words, "reason": exc.reason_ro})
             return
         result["applied"].append({"redo": kind, "scene_index": scene, "reason": words})
         newest(done.get("film"))
@@ -5620,18 +7649,18 @@ def _apply_repairs(
             if proposal.free and proposal.redo == "card":
                 free_redo("card", proposal.scene_index, proposal.reason)
 
-    # The paid redos, scene by scene: only through `redo_scene` (may_act inside, his rule,
+    # Every paid redo is prepared through `redo_scene` (may_act inside, his rule,
     # the budgets, the ceiling, the lease), and only within his limits — moved by what he
     # allowed this film on its card (`decisions.producers.redo_cap`, 2026-10-12).
-    from app.decisions.producers.redo_cap import (  # noqa: PLC0415 - decisions import media
-        propose_redo_cap_card,
-        redo_allowance,
-    )
+    from app.decisions.producers.redo_cap import redo_allowance  # noqa: PLC0415
+    from app.economy import repurchase_gate  # noqa: PLC0415 - economy imports media
 
     with Session(engine) as session:
         allowed_more = redo_allowance(session, storyboard_id)
-    per_scene = int(getattr(settings, "film_max_paid_redos_per_scene", 1)) + allowed_more
+    per_scene = paid_redos_per_scene(settings) + allowed_more
     per_film = int(getattr(settings, "film_max_paid_redos", 2)) + allowed_more
+    renders_cap = renders_per_layer(settings)
+    per_scene_setting = paid_redos_setting(settings)
     paid: dict[int, list[str]] = {}
     for proposal in proposals:
         if (
@@ -5643,27 +7672,90 @@ def _apply_repairs(
             if proposal.redo not in paid[int(proposal.scene_index)]:
                 paid[int(proposal.scene_index)].append(proposal.redo)
     wiring = sheet_wiring(engine, vault, settings) if paid else {}
-    image = wiring.get("image_adapter")
+    from app.media.factory import reference_image_adapter  # noqa: PLC0415
+
+    image = reference_image_adapter(engine, storyboard_id, wiring.get("image_adapter"))
     capabilities = list(wiring.get("capabilities") or []) or None
     resolution = wiring.get("resolution") or getattr(settings, "motion_resolution", None)
     # His choices on the sheet, read once: the plan and the purchase price the same scene.
     overrides = sheet_overrides(engine, storyboard_id) if paid else None
     bought_kinds: dict[int, list[str]] = {}
     next_words: dict[int, str] = {}
+    prepared: dict[int, dict[str, Any]] = {}
+    with Session(engine) as session:
+        report_rounds = _report_repair_rounds(session, str(reading.get("report_id") or ""))
     for scene in sorted(paid):
         with Session(engine) as session:
             rounds = _paid_redo_rounds(session, storyboard_id)
             open_round = _open_still_rounds(session, storyboard_id).get(scene)
+            renders = _renders_made(session, storyboard_id)
+            # Its picture at the cap and the picture kept not to be animated again: its
+            # motion has nothing left to buy either (`renders_cap.motion_spent`), read before
+            # her second look or any rewrite is paid for in tokens.
+            spent = motion_spent(session, storyboard_id, scene, settings)
         # Only her motion after the scene's new still continues the still's round.
         continues = open_round if paid[scene] == ["motion"] else None
-        if continues is None and (
-            rounds.get(scene, 0) >= per_scene or sum(rounds.values()) >= per_film
+        # The Owner's cap (2026-10-15; since 2026-10-16 two renders a layer a scene,
+        # `renders_cap`), two bought repairs a report; past it the scene keeps the best take
+        # it has. A new picture needs a render of the motion left: no clip could be made
+        # from it, and the clip it retires is what the film has.
+        over_renders = _over_renders(renders, scene, paid[scene], renders_cap, motion_spent=spent)
+        # A motion that continues its still's round is not a new round, but it is a render:
+        # three shots of the scene made, the fourth is not bought (22:21Z, f06808c9 scene 4:
+        # the continuation skipped the cap, the Accountant refused it on the cap's own words,
+        # and the film waited instead of shipping under the cap).
+        if over_renders or (
+            continues is None
+            and (
+                rounds.get(scene, 0) >= per_scene
+                or sum(rounds.values()) >= per_film
+                or report_rounds >= REPAIR_ROUNDS_PER_REPORT
+            )
         ):
             result["limited"].append(
-                {"scene_index": scene, "per_scene": per_scene, "per_film": per_film}
+                {
+                    "scene_index": scene,
+                    "per_scene": per_scene,
+                    "per_film": per_film,
+                    "renders": over_renders,
+                    "renders_cap": renders_cap,
+                    "report_rounds": report_rounds,
+                    "report_rounds_cap": REPAIR_ROUNDS_PER_REPORT,
+                    "per_scene_setting": per_scene_setting,
+                }
             )
             continue
+        corrected = None
         if continues is None:
+            with Session(engine) as session:
+                corrected = _corrected_for_film(session, storyboard_id, scene, asset_id)
+        if corrected is not None:
+            # The words his yes was asked on (2026-10-13, `_corrected_for_film`): the walk
+            # that resumes after it neither looks nor corrects again before spending it. A
+            # correction that turned to the picture buys the still and its motion, as the
+            # first walk did.
+            if corrected.get("layer") == "still" and "still" not in paid[scene]:
+                paid[scene].insert(0, "still")
+                # The picture the correction turned to is a render like any other: never one
+                # past the Owner's cap, the scene's or its motion's (2026-10-16).
+                over_renders = _over_renders(
+                    renders, scene, paid[scene], renders_cap, motion_spent=spent
+                )
+                if over_renders:
+                    result["limited"].append(
+                        {
+                            "scene_index": scene,
+                            "per_scene": per_scene,
+                            "per_film": per_film,
+                            "renders": over_renders,
+                            "renders_cap": renders_cap,
+                            "report_rounds": report_rounds,
+                            "report_rounds_cap": REPAIR_ROUNDS_PER_REPORT,
+                            "per_scene_setting": per_scene_setting,
+                        }
+                    )
+                    continue
+        elif continues is None:
             # She looks at the scene once more before anything is bought for it (2026-10-12):
             # free, and the purchase is not. The motion that continues a new still was looked
             # at with that still.
@@ -5705,10 +7797,31 @@ def _apply_repairs(
             if uncorrected is not None:
                 result["refused"].append(uncorrected)
                 continue
-        bought_here = False
-        # When the round began: what it delivered is read from here (`_round_delivered`).
-        began = utc_now()
-        for kind in sorted(paid[scene], key=("still", "motion").index):
+        prepared[scene] = {
+            "continues": continues,
+            "rounds": rounds,
+            "began": utc_now(),
+        }
+
+    from app.media.prepared_batch import RoundWork, flow_call, run_prepared  # noqa: PLC0415
+    from app.media.shooting_sheet import (  # noqa: PLC0415
+        FilmBusy,
+        film_purchase_lease,
+        lease_seconds,
+    )
+
+    blocked: set[int] = set()
+    started: set[int] = set()
+    reserved: set[int] = set()
+    # All free reviews/corrections finish before a GPU purchase is prepared. Images go
+    # together first; motion plans are read after their new starting still is accepted.
+    for kind in ("still", "motion"):
+        flows = []
+        purchases = []
+        for scene in sorted(prepared):
+            if scene in blocked or kind not in paid[scene]:
+                continue
+            rounds = prepared[scene]["rounds"]
             try:
                 plan = redo_plan(
                     engine,
@@ -5732,7 +7845,35 @@ def _apply_repairs(
                         "refacere nepornită de tine nu o retrage.",
                     )
                 replacing = sorted(retiring & his_all)
-                done = redo_scene(
+                # Money spent again on a layer this film already paid for passes the Accountant
+                # first, and her refusal is discussed with the Director (the Owner, 2026-10-13:
+                # «Nadia și Sarah discută … ei să hotărască»; `economy.repurchase_gate`). A
+                # hold raises the redo's refusal; her ACCEPT_MINOR comes back as a look that
+                # buys nothing; what they agreed, or decided for this plan before, buys below.
+                accepted = repurchase_gate.before_paid_redo(
+                    engine,
+                    registry,
+                    settings,
+                    reading,
+                    proposals,
+                    scene,
+                    kind,
+                    plan,
+                    rounds=rounds,
+                    per_scene=per_scene,
+                    per_film=per_film,
+                    environment=environment,
+                    measured=_measured_serious_scene(reading, scene),
+                    correlation=correlation,
+                )
+                if accepted is not None:
+                    result.setdefault("overturned", []).append(
+                        _overturned_entry(engine, reading, scene, paid[scene], accepted)
+                    )
+                    blocked.add(scene)
+                    continue
+                flow = flow_call(
+                    redo_scene,
                     engine,
                     storyboard_id,
                     correlation,
@@ -5758,25 +7899,123 @@ def _apply_repairs(
                     # take he approved without marking it final (the deep guard agrees).
                     director_repair=True,
                 )
+                flows.append(flow)
+                purchases.append((scene, plan, replacing))
             except SceneRedoRefused as exc:
                 entry = {
                     "redo": kind,
                     "scene_index": scene,
                     "status": exc.status,
-                    "reason": exc.reason_ro[:300],
+                    "reason": exc.reason_ro,
                     "approval_id": exc.approval_id,
                     "cap_usd": (exc.plan or {}).get("cap_usd"),
                 }
                 (result["asked"] if exc.status == "NEEDS_APPROVAL" else result["refused"]).append(
                     {**entry, "what": f"scena {scene}: {PAID_REDO_WORDS[kind]}"}
                 )
-                break
+                blocked.add(scene)
+                continue
             except SpentStageError as exc:
-                bought_here = True
+                started.add(scene)
                 result["refused"].append(
                     {"what": f"scena {scene}: {PAID_REDO_WORDS[kind]}", "reason": exc.reason_ro}
                 )
-                break
+                blocked.add(scene)
+                continue
+        if not flows:
+            continue
+
+        def before_prepare(index: int, purchases_: Any = purchases) -> None:
+            candidate = purchases_[index][0]
+            previous = prepared[candidate]
+            if (
+                previous["continues"] is None
+                and candidate not in reserved
+                and sum(previous["rounds"].values()) + len(reserved) >= per_film
+            ):
+                result["limited"].append(
+                    {
+                        "scene_index": candidate,
+                        "per_scene": per_scene,
+                        "per_film": per_film,
+                        "per_scene_setting": per_scene_setting,
+                    }
+                )
+                raise SceneRedoRefused("REDO_LIMIT", "Plafonul refacerilor plătite este atins.")
+
+        def on_prepared(index: int, value: Any, purchases_: Any = purchases) -> None:
+            if isinstance(value, RoundWork) or (
+                isinstance(value, dict)
+                and (
+                    value.get("credits")
+                    or (value.get("still") or {}).get("status") == "APPROVED"
+                    or (value.get("motion") or {}).get("bought_shots")
+                )
+            ):
+                reserved.add(purchases_[index][0])
+
+        try:
+            # Keep the root lease until every nested purchase has settled its own hold.
+            with film_purchase_lease(
+                engine,
+                storyboard_id,
+                holder=correlation,
+                step=REDO_STEP,
+                ttl_seconds=lease_seconds(settings),
+            ):
+                outcomes = run_prepared(
+                    flows, before_prepare=before_prepare, on_prepared=on_prepared
+                )
+        except FilmBusy as exc:
+            outcomes = [
+                SceneRedoRefused(exc.status, exc.reason_ro, plan=plan)
+                for _scene, plan, _replacing in purchases
+            ]
+        for (scene, _plan, replacing), outcome in zip(purchases, outcomes, strict=True):
+            if isinstance(outcome, SceneRedoRefused):
+                entry = {
+                    "redo": kind,
+                    "scene_index": scene,
+                    "status": outcome.status,
+                    "reason": outcome.reason_ro,
+                    "approval_id": outcome.approval_id,
+                    "cap_usd": (outcome.plan or {}).get("cap_usd"),
+                }
+                (
+                    result["asked"] if outcome.status == "NEEDS_APPROVAL" else result["refused"]
+                ).append({**entry, "what": f"scena {scene}: {PAID_REDO_WORDS[kind]}"})
+                blocked.add(scene)
+                continue
+            if isinstance(outcome, SpentStageError):
+                started.add(scene)
+                result["refused"].append(
+                    {"what": f"scena {scene}: {PAID_REDO_WORDS[kind]}", "reason": outcome.reason_ro}
+                )
+                blocked.add(scene)
+                continue
+            if isinstance(outcome, Exception):
+                raise outcome
+            done = outcome
+            still = done.get("still") or {}
+            if _redo_ended_without_delivery(
+                engine, storyboard_id, scene, kind, done, prepared[scene]["began"]
+            ):
+                result["refused"].append(
+                    {
+                        "what": f"scena {scene}: {PAID_REDO_WORDS[kind]}",
+                        "redo": kind,
+                        "scene_index": scene,
+                        "status": str(still.get("status") or "NOT_DELIVERED"),
+                        "reason": str(
+                            done.get("next_ro")
+                            or "Cererea s-a încheiat fără imagine sau clip nou; "
+                            "refacerea nu este realizată."
+                        ),
+                        "credits": done.get("credits"),
+                    }
+                )
+                blocked.add(scene)
+                continue
             summary = done.get("motion") if kind == "motion" else None
             if isinstance(summary, dict) and not summary.get("bought_shots"):
                 # The step bought nothing for the scene (held NEEDS_OWNER, stopped, not bought):
@@ -5802,11 +8041,12 @@ def _apply_repairs(
                             held.get("reason")
                             or summary.get("stopped")
                             or "mișcarea nu a fost cumpărată"
-                        )[:300],
+                        ),
                     }
                 )
-                break
-            bought_here = True
+                blocked.add(scene)
+                continue
+            started.add(scene)
             bought_kinds.setdefault(scene, []).append(kind)
             next_words[scene] = str(done.get("next_ro") or "")
             result["bought"].append(
@@ -5843,46 +8083,46 @@ def _apply_repairs(
                         "next_ro": str(done.get("next_ro") or ""),
                     }
                 )
-                break
-        if bought_here:
-            kinds = bought_kinds.get(scene, [])
-            with Session(engine) as session, session.begin():
-                lock_for_write(session)
-                append_event(
-                    session,
-                    QC_PAID_REDO_EVENT,
-                    "storyboard",
-                    storyboard_id,
-                    1,
-                    {
-                        "scene_index": scene,
-                        "of_asset": asset_id,
-                        "kinds": kinds,
-                        # A new still without its motion yet: the motion may still follow,
-                        # in this round (a scene he chose to animate locally needs none).
-                        "open_motion": "still" in kinds and "motion" not in kinds,
-                        "continues": continues,
-                        "started_at": began,
-                    },
-                    correlation,
-                )
+                blocked.add(scene)
+                continue
+    for scene in sorted(started):
+        kinds = bought_kinds.get(scene, [])
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            append_event(
+                session,
+                QC_PAID_REDO_EVENT,
+                "storyboard",
+                storyboard_id,
+                1,
+                {
+                    "scene_index": scene,
+                    "of_asset": asset_id,
+                    "kinds": kinds,
+                    # A new still without its motion yet: the motion may still follow,
+                    # in this round (a scene he chose to animate locally needs none).
+                    "open_motion": "still" in kinds and "motion" not in kinds,
+                    "continues": prepared[scene]["continues"],
+                    "started_at": prepared[scene]["began"],
+                },
+                correlation,
+            )
 
-    # His cap stopped what she decided and nothing else of her list could be done: the film
-    # is his question now (money), as a card — once per film, never a loop of her decisions
-    # (2026-10-12, 1c038a99: three REPAIRs in eleven seconds, each stopped by the cap).
+    # The cap stopped what she decided and nothing else of her list could be done. Until
+    # 2026-10-15 the film became his question, as a card («ce se întâmplă cu filmul»); the
+    # Owner answered it for good that day: «Publicăm ce avem! … orice iese, chiar dacă pică,
+    # Directorul se uită peste ce avem, și publică!» The film ships as it stands, her ACCEPT
+    # under the cap (`_carry_out`), and what stayed below standard is a lesson for the next.
     if result["limited"] and not (result["bought"] or result["asked"] or result["applied"]):
-        with Session(engine) as session:
-            spent_rounds = _paid_redo_rounds(session, storyboard_id)
-        card_id = propose_redo_cap_card(
-            engine,
-            storyboard_id=storyboard_id,
-            report_id=str(reading.get("report_id") or ""),
-            media_asset_id=asset_id,
-            limited=list(result["limited"]),
-            rounds=spent_rounds,
-        )
-        if card_id:
-            result["card_id"] = card_id
+        result["ship"] = {
+            "limited": list(result["limited"]),
+            "reason_ro": (
+                "plafonul Proprietarului: cel mult "
+                f"{renders_ro(renders_cap)} pe imagine sau mișcare pe scenă și "
+                f"{REPAIR_ROUNDS_PER_REPORT} refaceri cumpărate pe raport; se publică filmul "
+                "așa cum este, cu ce a rămas fiecărei scene sub plafon."
+            ),
+        }
 
     # The film rejoined from its takes where her list says so (a new still of a scene he chose
     # to animate locally, a shot bought earlier and approved since): 0 credits, once, and only
@@ -5990,18 +8230,24 @@ def _reencode_from_takes(
     redo: str = "encode",
     words: str | None = None,
     registry: ProviderRegistry | None = None,
+    free_only: bool = False,
 ) -> None:
     """The film encoded again from the same takes: no still and no shot is bought, and the
     narration already voiced is reused (BOOK_EVERY_PURCHASE); any narration left to buy goes
     through the same question and hold as the day's assembly. ``redo`` and ``words`` name it
     in the repair's record (the Director's `director_qc.REJOIN`: the film rejoined with a
     take bought for her list). ``registry`` reaches the mix, so the sound is planned by the
-    Voice Artist again rather than falling to the deterministic plan."""
+    Voice Artist again rather than falling to the deterministic plan. ``free_only``: a rejoin
+    that would voice any narration is refused before anything is asked or held (the film
+    published under the cap, `_rebuild_under_cap`: nothing new is bought); one that voices
+    nothing is assembled without a hold or a budget letter (`_assemble_from_takes` ``free``)."""
     from app.media.shooting_sheet import build_sheet  # noqa: PLC0415 - media imports runbook
 
     environment = studio_environment(engine)
     wiring = sheet_wiring(engine, vault, settings)
-    image = wiring.get("image_adapter")
+    from app.media.factory import reference_image_adapter  # noqa: PLC0415
+
+    image = reference_image_adapter(engine, storyboard_id, wiring.get("image_adapter"))
     sheet = build_sheet(
         engine,
         storyboard_id,
@@ -6019,6 +8265,38 @@ def _reencode_from_takes(
         settings=settings,
         sheet=_film_figures(sheet),
     )
+    if free_only:
+        # What the rejoin would really voice: the parts no narration take already holds, with
+        # the voices the assembly would use (`assembler.narration_to_buy`). The plan's figure
+        # is the reservation for the whole voiceover at the dearest price, never what is left
+        # to say (the review of 2026-10-17: f06808c9, its 769 characters voiced and its audio
+        # passed, read 0.169 USD «to buy», and every narrated film was refused its rejoin).
+        try:
+            left = _narration_left_to_voice(engine, vault, storyboard_id)
+        except Exception as exc:  # noqa: BLE001 - unread, nothing is risked: no rejoin
+            result["refused"].append(
+                {
+                    "what": "reasamblarea filmului",
+                    "reason": (
+                        "nu s-a putut citi ce narațiune ar mai fi de spus "
+                        f"({error_words(exc)[:200]}); sub plafon nu se cumpără nimic"
+                    ),
+                }
+            )
+            return
+        if left > 0:
+            result["refused"].append(
+                {
+                    "what": "reasamblarea filmului",
+                    "reason": (
+                        f"reasamblarea ar cumpăra narațiune nouă ({left} caractere încă "
+                        "nespuse de nicio preluare de narațiune); sub plafon nu se cumpără nimic"
+                    ),
+                }
+            )
+            return
+        # Nothing is voiced anew: nothing is reserved or held for it.
+        plan_cost = {**plan_cost, "narration_usd_micros": 0}
     made = _assemble_from_takes(
         engine,
         settings,
@@ -6030,6 +8308,7 @@ def _reencode_from_takes(
         correlation,
         sheet_hash=str(sheet.get("sheet_hash") or "") or None,
         registry=registry,
+        free=free_only,
     )
     words = words or (
         "Codare: filmul refăcut din aceleași preluări, fără credite pentru imagini sau cadre."
@@ -6045,6 +8324,63 @@ def _reencode_from_takes(
                 "reason": str(made.get("reason") or ""),
             }
         )
+
+
+def _narration_left_to_voice(engine: Engine, vault: Any, storyboard_id: str) -> int:
+    """How many characters an assembly of the film from its takes would voice anew, with the
+    voices the assembly uses (`factory.render_plan`, `tts_provider`): every part no narration
+    take already holds (`assembler.narration_to_buy`). 0 when everything is voiced, or the
+    local stand-in narrates. Calls no voice."""
+    from app.media.assembler import narration_to_buy  # noqa: PLC0415 - media imports runbook
+    from app.media.factory import render_plan, tts_provider  # noqa: PLC0415
+
+    planned = render_plan(engine, vault, storyboard_id)
+    return int(
+        narration_to_buy(
+            engine,
+            storyboard_id,
+            tts_adapter=tts_provider(engine, vault),
+            tts_adapter_for_scene=planned.get("tts_for_scene"),
+            voice_segments_for_scene=planned.get("voice_segments_for_scene"),
+        )
+    )
+
+
+#: A layer of a scene, as the Director's letter names what reached the renders cap.
+_LAYER_HAD_RO = {"still": "imaginea ei", "motion": "mișcarea ei"}
+
+
+def _limited_line(item: dict[str, Any]) -> str:
+    """One scene her repair did not buy, said by what stopped it, with the setting that holds
+    the number: the Owner's renders cap (STUDIO_RENDERS_PER_LAYER), the repairs bought on one
+    report, or the paid redos per scene and per film."""
+    scene = item["scene_index"]
+    renders = item.get("renders") or {}
+    if renders:
+        had = " și ".join(
+            f"{_LAYER_HAD_RO.get(layer, layer)} a avut deja {renders_ro(int(made))}"
+            for layer, made in renders.items()
+        )
+        cap = item.get("renders_cap")
+        return (
+            f"- Scena {scene}: nu se mai cumpără, {had}, iar plafonul tău este de "
+            f"{renders_ro(int(cap) if cap else None)} pe imagine sau mișcare "
+            "(STUDIO_RENDERS_PER_LAYER); rămâne ce are scena"
+        )
+    rounds_cap = item.get("report_rounds_cap")
+    if rounds_cap is not None and int(item.get("report_rounds") or 0) >= int(rounds_cap):
+        return (
+            f"- Scena {scene}: nu se mai cumpără automat, raportul a avut deja "
+            f"{count(int(rounds_cap), 'reparație cumpărată', 'reparații cumpărate')}, plafonul "
+            "tău pe raport"
+        )
+    setting = str(item.get("per_scene_setting") or "STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE")
+    return (
+        f"- Scena {scene}: nu se mai cumpără automat, s-a atins limita de "
+        f"{count(int(item['per_scene']), 'refacere plătită', 'refaceri plătite')} pe scenă"
+        f" și {count(int(item['per_film']), 'refacere plătită', 'refaceri plătite')} pe "
+        f"film ({setting}, STUDIO_FILM_MAX_PAID_REDOS)"
+    )
 
 
 def _repair_lines(result: dict[str, Any]) -> list[str]:
@@ -6070,10 +8406,7 @@ def _repair_lines(result: dict[str, Any]) -> list[str]:
         )
     for item in result.get("limited") or []:
         done.append(
-            f"- Scena {item['scene_index']}: nu se mai cumpără automat, s-a atins limita de "
-            f"{count(int(item['per_scene']), 'refacere plătită', 'refaceri plătite')} pe scenă"
-            f" și {count(int(item['per_film']), 'refacere plătită', 'refaceri plătite')} pe "
-            "film (STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE, STUDIO_FILM_MAX_PAID_REDOS)"
+            _limited_line(item)
             + (
                 "; ai un card: mai cumpăr, public așa cum e, sau închid."
                 if result.get("card_id")
@@ -6156,7 +8489,7 @@ def continue_film(
     def done(status: str, reason: str, **more: Any) -> dict[str, Any]:
         outcome = {
             "status": status,
-            "reason": " ".join(str(reason).split())[:1500],
+            "reason": " ".join(str(reason).split()),
             "storyboard_id": storyboard_id,
             "cause": cause,
             "refusal": more.pop("refusal", None),
@@ -6348,7 +8681,7 @@ def _publish_passed(
     action, tier = STAGE_ACTIONS["publish"]
     refusal = mode_refusal(engine, action, tier, ask_owner=False)
     if refusal is not None:
-        return _outcome(SKIPPED, str(refusal["reason"])[:500])
+        return _outcome(SKIPPED, str(refusal["reason"]))
     return _publish(
         engine,
         vault,
@@ -6373,6 +8706,23 @@ OUT_ON_THE_CHANNEL = ("PUBLISHED", "PUBLISHED_SIMULATED", "SCHEDULED", "REMOTE_C
 #: Uncertain publications the watchdog or the Owner settles; the day does not offer their
 #: films again beside them.
 SETTLING_ELSEWHERE_STATES = ("FAILED_RETRYABLE", "NEEDS_RECONCILIATION")
+
+
+def _viewing_rejected(session: Session) -> set[str]:
+    """The films whose NEWEST viewing the Director refused. Until 2026-10-15 any refusal
+    ever written kept a film out: a film viewed again under the Owner's cap (APPROVE with
+    her notes) was still out of the queue on its older REJECT."""
+    newest: dict[str, str] = {}
+    for review in session.scalars(select(EditorialReview).order_by(EditorialReview.created_at)):
+        newest[str(review.media_asset_id)] = str(review.verdict)
+    # A film accepted under the Owner's cap is published as it stands: its refused viewing
+    # is notes, and `_publish_one` has her view it again (13:31Z, 2d276038: the queue said
+    # «niciun material aprobat de QC în așteptarea publicării» on that refusal).
+    return {
+        asset
+        for asset, verdict in newest.items()
+        if verdict == "REJECT" and accepted_under_cap(session, asset) is None
+    }
 
 
 def _publish_one(
@@ -6409,6 +8759,14 @@ def _publish_one(
     # change something, not a silent skip.
     with Session(engine) as session:
         editorial = latest_editorial(session, asset_id)
+        if (
+            editorial is not None
+            and editorial.verdict != "APPROVE"
+            and accepted_under_cap(session, asset_id) is not None
+        ):
+            # Refused by a viewing, accepted under the Owner's cap (2026-10-15): viewed
+            # again, and her viewing is notes now, not a veto (`editorial_review`).
+            editorial = None
     if editorial is None:
         if registry is None or not _has_language_model(registry):
             return {
@@ -6438,7 +8796,7 @@ def _publish_one(
         return {
             "status": COMPLETED,
             "reason": "Directorul a respins materialul înainte de publicare: "
-            + "; ".join(str(r) for r in editorial_reasons)[:300],
+            + "; ".join(str(r) for r in editorial_reasons),
             "rejected_asset": asset_id,
             "reasons": editorial_reasons,
         }
@@ -6485,7 +8843,7 @@ def _publish_one(
         return {
             "status": COMPLETED,
             "reason": "Publisher-ul ține materialul în așteptare: "
-            + "; ".join(hold["hold_reasons"])[:300],
+            + "; ".join(hold["hold_reasons"]),
             "held_asset": asset_id,
             "hold_message_id": hold["message_id"],
         }
@@ -6498,7 +8856,7 @@ def _publish_one(
         # metadata, so the Publisher is asked again below and her new answer is judged anew.
         with Session(engine) as session:
             refused = publication_metadata_refusals(
-                session, asset_id, channel_id, metadata["title"][:100], metadata["tags"]
+                session, asset_id, channel_id, metadata["title"], metadata["tags"]
             )
         if refused:
             metadata = None
@@ -6524,7 +8882,7 @@ def _publish_one(
             return {
                 "status": COMPLETED,
                 "reason": "Publisher-ul ține materialul în așteptare: "
-                + "; ".join(prepared.get("hold_reasons", []))[:300],
+                + "; ".join(prepared.get("hold_reasons", [])),
                 "held_asset": asset_id,
                 "hold_message_id": prepared.get("message_id"),
             }
@@ -6555,7 +8913,7 @@ def _publish_one(
         "publishing.public_publish",
         requester="publisher",
         subject=asset_id,
-        evidence=f"{metadata['title'][:80]} → {channel_name} ({resolved['release_privacy']})",
+        evidence=f"{metadata['title']} → {channel_name} ({resolved['release_privacy']})",
         context={
             "channel_id": channel_id,
             "policy_version": resolved["policy_version"],
@@ -6571,13 +8929,13 @@ def _publish_one(
             # decision expires.
             return {
                 "status": COMPLETED,
-                "reason": refusal["reason"][:500],
+                "reason": refusal["reason"],
                 "refused_by_owner": asset_id,
                 "approval_id": refusal["approval_id"],
             }
         return {
             "status": SKIPPED,
-            "reason": refusal["reason"][:500],
+            "reason": refusal["reason"],
             "awaiting_owner": asset_id,
             "approval_id": refusal["approval_id"],
         }
@@ -6587,7 +8945,7 @@ def _publish_one(
             engine,
             media_asset_id=asset_id,
             channel_id=channel_id,
-            title=metadata["title"][:100],
+            title=metadata["title"],
             description=metadata["description"],
             tags=metadata["tags"],
             privacy_status=resolved["privacy_status"],
@@ -6599,6 +8957,19 @@ def _publish_one(
         )
     except (PublishingGateError, PublisherNotConfigured) as exc:
         return {"status": SKIPPED, "reason": sentence(error_words(exc)), **error_fields(exc)}
+    except (ValueError, OSError) as exc:
+        # A row that changed under the gate, an asset gone, a file the hash could not read:
+        # this film's upload, not the studio's day. Raised, it made the stage HARD, opened
+        # safe mode and stopped autonomy until the Owner cleared both; the film is offered
+        # again tomorrow instead.
+        return {
+            "status": SKIPPED,
+            "reason": sentence(
+                f"Publicarea «{metadata['title']}» nu s-a putut face acum: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+            "publish_fault": asset_id,
+        }
 
     went_out = published["status"] in OUT_ON_THE_CHANNEL
     with Session(engine) as session, session.begin():
@@ -6616,10 +8987,10 @@ def _publish_one(
                 session,
                 memory_class="HISTORICAL_EVENT",
                 content=(
-                    f"Published “{metadata['title'][:100]}” to {channel_name} "
+                    f"Published “{metadata['title']}” to {channel_name} "
                     f"({resolved['release_privacy']}): {published['status']}."
                     if went_out
-                    else f"Upload of “{metadata['title'][:100]}” to {channel_name} did not "
+                    else f"Upload of “{metadata['title']}” to {channel_name} did not "
                     f"go out: {published['status']}."
                 ),
                 source_type="event",
@@ -6635,11 +9006,11 @@ def _publish_one(
         return {
             "status": COMPLETED,
             "reason": (
-                f"Filmul «{metadata['title'][:100]}» nu a urcat pe {channel_name}: "
+                f"Filmul «{metadata['title']}» nu a urcat pe {channel_name}: "
                 f"{publication_status(published['status'])}"
                 + (f" — {detail}" if detail else "")
                 + "."
-            )[:500],
+            ),
             "asset_id": asset_id,
             "publication_id": published["id"],
             "publication_status": published["status"],
@@ -6765,11 +9136,7 @@ def _publish(
             )
         )
         # A film the Director rejected stays out of the queue; the next one comes forward.
-        rejected_assets = {
-            review.media_asset_id
-            for review in session.scalars(select(EditorialReview))
-            if review.verdict == "REJECT"
-        }
+        rejected_assets = _viewing_rejected(session)
         # The queue holds files, but the channel receives films. One film rendered four times
         # is four QC-passed assets: publishing them in turn would put the same video on the
         # channel four times, once per day. So the queue is collapsed to one entry per film —
@@ -6856,7 +9223,7 @@ def _publish(
         first = published[0]
         return _outcome(
             COMPLETED,
-            reason[:500],
+            reason,
             published=published,
             not_published=not_published,
             publication_id=first["publication_id"],
@@ -7052,6 +9419,20 @@ def build_stage_runners(
 
     def keep(name: str, runner: Callable[[], dict[str, Any]]) -> Callable[[], dict[str, Any]]:
         def run() -> dict[str, Any]:
+            if name in {
+                "idea_generation",
+                "research_and_verification",
+                "selection",
+                "script_and_storyboard",
+                "serial_queue",
+                "serial_next",
+            }:
+                from app.media.backlog import new_production_wait  # noqa: PLC0415
+
+                waiting = new_production_wait(engine, settings)
+                if waiting is not None:
+                    outcomes[name] = waiting
+                    return waiting
             # What the stage is, in the risk terms the Owner's mode understands (see
             # STAGE_ACTIONS). A stage above what the mode allows could not run, which is
             # SKIPPED and not BLOCKED: BLOCKED ends the day, and a mode is not an incident —
@@ -7070,7 +9451,7 @@ def build_stage_runners(
             if refusal is not None:
                 outcome = _outcome(
                     SKIPPED,
-                    refusal["reason"][:500],
+                    refusal["reason"],
                     autonomy_mode=refusal["mode"],
                     risk_tier=refusal["tier"],
                     governance_status=refusal["status"],

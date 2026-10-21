@@ -45,7 +45,7 @@ close the gates the purchase code reads.
   the Owner's verdict «sunt doar niste imagini lipite» (`backend/app/media/prompt_agent.py:1-26`).
   The bible and the per-shot package exist so a shot has a camera, a light, a continuity rule and a
   story purpose.
-- **The Nepal film (storyboard 0000003f, 2026-09-26).** Enum codes ("NEPAL_CLIMATE_CRISIS"), a hex
+- **The Nepal film (storyboard 1d530880, 2026-09-26).** Enum codes ("NEPAL_CLIMATE_CRISIS"), a hex
   palette, "Camera: medium shot, locked camera" on every scene, an 8-item "Avoid:" list, a bar chart
   and a black screen asked of a photo model, and no face rule. It cost more than 1,000 Runway credits
   and failed QC. Each of those is a lint finding (`backend/app/media/prompt_lint.py:1-13`), the bible
@@ -590,7 +590,7 @@ rewrite of that scene only, the code's compile and lint, her review against qual
 findings by id and severity, the turn to the picture when the motion layer cannot treat them, their
 letters, the record, and the lesson the review draws (`1-80`). Also the serial rung (recompose,
 re-roll or brief). Why: the Owner's rules of 2026-10-11 and 2026-10-12 quoted above, and the
-incidents on 00000160, 1c038a99 and f06808c9.
+incidents on aa170155, 1c038a99 and f06808c9.
 
 | Function | Line | What it does | Why it exists | Decided by |
 |---|---|---|---|---|
@@ -755,7 +755,7 @@ read correctly (`181-188`).
 | `load_factual_look` | 271 | Reads the factual look with built-in defaults | The studio still films one look when the file is missing | CONFIG |
 | `_names_several_places` | 339 | A world of more than one place (labels or "two … spaces") | babcf272 tunnel and void | CODE_RULE |
 | `look_phrase` | 357 | Whole readable clauses of a bible value, within a word budget; drops codes, hex, negations, people, writing, style overrides, shot sizes, charts, then-chains, later moments, panels, quotes, place-scoped pieces for whole-film slots | babcf272 "The setting is entirely" fragments | CODE_RULE |
-| `look_block` | 473 | Rendering, where (place/season/weather), light (overcast rule, place-by-place → none), palette, fills, lens and grain; slots omitted when the scene names its own; fitted to 40-60 words by dropping season, weather, then sentences | 00000160 daylight over a lamp-lit night desk | CODE_RULE + CONFIG |
+| `look_block` | 473 | Rendering, where (place/season/weather), light (overcast rule, place-by-place → none), palette, fills, lens and grain; slots omitted when the scene names its own; fitted to 40-60 words by dropping season, weather, then sentences | aa170155 daylight over a lamp-lit night desk | CODE_RULE + CONFIG |
 
 Helpers: `_clean`, `_strings`, `_said`, `_scoped_to_a_place`, `_place_by_place`, `_bible_rules`,
 `_sentence`.

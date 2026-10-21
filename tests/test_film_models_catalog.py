@@ -35,7 +35,7 @@ from app.media.prompt_lint import CAMERA_MOVES
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOGUE = ROOT / "config" / "film_models.json"
-NEPAL = Path(__file__).parent / "fixtures" / "factual_sample" / "prompts.json"
+NEPAL = Path(__file__).parent / "fixtures" / "nepal_1d530880" / "prompts.json"
 TABLE = cost_plan.load_price_table()
 
 #: (remote_id, production_status, tasks, image_to_video ratios, image_to_video durations,

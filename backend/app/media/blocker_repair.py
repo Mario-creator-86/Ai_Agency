@@ -50,26 +50,25 @@ logger = logging.getLogger("studio.sheet_repair")
 # The safety the Owner asked for on 2026-10-03 ("pune și o siguranță să nu meargă la infinit"):
 # on his studio the scan had queued a repair of the same sheet every five minutes for an hour,
 # every one UNRESOLVED because every language-model call failed. The repair still continues
-# without asking him; it backs off, has a daily ceiling per set of blockers, waits while the
+# without asking him; it backs off per set of blockers, waits while the
 # language model is failing, and tells him once when it pauses.
 #: Letters to the Owner when the automatic repair of a sheet pauses.
 PAUSED_KIND = "sheet_repair_paused"
 #: The end of a repair whose film is closed («Închide filmul», or the Director's retirement).
 CLOSED_FILM_NOTE = (
-    "Filmul a fost închis: foaia lui nu se mai remediază și nu se cumpără nimic pentru el."
+    "Filmul este închis pentru producție sau deja încărcat: foaia lui nu se mai remediază "
+    "și nu se cumpără nimic pentru el."
 )
-#: Attempts in 24 hours on the same blockers (the same sheet and the same issues).
-MAX_SAME_ISSUES_PER_DAY = 5
 #: The wait before the second retry of the same blockers; it doubles after each one.
 BACKOFF_BASE_SECONDS = 300
-#: The longest wait between two attempts on the same blockers.
-BACKOFF_MAX_SECONDS = 6 * 3600
+#: Semantic repairs stay in the active backlog; provider failures have their own pause.
+BACKOFF_MAX_SECONDS = 20 * 60
 #: The latest model runs read to tell a failing language model from one bad answer.
 MODEL_RUNS_READ = 3
 #: When this studio process started. Attempts that failed before it do not count against the
-#: ceiling or the back-off: a restart usually brings code that fixes what made them fail (the
+#: back-off: a restart usually brings code that fixes what made them fail (the
 #: Owner, 2026-10-03: "să reparăm, și să îi lăsăm pe ei să rezolve"). Within one run of the
-#: studio the ceiling holds.
+#: studio the cooldown holds.
 STUDIO_STARTED_AT = datetime.now(UTC)
 #: The Owner let a paused repair try again now (his accept on the pause card, 2026-10-03):
 #: the attempts before it no longer count against the guard.
@@ -232,19 +231,9 @@ def _repair_guard(
                 "după primul răspuns reușit al modelului. Nu s-a cumpărat nimic."
             ),
         }
-    if len(unresolved) >= MAX_SAME_ISSUES_PER_DAY:
-        return {
-            "status": "PAUSED",
-            "cause": "DAILY_LIMIT",
-            "reason_ro": (
-                f"Remedierea automată a foii „{sheet.get('title') or sheet['storyboard_id']}” "
-                f"a încercat de {len(unresolved)} ori în ultimele 24 de ore aceleași blocaje "
-                "(aceleași coduri pe aceleași scene, oricum ar fi fost rescrise prompturile), "
-                "fără succes, și s-a oprit pentru restul zilei sau până când blocajele se "
-                "schimbă. Blocajele rămân pe foaia de filmare; nu s-a cumpărat nimic."
-            ),
-        }
-    wait = 0 if len(unresolved) < 2 else BACKOFF_BASE_SECONDS * 2 ** (len(unresolved) - 2)
+    # No daily editorial stop. Cap the exponent as well as the delay so a very long
+    # history cannot allocate a huge integer; later attempts keep the maximum cooldown.
+    wait = 0 if len(unresolved) < 2 else BACKOFF_BASE_SECONDS * 2 ** min(len(unresolved) - 2, 16)
     resume = max(unresolved) + timedelta(seconds=min(wait, BACKOFF_MAX_SECONDS))
     if datetime.now(UTC) < resume:
         return {"status": "BACKING_OFF", "retry_after": resume.isoformat()}
@@ -281,7 +270,7 @@ def _pause_letter(session: Session, sheet: dict[str, Any], fingerprint: str, gua
     post_message(
         session,
         intent="ESCALATE" if owners else "STATUS",
-        subject=f"Remedierea foii e în pauză: {sheet.get('title') or identifier}"[:200],
+        subject=f"Remedierea foii e în pauză: {sheet.get('title') or identifier}",
         body={
             "kind": PAUSED_KIND,
             "storyboard_id": identifier,
@@ -309,6 +298,103 @@ def _close_pause_letters(session: Session, identifier: str) -> None:
                 resolved_by="Director",
                 correlation_id=str(uuid4()),
             )
+
+
+#: The end of a repair whose film goes to publication with what it has: it passed quality
+#: control (her ACCEPT among them), or her REPAIR is stopped only by the Owner's caps and her
+#: next walk publishes it (`runbook.stages.stored_repair_ships_under_cap`).
+SETTLED_FILM_NOTE = (
+    "Filmul este asamblat și merge la publicare cu ce are (a trecut controlul calității, sau "
+    "limita de randări ori de refaceri a fost atinsă): foaia lui nu se mai remediază și nu se "
+    "cumpără nimic pentru el."
+)
+
+
+def film_settled_for_publication(engine: Engine, storyboard_id: str, settings: Any = None) -> bool:
+    """Whether the film is rendered and nothing more is filmed for it: its newest finished
+    render's newest quality report PASSED (it goes to publication), or FAILED with the
+    Director's newest decision a REPAIR that nothing but the Owner's caps stopped (the next
+    walk publishes it from that decision, `runbook.stages.stored_repair_ships_under_cap`;
+    never one with a verdict that is not hers).
+
+    2026-10-16 (f06808c9, «The Zero Script Club»): rendered on 13 October, its REPAIR held by
+    the renders cap, the scan still queued a sheet repair on its lint blockers; each asked the
+    Video Editor for the whole film's shot plans, 16 minutes on the one worker, one came back
+    empty, and the words it rewrote took the approved stills from scenes the film had passed.
+    Such a film's sheet is not repaired. Read only; False when unreadable."""
+    from app.media.models import QualityControlReport, VideoRenderJob  # noqa: PLC0415
+
+    try:
+        with Session(engine) as session:
+            asset_id = session.scalar(
+                select(VideoRenderJob.output_asset_id)
+                .where(
+                    VideoRenderJob.storyboard_id == storyboard_id,
+                    VideoRenderJob.status == "COMPLETED",
+                    VideoRenderJob.output_asset_id.is_not(None),
+                )
+                .order_by(VideoRenderJob.finished_at.desc(), VideoRenderJob.started_at.desc())
+                .limit(1)
+            )
+            if asset_id is None:
+                return False
+            report = session.scalar(
+                select(QualityControlReport)
+                .where(
+                    QualityControlReport.media_asset_id == str(asset_id),
+                    QualityControlReport.status != "INVALIDATED",
+                )
+                .order_by(QualityControlReport.verified_at.desc())
+                .limit(1)
+            )
+            if report is None:
+                return False
+            status, report_id = str(report.status), str(report.id)
+        if status == "PASSED":
+            return True
+        if status != "FAILED":
+            return False
+        from app.media.director_qc import decision_state  # noqa: PLC0415 - it imports runbook
+        from app.runbook.stages import stored_repair_ships_under_cap  # noqa: PLC0415
+
+        state = decision_state(engine, report_id)
+        return stored_repair_ships_under_cap(engine, settings, state.get("decision")) is not None
+    except Exception as exc:  # noqa: BLE001 - unread, the sheet is read as before
+        logger.warning(
+            "film_settled_unread",
+            extra={"storyboard_id": storyboard_id, "error_type": type(exc).__name__},
+        )
+        return False
+
+
+def withdraw_sheet_repairs(engine: Engine, storyboard_id: str, reason: str) -> list[str]:
+    """The film's sheet-repair letters still open (the blockers' report, the Editor's work, a
+    pause or a limit note) answered with ``reason``: the film goes to publication with what it
+    has, so nothing of its sheet is repaired any more. A repair already queued ends at its start
+    without a model call (`process_sheet_repair`: `film_settled_for_publication`). Returns the
+    letters answered; nothing is bought."""
+    answered: list[str] = []
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        for message in session.scalars(select(AgentMessage).where(AgentMessage.status == "OPEN")):
+            body = message.body_json or {}
+            if body.get("storyboard_id") != storyboard_id or body.get("kind") not in (
+                REPORT_KIND,
+                WORK_KIND,
+                PAUSED_KIND,
+                "sheet_repair_owner",
+                "sheet_repair_limit",
+            ):
+                continue
+            resolve_message(
+                session,
+                message.id,
+                resolution=reason,
+                resolved_by="Director",
+                correlation_id=str(uuid4()),
+            )
+            answered.append(str(message.id))
+    return answered
 
 
 def allowed(engine: Engine) -> bool:
@@ -434,7 +520,14 @@ def sheet_issues(sheet: dict[str, Any]) -> list[dict[str, Any]]:
     return issues
 
 
-def submit_sheet_issues(engine: Engine, sheet: dict[str, Any]) -> dict[str, Any]:
+def submit_sheet_issues(
+    engine: Engine, sheet: dict[str, Any], *, settings: Any = None
+) -> dict[str, Any]:
+    with Session(engine) as session:
+        if film_is_closed(session, str(sheet["storyboard_id"])):
+            return {"status": "FILM_CLOSED", "reason_ro": CLOSED_FILM_NOTE}
+    if film_settled_for_publication(engine, str(sheet["storyboard_id"]), settings):
+        return {"status": "FILM_SETTLED", "reason_ro": SETTLED_FILM_NOTE}
     successor = story_progress(engine, str(sheet["storyboard_id"]))
     if successor.get("replacement_storyboard_id"):
         return {"status": "REVISED", **successor}
@@ -491,6 +584,8 @@ def submit_sheet_issues(engine: Engine, sheet: dict[str, Any]) -> dict[str, Any]
     with Session(engine) as session, session.begin():
         lock_for_write(session)
         _close_pause_letters(session, identifier)
+        if film_is_closed(session, identifier):
+            return {"status": "FILM_CLOSED", "reason_ro": CLOSED_FILM_NOTE}
         # A report survives a process dying between the report commit and queue insertion.
         report = next(
             (
@@ -507,7 +602,7 @@ def submit_sheet_issues(engine: Engine, sheet: dict[str, Any]) -> dict[str, Any]
             report = post_message(
                 session,
                 intent="REQUEST_REVIEW",
-                subject=f"Blocaje foaie: {sheet.get('title') or identifier}"[:200],
+                subject=f"Blocaje foaie: {sheet.get('title') or identifier}",
                 body={
                     "kind": REPORT_KIND,
                     "storyboard_id": identifier,
@@ -554,6 +649,109 @@ class Assignment(BaseModel):
     assign_to_role: str = PROMPT_ROLE
 
 
+def _repair_prompt_issues(
+    engine: Engine,
+    registry: Any,
+    identifier: str,
+    issues: list[dict[str, Any]],
+    instructions: str,
+    correlation: str,
+    exchange: int,
+) -> None:
+    """Existing paid plans require a reviewed rewrite, not initial shot generation."""
+    from app.media import prompt_lint, scene_rewrite  # noqa: PLC0415
+    from app.media.models import SceneTake  # noqa: PLC0415
+
+    with Session(engine) as session:
+        protected = set(
+            session.scalars(
+                select(SceneTake.scene_number).where(
+                    SceneTake.storyboard_id == identifier,
+                    SceneTake.status.in_(("SUBMITTED", "PAID", "APPROVED", "REJECTED", "LOST")),
+                )
+            )
+        )
+        in_flight = set(
+            session.scalars(
+                select(SceneTake.scene_number).where(
+                    SceneTake.storyboard_id == identifier,
+                    SceneTake.status == "SUBMITTED",
+                )
+            )
+        )
+    indexed = all(
+        isinstance(i.get("scene_index"), int) and not isinstance(i["scene_index"], bool)
+        for i in issues
+    )
+    paid = (
+        {i["scene_index"] for i in issues if i.get("scene_index") in protected}
+        if indexed
+        else set()
+    )
+    for index in sorted(paid):
+        if index in in_flight:
+            raise PromptError(f"Scena {index}: livrarea este încă în curs; promptul nu se schimbă.")
+        context = scene_rewrite.scene_context(engine, identifier, index)
+        if context is None:
+            raise PromptError(f"Scena {index}: planul existent nu poate fi rescris în siguranță.")
+        findings = [i for i in issues if i["scene_index"] == index]
+        package = context["package"]
+        still = str(package.get("still_prompt") or context.get("visual_prompt") or "")
+        motion = str(package.get("motion_prompt") or "")
+        motion_codes = {
+            f.code for f in prompt_lint.lint_motion_prompt(motion, scene=index, still_prompt=still)
+        }
+        still_codes = {
+            f.code
+            for f in prompt_lint.lint_still_prompt(
+                still, scene=index, bible=context.get("bible") or {}
+            )
+        }
+        codes = {i["code"] for i in findings}
+        if codes <= motion_codes and not codes.intersection(still_codes):
+            layers = (scene_rewrite.MOTION,)
+        else:
+            layers = tuple(context["layers"])
+        context = {
+            **context,
+            "layers": layers,
+            "last_code": "SHEET_LINT",
+            "failures": [
+                {
+                    "kind": "prompt",
+                    "code": "SHEET_LINT",
+                    "reasons": [str(i["detail"]) for i in findings],
+                }
+            ],
+            "sheet_repair_instructions": instructions,
+        }
+        context.pop("delivery_failure", None)
+        assigned = scene_rewrite.director_brief(engine, registry, context, correlation)
+        if assigned.get("brief") is None:
+            raise PromptError(
+                assigned.get("reason") or "Directorul nu a putut repartiza rescrierea."
+            )
+        brief = {**assigned["brief"], "source": scene_rewrite.AUDIT_BRIEF}
+        done = scene_rewrite.rewrite_scene(engine, registry, context, brief, correlation)
+        if not done.get("rewritten"):
+            raise PromptError(
+                str(done.get("reason") or "Rescrierea nu a trecut verificarea Directoarei.")
+            )
+    unbought = [i for i in issues if not indexed or i["scene_index"] not in paid]
+    if unbought:
+        write_shot_prompts(
+            engine,
+            registry,
+            identifier,
+            correlation,
+            repair_context={
+                "instructions": instructions,
+                "issues": unbought,
+                "exchange": exchange,
+            },
+        )
+
+
 def director_assignment(
     engine: Engine,
     registry: Any,
@@ -569,8 +767,10 @@ def director_assignment(
     instructions = (
         "The shooting sheet below is authoritative data. Assign its prompt and "
         "missing-shot-plan blockers "
-        f"to {PROMPT_ROLE}, who owns write_shot_prompts. Ask for concrete natural language, "
-        "camera and continuity, with every scene corrected. Never ask for paid media, "
+        f"to {PROMPT_ROLE}. New plans use shot generation; existing paid plans use a "
+        "one-scene rewrite reviewed by the Director, keeping a paid still exact on motion "
+        "repairs. Ask for concrete natural language, camera and continuity, correcting only "
+        "the scenes named by the findings. Never ask for paid media, "
         "funding, credentials or policy changes. For financial/configuration blockers the "
         "backend will escalate to the Owner. Return only JSON "
         '{"note":"specific repair instructions", "repair_prompts":true|false, '
@@ -586,7 +786,7 @@ def director_assignment(
             json.dumps({"title": sheet.get("title"), "issues": issues}, ensure_ascii=False),
             "sheet-issues",
         ),
-        "sheet-repair-v1",
+        "sheet-repair-v2",
         correlation,
         Assignment,
         "",
@@ -647,6 +847,8 @@ def _finish(
     note: str,
     correlation: str,
     details: dict[str, Any] | None = None,
+    *,
+    settled: bool = False,
 ) -> dict[str, Any]:
     with Session(engine) as session, session.begin():
         lock_for_write(session)
@@ -661,12 +863,16 @@ def _finish(
             "storyboard_id": payload["storyboard_id"],
             **(details or {}),
         }
+        # A film that goes to publication with what it has ends its repairs as a closed one.
+        closed_stale = status == "STALE" and (
+            settled or film_is_closed(session, payload["storyboard_id"])
+        )
         report = session.get(AgentMessage, payload["message_id"])
         director = agent_for_role(session, "Director")
         editor = agent_for_role(session, PROMPT_ROLE)
         if report:
             report.body_json = {**report.body_json, "repair_result": result}
-            if status == "RESOLVED":
+            if status == "RESOLVED" or closed_stale:
                 resolve_message(
                     session,
                     report.id,
@@ -691,14 +897,14 @@ def _finish(
                 post_message(
                     session,
                     intent="ESCALATE",
-                    subject=f"Foaia necesită intervenție: {title}"[:200],
+                    subject=f"Foaia necesită intervenție: {title}",
                     body={"storyboard_id": payload["storyboard_id"], "kind": "sheet_repair_owner"},
                     body_text=note + "\n" + "\n".join(i["detail"] for i in remaining),
                     from_agent_id=director.id if director else None,
                     to_owner=True,
                     in_reply_to=report.id,
                 )
-        if status == "RESOLVED":
+        if status == "RESOLVED" or closed_stale:
             for message in session.scalars(
                 select(AgentMessage).where(AgentMessage.status == "OPEN")
             ):
@@ -716,6 +922,7 @@ def _finish(
                         resolved_by="verificarea foii",
                         correlation_id=correlation,
                     )
+        if status == "RESOLVED":
             # The sheet's own work done: the film goes on tonight (2026-10-11, f06808c9).
             result["continue_task_id"] = _continue_repaired_film(session, payload, correlation)
         append_event(
@@ -746,6 +953,10 @@ def process_sheet_repair(
         # Closed while it runs (the Director's assignment holds no lease), it meets the closed
         # film at the repair's own lease (`FilmClosed`, below) and ends the same way.
         return _finish(engine, payload, "STALE", [], CLOSED_FILM_NOTE, correlation)
+    if film_settled_for_publication(engine, identifier, settings):
+        # Rendered and going to publication with what it has (2026-10-16, f06808c9): queued
+        # before that, the repair is withdrawn here, without a model call.
+        return _finish(engine, payload, "STALE", [], SETTLED_FILM_NOTE, correlation, settled=True)
     context = dict(sheet_context or {})
     context.pop("read_live", None)
 
@@ -848,7 +1059,7 @@ def process_sheet_repair(
                     work = post_message(
                         session,
                         intent="HANDOFF",
-                        subject=f"Repară foaia: {current.get('title')}"[:200],
+                        subject=f"Repară foaia: {current.get('title')}",
                         body={
                             "kind": WORK_KIND,
                             "executed_by_worker": True,
@@ -879,16 +1090,14 @@ def process_sheet_repair(
                         },
                         correlation,
                     )
-                write_shot_prompts(
+                _repair_prompt_issues(
                     engine,
                     registry,
                     identifier,
+                    prompt_issues,
+                    decision["note"],
                     correlation,
-                    repair_context={
-                        "instructions": decision["note"],
-                        "issues": prompt_issues,
-                        "exchange": int(payload.get("attempt") or 1),
-                    },
+                    int(payload.get("attempt") or 1),
                 )
                 after = read(live=context.get("account") is not None)
                 remaining = sheet_issues(after)
@@ -977,11 +1186,18 @@ def scan_sheet_issues(engine: Engine, **context: Any) -> dict[str, Any]:
     reported = []
     for identifier in identifiers:
         try:
+            with Session(engine) as session:
+                if film_is_closed(session, identifier):
+                    continue
+            if film_settled_for_publication(engine, identifier, context.get("settings")):
+                # Rendered, and going to publication with what it has: nothing more is filmed
+                # for it, so its sheet is not repaired (2026-10-16, f06808c9).
+                continue
             if story_progress(engine, identifier).get("replacement_storyboard_id"):
                 continue
             reading = build_sheet(engine, identifier, **({"read_live": False} | context))
             if sheet_issues(reading):
-                submit_sheet_issues(engine, reading)
+                submit_sheet_issues(engine, reading, settings=context.get("settings"))
                 reported.append(identifier)
             elif context.get("read_live") and not reading.get("in_progress"):
                 # Funding/configuration corrected outside the task is verified on the next scan.

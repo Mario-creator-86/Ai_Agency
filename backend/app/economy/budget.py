@@ -304,8 +304,12 @@ def reserved_since(session: Session, since_iso: str) -> int:
 
 
 def spend_since(session: Session, since_iso: str) -> dict[str, Any]:
-    """What the books say was spent since a moment: priced costs, priced agent runs, the
-    usage nobody priced, and the sums still held by films in progress."""
+    """What the books say was spent since a moment: the vendors' priced costs (what the
+    budgets count), the priced agent runs reported apart (the Owner, 2026-10-12 and
+    2026-10-15: «LLM-ul este pe abonament! NU COSTĂ BANI» — on 2026-10-15 14,22 USD of
+    priced tokens, most of them the Director's 580k-token calls, were counted as the day's
+    spend and a 3,90 USD stills step was refused OVER_DAILY_BUDGET with a letter to him),
+    the usage nobody priced, and the sums still held by films in progress."""
     rows = session.execute(
         select(
             ProviderCostRecord.provider,
@@ -358,14 +362,15 @@ def spend_since(session: Session, since_iso: str) -> dict[str, Any]:
         )
     )
     agent_micros = _agent_spend_micros(session, since_iso)
-    total += agent_micros
+    # Not added to ``total``: the subscription's tokens are shown, never charged to a
+    # budget that exists for images and motion.
     reserved = reserved_since(session, since_iso)
     return {
         "since": since_iso,
         "spent_usd_micros": total,
         "spent_usd": format_micros(total),
         "by_provider": sorted(by_provider.values(), key=lambda e: e["provider"]),
-        # The priced agent runs, inside the total; shown apart so the Owner can see the tokens.
+        # The priced agent runs, beside the total (never inside it): the Owner sees the tokens.
         "agent_usd_micros": agent_micros,
         "agent_usd": format_micros(agent_micros),
         # The cost of renders that failed midway, inside the total: paid for, never delivered.
@@ -530,6 +535,76 @@ def reserve_spend(
             "reservation_id": row.id,
             "usd_micros": row.usd_micros,
             "usd": format_micros(row.usd_micros),
+        }
+
+
+def extend_reservation(
+    engine: Engine,
+    reservation_id: str,
+    usd_micros: int,
+    *,
+    correlation_id: str | None = None,
+    now: datetime | None = None,
+    partial: bool = False,
+) -> dict[str, Any]:
+    """Grow a standing hold by ``usd_micros`` within every active budget, behind the write lock.
+
+    A paid step holds its next round, not its whole cap, and grows the same row before each
+    later round (`media.shooting_sheet.StepHold`, 2026-10-16: a 40-shot film held three times
+    every still up front, and the day's second film was refused before its first still). When
+    the whole sum does not fit, the hold does not grow and the refusal's words come back; with
+    ``partial`` (a round of many items) it grows by what the tightest budget has left, and the
+    round is cut to what is held (`gpu_batch.fit_round`). Nothing bought passes a budget,
+    and a single purchase never takes what is left of the day without fitting in it. A hold
+    no longer RESERVED (settled, released, swept by the watchdog) is never grown: nothing
+    more is bought on it. Returns ``allowed`` (the whole sum fitted), ``added_usd_micros``
+    and, refused, the budget's ``period`` and ``reason``.
+    """
+    moment = now or datetime.now(UTC)
+    wanted = max(0, int(usd_micros))
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        row = session.get(SpendReservation, reservation_id)
+        if row is None or row.status != "RESERVED":
+            return {
+                "allowed": False,
+                "added_usd_micros": 0,
+                "period": None,
+                "reason": "Rezervarea pasului nu mai este activă; nu se mai cumpără nimic în "
+                "acest pas.",
+            }
+        room = wanted
+        refused: dict[str, Any] | None = None
+        for period in _period_status(session, moment, studio_timezone(session)):
+            committed = period["spent_usd_micros"] + period["reserved_usd_micros"]
+            left = max(0, int(period["limit_usd_micros"]) - committed)
+            if left < wanted and (refused is None or left < room):
+                refused = _refusal(period, wanted)
+            room = min(room, left)
+        if refused is not None and not partial:
+            room = 0
+        if room > 0:
+            row.usd_micros = int(row.usd_micros) + room
+            event = append_event(
+                session,
+                "economy.spend_reservation_grown",
+                "spend_reservation",
+                row.id,
+                1,
+                {
+                    "purpose": row.purpose,
+                    "added_usd": format_micros(room),
+                    "usd": format_micros(row.usd_micros),
+                },
+                correlation_id or row.correlation_id,
+            )
+            row.event_id = event.event_id
+        return {
+            "allowed": refused is None,
+            "added_usd_micros": room,
+            "usd_micros": int(row.usd_micros),
+            "period": refused["period"] if refused else None,
+            "reason": refused["reason"] if refused else "",
         }
 
 

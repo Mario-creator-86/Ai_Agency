@@ -1,6 +1,40 @@
-"""Offline regression tests for test owner takes never retired.
+"""A take the Owner approved himself is never retired unasked; a redo that delivered nothing
+gives back what it retired (2026-10-10).
 
-Providers are faked; all data is synthetic."""
+Film babcf272, «The Particle That Shouldn't Exist (But Does)»: the studio assembled the film
+from takes the Owner had approved (scenes 1-4; scene 2 his approved test shot). The film-level
+QC failed it, partly by reading the studio's own subtitles as text, and the day's QC repair
+(`runbook.stages._apply_repairs`) redid scenes 1 and 2 by itself, under his OVER_USD 5 rule:
+`_retire_takes` retired his still and clip of scene 1 and his still and test shot of scene 2,
+the rewrite put new words on both scenes, RunPod GPU sessions opened, he forced the GPU off,
+every new candidate ended REFUSED, and nothing was delivered. So:
+
+- a redo nobody pressed that would retire a take he approved himself buys nothing, asks
+  nothing, writes nothing (OWNER_APPROVED); the transaction that would retire it refuses too;
+- his own press of «Refă imaginea» still redoes his approved scene;
+- a redo that retired takes and then delivered nothing usable (the GPU forced off, every
+  candidate refused) gives them back with the scene's words, and they are usable again in
+  the motion plan and in the assembly;
+- the watchdog gives back, once, what a redo that ended before this code left (an older
+  event that kept only the old still and motion prompts: his clip, which those words no
+  longer reproduce, is bound to the picture he approved), never a take he turned down, never
+  beside a newer take, never while the film is being bought for.
+
+His card of 2026-10-11 («Directoarea poate reface și ce am aprobat eu»): the Director's repair
+of a defect quality control measured and she confirmed (``director_repair``) retires a take he
+approved unless he marked the approval final (`decide_take` ``final``, or a note that says
+«finală» / «definitiv»); every other unasked redo still spares whatever he approved.
+
+The review of the same day (section 5): candidates a gate turned down were still delivered
+(they wait for his look), so a redo that brought them gives nothing back, now or later; his
+yes to the studio's question for a plan is his decision as his press is; and the money guards
+of an unasked redo still run on a scene only the studio chose. His card of the same day: a clip
+too short for its words is redone only as his question, raised about his own approved clip too
+(also where his rule and mode would buy unasked); nothing is retired or bought before his yes.
+
+Every provider is faked (spy adapters, a RunPod cloud stand-in); no socket is opened (conftest
+refuses them) and nothing is spent.
+"""
 
 from __future__ import annotations
 
@@ -878,9 +912,12 @@ def test_his_too_short_clip_gets_his_question_and_is_retired_only_after_his_yes(
 ):
     """His card of 2026-10-10: a clip too short for its words beyond the 25% a clip may be
     slowed is redone only as his question. Scene 3 of a babcf272-like film is his own approved
-    clip and needs 29%: the studio raises his question (also where his rule and mode would let
-    the redo buy unasked), nothing is retired or bought while it waits, and once he said yes
-    the redo raised again spends his yes, buys the clip at its length and retires his."""
+    clip and needs 38% (its words, the narrator's full stop after them as the pause rules freeze
+    it, and the dissolve into scene 4; the full stop's 3 frames toward its floor would not let
+    it in either, so the span is read whole): the studio raises his question (also where his
+    rule and mode would let the redo buy unasked), nothing is retired or bought while it waits,
+    and once he said yes the redo raised again spends his yes, buys the clip at its length and
+    retires his."""
     from app.economy.budget import BudgetCommand, set_budget
     from app.media import qc
     from app.media.assembler import CLIP_SHORT, propose_clip_redos
@@ -939,7 +976,7 @@ def test_his_too_short_clip_gets_his_question_and_is_retired_only_after_his_yes(
         assert "Proprietarul a aprobat el însuși clipul" in scene["redo"]["reason_ro"]
     (question,) = redo_questions()
     assert question.id == scene["redo"]["approval_id"]
-    assert "ar trebui încetinit cu 29%" in str(question.evidence)
+    assert "ar trebui încetinit cu 38%" in str(question.evidence)
     assert "Studioul propune refacerea mișcării la 7 s." in str(question.evidence)
     # Asking touched nothing of his: nothing bought, nothing retired.
     assert models.posts() == 0 and account.shots == 0
@@ -1016,7 +1053,8 @@ def test_a_mode_lowered_during_the_studios_redo_buys_no_reroll_and_gives_nothing
     result = still_press(engine, storyboard_id, tmp_path, images, plan["plan_hash"], unasked=True)
 
     assert len(images.asked) == 1, "a re-roll was bought after the mode was lowered"
-    assert "restul nu s-a cumpărat" in result["still"]["reason"]
+    # A rejected frame also requires Sarah to approve replacement words before a reroll.
+    assert "Directoarea le rescrie" in result["still"]["reason"]
     (event,) = stopped_events(engine)
     assert event["step"] == "scene_redo"
     assert "given_back" not in result

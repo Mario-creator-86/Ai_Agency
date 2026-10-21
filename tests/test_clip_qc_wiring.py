@@ -163,9 +163,7 @@ def test_a_paid_shot_that_passes_carries_its_report_on_the_take_and_on_the_scene
     assert kept.payload["checks"][0]["code"] == "motion"
 
 
-def test_a_failing_shot_is_bought_once_more_with_seed_plus_one_and_a_firmer_prompt(
-    engine, tmp_path
-):
+def test_a_failing_shot_waits_for_prompt_review_without_a_generic_retry(engine, tmp_path):
     storyboard_id = a_film(engine, tmp_path, scenes=1)
     account = Account(10_000)
     spy = SpyVideo("seedance2_5", account)
@@ -181,24 +179,23 @@ def test_a_failing_shot_is_bought_once_more_with_seed_plus_one_and_a_firmer_prom
         clip_check=ScriptedCheck("FAILED", "PASSED"),
     )
 
-    assert models.posts() == 2, "one retry, no more"
-    first, second = spy.asked
+    assert models.posts() == 1, "no purchase before review of replacement words"
+    (first,) = spy.asked
     seed = film_seed(storyboard_id)
-    assert first["extra"]["seed"] == seed and second["extra"]["seed"] == seed + 1
-    assert "clearly visible" in second["prompt"] and "clearly visible" not in first["prompt"]
+    assert first["extra"]["seed"] == seed
     (entry,) = summary["scenes"]
-    assert entry["status"] == "PAID"
-    assert entry["clip_qc"]["status"] == "PASSED_ON_RETRY"
-    assert entry["clip_qc"]["seeds"] == [seed, seed + 1]
+    assert entry["status"] == "NEEDS_OWNER"
+    assert entry["clip_qc"]["status"] == "ESCALATED"
+    assert entry["clip_qc"]["seeds"] == [seed]
+    assert entry["clip_qc"]["retry_prompt"] is None
     by_seed = {t.seed: t for t in shots(engine, storyboard_id)}
     assert by_seed[seed].status == "REJECTED" and by_seed[seed].failure_code == "QC.CLIP"
     assert "nu se mișcă" in by_seed[seed].failure_detail
-    assert by_seed[seed + 1].status == "PAID" and entry["take_id"] == by_seed[seed + 1].id
-    # Both purchases are on the books, inside the cap.
-    assert summary["spent_credits_quoted"] == 680 <= summary["cap_credits"]
+    assert entry["take_id"] == by_seed[seed].id
+    assert summary["spent_credits_quoted"] == 340 <= summary["cap_credits"]
 
 
-def test_a_shot_that_fails_twice_goes_to_the_owner_and_is_never_assembled(engine, tmp_path):
+def test_a_shot_that_fails_is_held_for_the_director_and_is_never_assembled(engine, tmp_path):
     storyboard_id = a_film(engine, tmp_path, scenes=1)
     account = Account(10_000)
     models = Models(SpyVideo("seedance2_5", account))
@@ -213,7 +210,7 @@ def test_a_shot_that_fails_twice_goes_to_the_owner_and_is_never_assembled(engine
         clip_check=ScriptedCheck("FAILED"),
     )
 
-    assert models.posts() == 2
+    assert models.posts() == 1
     (entry,) = summary["scenes"]
     assert entry["status"] == "NEEDS_OWNER" and entry["clip_qc"]["verdict"] == "FAILED"
     assert "Scena 1" in entry["reason"]
@@ -245,6 +242,70 @@ def test_a_shot_that_fails_twice_goes_to_the_owner_and_is_never_assembled(engine
     assert refused.value.scenes == [1]
     assert "Scena 1" in str(refused.value) and "controlul clipului" in str(refused.value)
     assert _jobs(engine) == jobs_before
+
+
+def test_a_clip_refused_for_a_still_at_the_renders_cap_stands_under_the_cap(engine, tmp_path):
+    """04:11Z, 7c26a7ce scenes 1-3: the stills kept under the Owner's cap carried a window,
+    every clip of them was refused by clip QC for the picture's fault and sent back to a still
+    that could not be bought again, and the film stood still. With the still at its three
+    renders, the clip stands under the cap and the film goes on to its QC."""
+    from app.services import utc_now
+
+    storyboard_id = a_film(engine, tmp_path, scenes=1)
+    with Session(engine) as session, session.begin():
+        (still_row,) = session.scalars(
+            select(SceneTake).where(
+                SceneTake.storyboard_id == storyboard_id, SceneTake.kind == "still"
+            )
+        )
+        still_row.approved_by = "still_gate"
+        still_id = still_row.id
+        for n in range(2):
+            take_id = str(uuid4())
+            session.add(
+                SceneTake(
+                    id=take_id,
+                    storyboard_id=storyboard_id,
+                    scene_number=1,
+                    kind="still",
+                    prompt_hash=uuid4().hex,
+                    model_id="seedream5_pro",
+                    resolution="1080:1920",
+                    status="REJECTED",
+                    failure_code="LOCAL.STILL_GATE",
+                    path=f"storage/{take_id}.bin",
+                    sha256=uuid4().hex,
+                    remote_task_id=f"task-{n}",
+                    created_at=utc_now(),
+                    updated_at=utc_now(),
+                )
+            )
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+
+    summary = approved(
+        engine,
+        storyboard_id,
+        tmp_path,
+        "test_shot",
+        models,
+        account,
+        clip_check=ScriptedCheck("PANELS", "PASSED"),
+    )
+
+    assert models.posts() == 1, "the same still was animated again"
+    (entry,) = summary["scenes"]
+    assert entry["status"] == "PAID", entry
+    assert entry["clip_qc"]["accepted_under_cap"] is True
+    # Kept under the cap, not passed: its own verdict (the dishonest-code audit, STUB-003).
+    assert entry["clip_qc"]["verdict"] == "ACCEPTED_UNDER_CAP"
+    assert entry["clip_qc"]["retry_credits"] == 0
+    (take,) = shots(engine, storyboard_id)
+    assert take.status == "PAID" and take.approved_by == "director_cap"
+    assert take.failure_code is None
+    with Session(engine) as session:
+        still = session.get(SceneTake, still_id)
+        assert still.status == "APPROVED"  # not sent back to the gate
 
 
 def test_a_shot_animated_from_panels_is_not_bought_again_on_the_same_still(engine, tmp_path):
@@ -429,7 +490,7 @@ def test_the_default_check_is_qc_check_clip_with_judge_clip_looking_at_its_frame
     assert look["motion_prompt"] == spy.asked[0]["prompt"]
 
 
-def test_the_motion_redo_checks_its_new_shot_and_retries_it_once(engine, tmp_path):
+def test_the_motion_redo_checks_its_new_shot_and_requires_review_before_retry(engine, tmp_path):
     from app.media.assembler import redo_plan, redo_scene
 
     storyboard_id = a_film(engine, tmp_path, scenes=2)
@@ -460,9 +521,9 @@ def test_the_motion_redo_checks_its_new_shot_and_retries_it_once(engine, tmp_pat
     answer(engine, asked.value.approval_id, "APPROVED")
     result = redo()
 
-    assert models.posts() == posts + 2
+    assert models.posts() == posts + 1
     entry = {e["scene_index"]: e for e in result["motion"]["scenes"]}[2]
-    assert entry["clip_qc"]["status"] == "PASSED_ON_RETRY"
+    assert entry["clip_qc"]["status"] == "ESCALATED"
 
 
 # -------------------------------------- (b) no still in PRODUCTION without his choice

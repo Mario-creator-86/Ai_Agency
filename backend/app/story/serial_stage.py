@@ -32,9 +32,21 @@ from app.media.serial_storyboard import (
     describe_serial_shots,
     storyboard_from_episode,
 )
-from app.services import queue_film_continue
+from app.models import OwnerPolicy
+from app.services import command_hash, queue_film_continue, recall_command, remember_command
+from app.story.duplicates import (
+    repair_duplicate_days,
+    repair_words,
+    second_approval,
+    superseded_by,
+)
 from app.story.models import DailyStudioLog, StoryEpisode
-from app.story.review import ReviewError, approve_reviewed_episode, judged_review
+from app.story.review import (
+    ReviewError,
+    approve_reviewed_episode,
+    approve_under_drafts_cap,
+    judged_review,
+)
 from app.story.services import (
     DraftRefused,
     NothingHappened,
@@ -43,6 +55,7 @@ from app.story.services import (
     ensure_projection,
     write_episode,
 )
+from app.wording import AUTONOMY_STOPPED
 
 logger = logging.getLogger("studio.story.stage")
 
@@ -70,6 +83,20 @@ FILMING_QUEUED = (
     "filmarea lui a fost pusă la coadă și continuă în seara aceasta, sub regulile tale pentru bani."
 )
 FILMING_TOMORROW = "rularea de mâine îl filmează."
+#: What a stage says when the registry holds no language model: nothing can be written or read.
+NO_MODEL = "Niciun model de limbaj disponibil; agenții nu pot rula."
+#: The command type `tell_day_now` records its answer under (`app.services.remember_command`).
+TELL_COMMAND = "TellDay"
+
+
+class DayNotTold(StoryError):
+    """The Owner's press could not tell the day, and nothing ran.
+
+    The stop is on, the log is not closed, the day already has its episode (approved, or a
+    PASS waiting for him) or has used its `MAX_DRAFTS_PER_DAY`, an episode of another day
+    waits for him or for a reading, or there is no language model. The message is the
+    studio's own sentence, and the route answers it as a state (409), not as a fault.
+    """
 
 
 def serial_continuation_key(storyboard_id: str) -> str:
@@ -83,7 +110,7 @@ def serial_continuation_key(storyboard_id: str) -> str:
 
 
 def _outcome(status: str, reason: str, **artefacts: Any) -> dict[str, Any]:
-    return {"status": status, "reason": reason[:300], "artefacts": artefacts}
+    return {"status": status, "reason": reason, "artefacts": artefacts}
 
 
 def _transient(exc: BaseException) -> bool:
@@ -121,10 +148,10 @@ def day_to_tell(session: Session, before: str) -> tuple[DailyStudioLog | None, l
     if told is not None:
         query = query.where(DailyStudioLog.business_date > told)
     quiet: list[str] = []
+    # Since 2026-10-16 a quiet day is told too (the story is the showrunner's, the day its
+    # backdrop): the newest closed day is the day to tell.
     for log in session.scalars(query.order_by(DailyStudioLog.business_date.desc())):
-        if ensure_projection(session, log):
-            return log, quiet
-        quiet.append(log.business_date)
+        return log, quiet
     return None, quiet
 
 
@@ -176,7 +203,7 @@ def day_to_retell(session: Session, before: str) -> dict[str, Any] | None:
         )
         if any(draft.status != "REJECTED" for draft in drafts):
             continue
-        if len(drafts) >= MAX_DRAFTS_PER_DAY or not ensure_projection(session, log):
+        if len(drafts) >= MAX_DRAFTS_PER_DAY:
             continue
         if drafts:
             refused.append((log, drafts))
@@ -229,7 +256,7 @@ def _naming_the_day(outcome: dict[str, Any], date_iso: str, quiet: list[str]) ->
         lead = f"Ziua povestită: {date_iso}. "
     else:
         return outcome
-    return {**outcome, "reason": (lead + outcome["reason"])[:300]}
+    return {**outcome, "reason": (lead + outcome["reason"])}
 
 
 def unfinished_episodes(session: Session, before: str) -> list[tuple[str, StoryEpisode]]:
@@ -250,18 +277,32 @@ def unfinished_episodes(session: Session, before: str) -> list[tuple[str, StoryE
     `RESUME_WINDOW_DAYS`: the Owner's own data holds one DRAFT of 2026-09-12, written before
     the review existed and never read; a draft that old tells a day long gone, and neither a
     model call nor the serial's waiting is spent on it.
+
+    Never a superseded draft (2026-10-17, `duplicates.superseded_by`): one whose day already
+    has its approved episode, or that a newer standing version of it replaced; nor an episode
+    approved after its day's first (`duplicates.second_approval`). Measured 2026-10-16 23:15Z:
+    the held PASS 8caad7d9, rewritten as b8684fc5 and approved the evening before, was taken
+    up here as «owner», approved, and became a second film of the same day.
     """
     since = (date.fromisoformat(before) - timedelta(days=RESUME_WINDOW_DAYS)).isoformat()
-    rows = session.scalars(
-        select(StoryEpisode)
-        .join(DailyStudioLog, DailyStudioLog.id == StoryEpisode.log_id)
-        .where(
-            DailyStudioLog.business_date < before,
-            DailyStudioLog.business_date >= since,
-            StoryEpisode.status.in_(("APPROVED", "DRAFT")),
+    rows = [
+        episode
+        for episode in session.scalars(
+            select(StoryEpisode)
+            .join(DailyStudioLog, DailyStudioLog.id == StoryEpisode.log_id)
+            .where(
+                DailyStudioLog.business_date < before,
+                DailyStudioLog.business_date >= since,
+                StoryEpisode.status.in_(("APPROVED", "DRAFT")),
+            )
+            .order_by(DailyStudioLog.business_date, StoryEpisode.created_at)
+        ).all()
+        if (
+            superseded_by(session, episode) is None
+            if episode.status == "DRAFT"
+            else not second_approval(session, episode)
         )
-        .order_by(DailyStudioLog.business_date, StoryEpisode.created_at)
-    ).all()
+    ]
     found: list[tuple[str, StoryEpisode]] = []
     found += [("storyboard", e) for e in rows if e.status == "APPROVED" and not e.storyboard_id]
     found += [("review", e) for e in rows if e.status == "DRAFT" and not e.review_json]
@@ -441,8 +482,18 @@ def _tell_the_day(
             counts["editorial"] = review.get("editorial")
             break
         notes = review.get("notes") or "; ".join(review.get("reasons") or [])
+        if stored >= MAX_DRAFTS_PER_DAY:
+            # The day's drafts are spent on her reading alone: the newest ships, approved
+            # under the cap (the Owner, 2026-10-15: «publicăm ce avem»), her notes the
+            # lesson for the next episode; a draft the checks refused never ships.
+            shipped = approve_under_drafts_cap(engine, episode_id, notes, str(uuid4()))
+            if shipped is not None:
+                counts["cap_shipped"] = True
+                counts["editorial"] = None
+                review = {**review, "status": "APPROVED", "verdict": "PASS"}
+                break
         if drafts >= MAX_DRAFTS or stored >= MAX_DRAFTS_PER_DAY:
-            counts["refusal"] = f"FAIL: {notes}"[:300]
+            counts["refusal"] = f"FAIL: {notes}"
             then = (
                 "o rulare următoare o scrie din nou, cu motivele"
                 if stored < MAX_DRAFTS_PER_DAY
@@ -460,14 +511,26 @@ def _tell_the_day(
         with Session(engine) as session:
             episode = session.get(StoryEpisode, episode_id)
             title = episode.title if episode is not None else ""
+        if review.get("superseded_by"):
+            # The day had its approved episode already (`duplicates.approved_sibling`).
+            return _outcome(
+                COMPLETED,
+                f"Episodul „{title}” pentru {date_iso} nu a fost aprobat: ziua are deja "
+                "episodul ei aprobat, iar o zi a serialului are un singur film.",
+                **counts,
+            )
         return _outcome(
             COMPLETED,
-            f"Episodul „{title[:80]}” pentru {date_iso} a trecut citirea Directorului și "
+            f"Episodul „{title}” pentru {date_iso} a trecut citirea Directorului și "
             "așteaptă aprobarea ta; politica canalului nu îi permite Directorului să aprobe "
             "singură.",
             **counts,
         )
     counts["approved"] += 1
+    if counts.get("cap_shipped"):
+        logger.info(
+            "episode_approved_under_cap", extra={"log_id": log_id, "episode_id": episode_id}
+        )
     if not _ready_for_filming(engine, episode_id, counts, correlation, registry):
         return _outcome(
             COMPLETED, f"Episodul aprobat nu a devenit storyboard: {counts['refusal']}", **counts
@@ -539,6 +602,18 @@ def _new_counts() -> dict[str, Any]:
     }
 
 
+def _repair_duplicates(engine: Engine, correlation: str) -> dict[str, Any] | None:
+    """`duplicates.repair_duplicate_days`, before the stage reads anything; None when it did
+    nothing. A fault is logged and the stage goes on: the approvals, the storyboard build and
+    the purchase lease refuse a day's second episode and film on their own."""
+    try:
+        done = repair_duplicate_days(engine, correlation)
+    except Exception:  # noqa: BLE001 - the repair is an addition; the guards still hold
+        logger.exception("serial_duplicates_not_repaired")
+        return None
+    return done if (done["retired"] or done["waiting"] or done["drafts_closed"]) else None
+
+
 def run_serial_stage(
     engine: Engine, registry: Any, settings: Any, vault: Any = None
 ) -> dict[str, Any]:
@@ -551,7 +626,33 @@ def run_serial_stage(
     refused day is told again with its reasons (`day_to_retell`). One of these per run, as
     the media stage films one episode a day. Readying and naming need no model, so they run
     before the stage asks for one.
+
+    First, a day with two approved episodes is put back to one, its second film retired and
+    canon told again without it, and a draft left beside a day's approved episode is closed
+    (`duplicates.repair_duplicate_days`, 2026-10-17); the reason starts with what was done.
     """
+    from app.media.backlog import new_production_wait  # noqa: PLC0415
+
+    backlog_wait = new_production_wait(engine, settings)
+    if backlog_wait is not None:
+        return backlog_wait
+    repaired = _repair_duplicates(engine, str(uuid4()))
+    outcome = _run_serial_stage(engine, registry, settings, vault)
+    if repaired is None:
+        return outcome
+    words = repair_words(repaired)
+    artefacts = {**(outcome.get("artefacts") or {}), "duplicates": repaired}
+    return {
+        **outcome,
+        "reason": (f"{words} {outcome['reason']}" if words else outcome["reason"]),
+        "artefacts": artefacts,
+    }
+
+
+def _run_serial_stage(
+    engine: Engine, registry: Any, settings: Any, vault: Any = None
+) -> dict[str, Any]:
+    """`run_serial_stage` after its repair."""
     counts = _new_counts()
     language = getattr(settings, "content_language", "en")
     rounds = getattr(settings, "editorial_rounds", None)
@@ -563,7 +664,7 @@ def run_serial_stage(
     try:
         for item in _left_by_earlier_runs(engine, today):
             counts["episode_id"], counts["resumed"] = item["episode_id"], item["kind"]
-            title, date_iso = item["title"][:80], item["date"]
+            title, date_iso = item["title"], item["date"]
             # The day it tells, on the run card too: the morning that films yesterday's
             # script is every morning after the first (rehearsal on a copy, 2026-09-24).
             counts["told_date"] = date_iso
@@ -605,6 +706,8 @@ def run_serial_stage(
                 # approved under the policy here, as that run would have, and readied — a
                 # script is never left stuck. Without the policy it waits for him, below.
                 approval = approve_reviewed_episode(engine, item["episode_id"], correlation)
+                if approval.get("superseded_by"):
+                    continue  # its day has its episode, or a newer version replaced it
                 if approval["status"] == "APPROVED":
                     counts["approved"] += 1
                     if not _ready_for_filming(
@@ -651,7 +754,7 @@ def run_serial_stage(
                     state = {"APPROVED": "aprobat", "DRAFT": "ciornă", "REJECTED": "respins"}
                     return _outcome(
                         COMPLETED,
-                        f"Ultima zi povestită este {date_told}: „{title[:80]}” "
+                        f"Ultima zi povestită este {date_told}: „{title}” "
                         f"({state.get(status, status.lower())}). Nicio zi încheiată de după ea "
                         f"nu are încă ce povesti{days}"
                         + (
@@ -698,7 +801,7 @@ def run_serial_stage(
                 if again["drafts"]
                 else f"Ziua {date_iso}, sărită până acum, se povestește. "
             )
-            return {**outcome, "reason": (lead + outcome["reason"])[:300]}
+            return {**outcome, "reason": (lead + outcome["reason"])}
         outcome = _tell_the_day(
             engine, registry, log_id, date_iso, counts, language, correlation, rounds=rounds
         )
@@ -743,6 +846,11 @@ def run_serial_next_stage(
     a script written beside a waiting episode would claim its number and continue a story it
     never read).
     """
+    from app.media.backlog import new_production_wait  # noqa: PLC0415
+
+    backlog_wait = new_production_wait(engine, settings)
+    if backlog_wait is not None:
+        return backlog_wait
     counts = _new_counts()
     language = getattr(settings, "content_language", "en")
     rounds = getattr(settings, "editorial_rounds", None)
@@ -824,8 +932,34 @@ def run_serial_next_stage(
                     return _outcome(
                         COMPLETED,
                         f"Scenariul de mâine pentru {today} era deja scris și aprobat: "
-                        f"„{title[:80]}”; a fost pregătit de filmare acum, iar "
+                        f"„{title}”; a fost pregătit de filmare acum, iar "
                         + _filming_words(_queue_filming(engine, counts, episode_id)),
+                        **counts,
+                    )
+            if status == "REJECTED" and refused:
+                # The day's drafts are spent on the Director's reading alone (2026-10-15,
+                # episode 3 refused three times): its newest draft ships, approved under the
+                # cap, readied and queued for filming tonight — «publicăm ce avem».
+                shipped = approve_under_drafts_cap(
+                    engine, episode_id, str(last_notes or ""), correlation
+                )
+                if shipped is not None:
+                    counts["approved"] += 1
+                    counts["cap_shipped"] = True
+                    counts["resumed"] = "cap"
+                    if _ready_for_filming(engine, episode_id, counts, correlation, registry):
+                        return _outcome(
+                            COMPLETED,
+                            f"Episodul zilei {today}, „{title}”, refuzat de "
+                            f"{MAX_DRAFTS_PER_DAY} ori de citirea Directoarei, se expediază sub "
+                            "plafonul ciornelor (Proprietarul, 2026-10-15: «publicăm ce avem»); "
+                            "pregătit de filmare, "
+                            + _filming_words(_queue_filming(engine, counts, episode_id)),
+                            **counts,
+                        )
+                    return _outcome(
+                        COMPLETED,
+                        f"Episodul aprobat sub plafon nu a devenit storyboard: {counts['refusal']}",
                         **counts,
                     )
             state = {"APPROVED": "aprobat", "DRAFT": "ciornă", "REJECTED": "respins"}
@@ -835,7 +969,7 @@ def run_serial_next_stage(
             )
             return _outcome(
                 COMPLETED,
-                f"Scenariul de mâine pentru {today} este deja scris: „{title[:80]}” "
+                f"Scenariul de mâine pentru {today} este deja scris: „{title}” "
                 f"({state.get(status, status.lower())}{spent}); nu se scrie din nou." + not_readied,
                 **counts,
             )
@@ -847,7 +981,7 @@ def run_serial_next_stage(
             )
             return _outcome(
                 COMPLETED,
-                f"Scenariul de mâine nu se scrie: episodul „{title[:80]}” {why}, iar numărul "
+                f"Scenariul de mâine nu se scrie: episodul „{title}” {why}, iar numărul "
                 "lui în serial se fixează la aprobare.",
                 **counts,
             )
@@ -890,3 +1024,311 @@ def run_serial_next_stage(
 
             raise TransientStageError(f"{type(exc).__name__}: {exc}"[:300]) from exc
         raise
+
+
+# ------------------------------------------------------------------- the Owner's own press
+#
+# 2026-10-13. The serial room's «Scrie episodul» called `write_episode` alone: Marcus wrote
+# «The Nine-Scene Rewrite», it stood a DRAFT, and the Director read it only when the next
+# run's stage took it up («De ce nu-l citește? Nu trebuie să o facă automat?»). The press now
+# runs the stage's own ladder for the one day he pressed on, through `_tell_the_day`.
+
+
+def _episode_facts(engine: Engine, episode_id: str | None) -> dict[str, Any]:
+    """The episode the press ended on, read from its row: what the page's words are made of."""
+    facts: dict[str, Any] = {
+        "episode_id": episode_id,
+        "title": None,
+        "verdict": None,
+        "episode_status": None,
+        "reviewed_by": None,
+        "notes": None,
+    }
+    if episode_id is None:
+        return facts
+    with Session(engine) as session:
+        episode = session.get(StoryEpisode, episode_id)
+        if episode is None:
+            return facts
+        review = dict(episode.review_json or {})
+        facts.update(
+            title=episode.title,
+            verdict=review.get("verdict"),
+            episode_status=episode.status,
+            reviewed_by=episode.reviewed_by,
+            notes=episode.notes,
+        )
+    return facts
+
+
+def _press_words(outcome: dict[str, Any], facts: dict[str, Any], day_drafts: int) -> str:
+    """The studio's sentence of what became of the press, led by the episode's title.
+
+    Where the episode ended decides it: approved (and readied, or not), passed and waiting for
+    the Owner, written but unread, rejected — by the Director, or by the computed checks when
+    she never read it (`reviewed_by: checks`, 2026-10-13) — with what follows: another press
+    or run rewrites it while the day's `MAX_DRAFTS_PER_DAY` last, else the serial moves on.
+    Nothing stored is the stage's own reason.
+    """
+    counts = outcome["artefacts"]
+    title = str(facts.get("title") or "")
+    status = facts.get("episode_status")
+    if status == "APPROVED":
+        how = (
+            "aprobat de tine"
+            if facts.get("reviewed_by") == "owner"
+            else "a trecut citirea Directorului și e aprobat"
+        )
+        if counts.get("storyboard_id"):
+            return f"„{title}” {how}; pregătit de filmare, iar " + _filming_words(
+                counts.get("film_continue_task_id")
+            )
+        return (
+            f"„{title}” {how}, dar nu a devenit storyboard: {counts.get('refusal')}; "
+            "rularea următoare încearcă din nou."
+        )
+    if status == "DRAFT" and facts.get("verdict") == "PASS":
+        return (
+            f"„{title}” a trecut citirea Directorului și așteaptă aprobarea ta; politica "
+            "canalului nu îi permite Directorului să aprobe singură."
+        )
+    if status == "DRAFT":
+        return (
+            f"„{title}” a fost scrisă, dar Directorul nu a putut-o citi: {counts.get('refusal')}; "
+            "rularea următoare o citește din nou."
+        )
+    if status == "REJECTED":
+        who = "verificările calculate" if facts.get("reviewed_by") == "checks" else "Director"
+        then = (
+            f"ziua și-a folosit cele {MAX_DRAFTS_PER_DAY} ciorne; serialul trece la altă zi"
+            if day_drafts >= MAX_DRAFTS_PER_DAY
+            else "o apăsare nouă sau rularea următoare o scrie din nou, cu motivele"
+        )
+        why = facts.get("notes") or counts.get("refusal") or "fără motiv scris"
+        return f"„{title}” a fost respins de {who}: {why} ({then})."
+    return str(outcome["reason"])
+
+
+def _press_result(engine: Engine, outcome: dict[str, Any], log_id: str) -> dict[str, Any]:
+    """The stage's outcome with the episode it ended on and the words for the page."""
+    counts = outcome["artefacts"]
+    facts = _episode_facts(engine, counts.get("episode_id"))
+    with Session(engine) as session:
+        day_drafts = (
+            session.scalar(
+                select(func.count()).select_from(StoryEpisode).where(StoryEpisode.log_id == log_id)
+            )
+            or 0
+        )
+    return {
+        **outcome,
+        **facts,
+        #: Nothing stored (the showrunner's answers refused, or none): the route answers 422
+        #: with the reason, as the write route does, and a replay of the press says the same.
+        "refused": facts["episode_status"] is None,
+        "words": _press_words(outcome, facts, day_drafts),
+    }
+
+
+def tell_day_now(
+    engine: Engine,
+    registry: Any,
+    settings: Any,
+    log_id: str,
+    command_id: str,
+    language: str | None = None,
+) -> dict[str, Any]:
+    """The Owner's «Scrie episodul», carried to the end: write, read, approve, storyboard.
+
+    The ladder the serial stage runs, for the one closed day he pressed on (`_tell_the_day`,
+    the evening's script with ``media_stage_follows=False``): an unread DRAFT of the day is
+    taken up; else a new draft is written — as the rewrite of the day's last refused draft,
+    with its notes, when every draft was refused and budget remains, the rule `day_to_retell`
+    applies between days — then `judged_review`, the approval under the channel's policy, the
+    storyboard, and the filming queued (PRODUCTION), since no media stage follows a press. A
+    PASS the judgement held and a stopped run never approved is approved here, as the stage
+    does; an approved episode with no storyboard is readied and queued. The same limits:
+    `MAX_DRAFTS` for this press, `MAX_DRAFTS_PER_DAY` over every press and run.
+
+    Idempotent by ``command_id`` (`recall_command`, as the Owner's other commands): the same
+    press sent twice returns its first answer with ``replayed``, and the same id on another
+    day is refused (`CommandConflict`). Before anything runs, `DayNotTold` refuses the Owner's
+    stop (in the studio's words), a log that is not closed, a day that already has its episode
+    or has used its drafts, an episode of another day waiting for him or for a reading (the
+    canon number is fixed on approval, and a script written beside it would claim its number),
+    and a studio with no language model; a quiet day is `NothingHappened`. Answers refused
+    before they were stored, or none, are `DraftRefused` with the stage's reason: nothing was
+    written, as the write route says it.
+
+    Returns the stage's outcome (``status``, ``reason``, ``artefacts``) with the episode it
+    ended on — ``episode_id``, ``title``, ``verdict``, ``episode_status``, ``reviewed_by``,
+    ``notes`` — and ``words``, the studio's sentence of what became of the press
+    (`_press_words`), so the page says it as it happened.
+    """
+    payload_hash = command_hash({"log_id": log_id})
+    with Session(engine) as session:
+        previous = recall_command(session, command_id, payload_hash)
+    if previous is not None:
+        if previous.get("refused"):
+            raise DraftRefused(str(previous.get("reason") or ""))
+        return {**previous, "replayed": True}
+
+    counts = _new_counts()
+    spoken: str = language or str(getattr(settings, "content_language", "en"))
+    rounds = getattr(settings, "editorial_rounds", None)
+    today = business_date(getattr(settings, "timezone", None) or "UTC")
+    has_model = bool(registry.registered_ids())
+
+    with Session(engine) as session:
+        policy = session.get(OwnerPolicy, 1)
+        if policy is None or policy.autonomy_stopped:
+            raise DayNotTold(AUTONOMY_STOPPED)
+        log = session.get(DailyStudioLog, log_id)
+        if log is None:
+            raise StoryError(f"Jurnalul {log_id} nu există")
+        if log.status != "CLOSED":
+            raise DayNotTold(
+                f"Jurnalul zilei {log.business_date} nu este închis; episodul se scrie doar "
+                "din ziua închisă."
+            )
+        date_iso = log.business_date
+        existing = session.scalars(
+            select(StoryEpisode)
+            .where(StoryEpisode.log_id == log_id)
+            .order_by(StoryEpisode.created_at)
+        ).all()
+        told = [
+            (e.id, e.title, e.status, bool(e.review_json), e.storyboard_id, e.reviewed_by)
+            for e in existing
+        ]
+        held = {e.id for e in existing if (e.review_json or {}).get("held_for_judgement")}
+        last_notes = existing[-1].notes if existing else None
+        waiting = [
+            (kind, episode.title, episode.id)
+            for kind, episode in unfinished_episodes(session, today)
+            if kind in ("review", "owner") and episode.log_id != log_id
+        ]
+    counts["told_date"] = date_iso
+    refused = bool(told) and all(status == "REJECTED" for _i, _t, status, _r, _s, _b in told)
+    retell = refused and len(told) < MAX_DRAFTS_PER_DAY
+    outcome: dict[str, Any] | None = None
+
+    if told and not retell:
+        episode_id, title, status, reviewed, storyboard_id, by = told[-1]
+        counts["episode_id"] = episode_id
+        if status == "DRAFT" and not reviewed:
+            # The draft his old button left unread (the 2026-10-13 case): read, not rewritten.
+            if not has_model:
+                raise DayNotTold(NO_MODEL)
+            counts["resumed"] = "review"
+            outcome = _tell_the_day(
+                engine,
+                registry,
+                log_id,
+                date_iso,
+                counts,
+                spoken,
+                command_id,
+                draft_id=episode_id,
+                day_drafts=len(told),
+                media_stage_follows=False,
+                rounds=rounds,
+            )
+        else:
+            if status == "DRAFT" and episode_id in held:
+                approval = approve_reviewed_episode(engine, episode_id, command_id)
+                if approval["status"] == "APPROVED":
+                    counts["approved"] += 1
+                    status = "APPROVED"
+            if status == "APPROVED" and not storyboard_id:
+                counts["resumed"] = "storyboard"
+                if _ready_for_filming(engine, episode_id, counts, command_id, registry):
+                    who = "tine" if by == "owner" else "Director"
+                    outcome = _outcome(
+                        COMPLETED,
+                        f"Episodul „{title}” pentru {date_iso}, aprobat de {who}, a fost "
+                        "pregătit de filmare acum; "
+                        + _filming_words(_queue_filming(engine, counts, episode_id)),
+                        **counts,
+                    )
+                else:
+                    outcome = _outcome(
+                        COMPLETED,
+                        f"Episodul aprobat nu a devenit storyboard: {counts['refusal']}",
+                        **counts,
+                    )
+            elif status == "DRAFT":
+                raise DayNotTold(
+                    f"Episodul „{title}” pentru {date_iso} a trecut citirea Directorului "
+                    "și așteaptă aprobarea ta; nu se scrie altul, pentru că numărul lui în "
+                    "serial se fixează la aprobare."
+                )
+            elif status == "REJECTED":
+                raise DayNotTold(
+                    f"Ziua {date_iso} și-a folosit cele {MAX_DRAFTS_PER_DAY} ciorne (ultima: "
+                    f"„{title}”); serialul trece la altă zi."
+                )
+            else:
+                raise DayNotTold(
+                    f"Ziua {date_iso} are deja episodul „{title}” (aprobat, pregătit de "
+                    "filmare); nu se scrie din nou."
+                )
+
+    if outcome is None:
+        if waiting:
+            kind, title, episode_id = waiting[0]
+            why = (
+                "așteaptă aprobarea ta" if kind == "owner" else "așteaptă încă citirea Directorului"
+            )
+            raise DayNotTold(
+                f"Episodul „{title}” {why}, iar numărul lui în serial se fixează la "
+                f"aprobare; ziua {date_iso} se scrie după el."
+            )
+        if not has_model:
+            raise DayNotTold(NO_MODEL)
+        with Session(engine) as session, session.begin():
+            log = session.get(DailyStudioLog, log_id)
+            assert log is not None  # read above, and a closed log is never deleted
+            projection = ensure_projection(session, log)
+            counts["projected"] = len(projection)
+        # A quiet day is told too (2026-10-16): the story is the showrunner's.
+        if retell:
+            counts["resumed"] = "retell"
+            outcome = _tell_the_day(
+                engine,
+                registry,
+                log_id,
+                date_iso,
+                counts,
+                spoken,
+                command_id,
+                day_drafts=len(told),
+                media_stage_follows=False,
+                notes=last_notes,
+                rewrite_of=told[-1][0],
+                rounds=rounds,
+            )
+            lead = (
+                f"Ziua {date_iso} se scrie din nou: ciornele ei au fost respinse "
+                f"({len(told)} din cel mult {MAX_DRAFTS_PER_DAY}). "
+            )
+            outcome = {**outcome, "reason": (lead + outcome["reason"])}
+        else:
+            outcome = _tell_the_day(
+                engine,
+                registry,
+                log_id,
+                date_iso,
+                counts,
+                spoken,
+                command_id,
+                media_stage_follows=False,
+                rounds=rounds,
+            )
+
+    result = _press_result(engine, outcome, log_id)
+    with Session(engine) as session, session.begin():
+        remember_command(session, command_id, TELL_COMMAND, payload_hash, result)
+    if result["refused"]:
+        raise DraftRefused(str(result["reason"]))
+    return result

@@ -48,7 +48,7 @@ const SALE = () => card((c) => c.kind === 'sale_terms');
 const STILLS = () => card((c) => c.kind === 'media.stills_purchase' && c.waiting);
 const PUBLISH = () => card((c) => c.kind === 'publishing.public_publish');
 const LETTER = () => card((c) => c.source_type === 'letter');
-const BOARD = '00000000-0000-4000-8000-00000000008e';
+const BOARD = '3ec1740c-0000-4000-8000-000000000001';
 const o = (/** @type {any} */ extra = {}) => ({ escape: escapeHtml, timezone: 'UTC', ...extra });
 
 /** A fake api: answers in order, records each call; an Error-like answer is thrown. */

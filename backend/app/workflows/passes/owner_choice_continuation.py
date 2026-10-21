@@ -1,6 +1,34 @@
-"""Owner choice continuation: existing local-first media checks.
+"""Films the studio left standing: walked on again, once, by itself (2026-10-10).
 
-Private production traces omitted; implementation unchanged."""
+Two ways a film stopped with nothing left to ask the Owner:
+
+- His sheet choice that never walked its film. Film babcf272: he chose LOCAL_MOVE for scene 5
+  at 08:46 UTC on a studio whose `shooting_sheet.set_scene_model` did not queue FILM_CONTINUE
+  yet (it does since the same day), so his choice stayed recorded and the film waited for a
+  daily run that was not coming. His newest scene-model choice of the last days that has
+  neither its continuation queued (the key `set_scene_model` uses now) nor a walk of the film
+  after it gets that continuation, once.
+- A render the studio's own code failed. The same film, the same day: its assembly died
+  because an interpolation filter crashed in the encoder (scene 3, slowed), and nothing walked
+  it again once the fixed code ran. A film whose newest render failed before this studio
+  process started, with no render done since and no walk since the start, is walked once
+  after each start: a restart usually brings the code that fixes what made it fail (the rule
+  the sheet repair keeps, `blocker_repair.STUDIO_STARTED_AT`). The Owner: «studioul trebuie
+  să rezolve singur, fără intervenții».
+- A film a walk left waiting on the studio's own work (2026-10-11). NASA 6fe6a577: the day's run
+  bought its stills, test shot and two clips, then stopped WAITING (TAKES_NOT_ACCEPTED: scenes 3
+  and 4 longer than one clip), and the restart that brought the code buying those scenes slowed
+  walked nothing: the film waited for the next morning's run or his button. The Owner: «Studioul
+  ar trebui să realizeze că sunt lucruri neterminate, nu? Și ar trebui să le ducă la capăt
+  singur!». A film whose newest state before this start is WAITING or HELD for a cause that is
+  not his (`runbook.stages.OWNER_DECIDES`: his money, his budget, his look, his mode, a buyer
+  at work; nor a story the Director refused), with no walk since the start, is walked once
+  after each start. Only films already in production: nothing new is started here (new work
+  starts at the 05:00 run or on his «Pornește rularea de azi»).
+
+Nothing here buys: the walk asks for anything paid under his rule, behind his stop, safe mode
+and his mode; PRODUCTION only (`app.services.queue_film_continue`).
+"""
 
 from __future__ import annotations
 

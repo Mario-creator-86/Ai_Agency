@@ -266,6 +266,70 @@ def test_a_card_redo_of_a_filmed_scene_is_refused_and_builds_nothing(engine, tmp
         assert len(session.scalars(select(MediaAsset)).all()) == 1
 
 
+def test_a_redone_film_is_held_to_the_bitrate_floor_and_records_its_own_encode(
+    engine, tmp_path, monkeypatch
+):
+    """The review of the 2026-10-16 commits, findings 17 and 24: the rejoin of a one-scene
+    redo was a plain CRF 17 encode, so a dark film the render had tightened (7c26a7ce «Speed
+    of Light», 4.4 Mbps) came out under quality control's 6 Mbps floor again, and its
+    manifest still carried the old film's encode. Here the redo's CRF 17 reads 4.4 Mbps."""
+    from app.media import assembler
+
+    storyboard_id, render, _images, _motion = a_rendered_nepal_film(engine, tmp_path)
+    with Session(engine) as session:
+        source_encode = session.scalar(
+            select(VideoRenderJob).where(
+                VideoRenderJob.output_asset_id == render["output_asset_id"]
+            )
+        ).production_json["encode"]
+    real_encoder = assembler.run_encoder
+    finals: list[int] = []
+
+    def final_crf(command) -> int | None:
+        # The film's final encode is the one with the delivery cap (`final_video_args`).
+        command = list(command)
+        return int(command[command.index("-crf") + 1]) if "-maxrate" in command else None
+
+    def encoder(command, folder, *, carry=(), timeout=600):
+        crf = final_crf(command)
+        if crf is not None:
+            finals.append(crf)
+        return real_encoder(command, folder, carry=carry, timeout=timeout)
+
+    rates = {17: 4_400_000, 12: 6_500_000}
+    monkeypatch.setattr(assembler, "run_encoder", encoder)
+    monkeypatch.setattr(assembler, "_video_bit_rate", lambda exe, path: rates[finals[-1]])
+
+    result = redo_scene(engine, storyboard_id, str(uuid4()), kind="card", scene_index=5)
+
+    assert finals == [17, 12]
+    with Session(engine) as session:
+        job = session.scalar(
+            select(VideoRenderJob).where(
+                VideoRenderJob.output_asset_id == result["film"]["output_asset_id"]
+            )
+        )
+        encode = job.production_json["encode"]
+    assert encode["crf"] == 12 and encode["video_bit_rate"] == 6_500_000
+    assert encode["tightened"] == [{"crf": 17, "video_bit_rate": 4_400_000}]
+    assert encode != source_encode
+
+    # An encoder that cannot run is the redo's own refusal, and nothing is recorded.
+    def stalled(command, folder, *, carry=(), timeout=600):
+        if final_crf(command) is not None:
+            raise assembler.RenderEngineUnavailable("FFmpeg nu a terminat la timp.")
+        return real_encoder(command, folder, carry=carry, timeout=timeout)
+
+    monkeypatch.setattr(assembler, "run_encoder", stalled)
+    with Session(engine) as session:
+        assets_before = len(session.scalars(select(MediaAsset)).all())
+    with pytest.raises(SceneRedoRefused) as refused:
+        redo_scene(engine, storyboard_id, str(uuid4()), kind="card", scene_index=5)
+    assert refused.value.status == "ENCODE_FAILED"
+    with Session(engine) as session:
+        assert len(session.scalars(select(MediaAsset)).all()) == assets_before
+
+
 # ------------------------------------------- 2. an audio remaster: only the sound changes
 
 
@@ -456,7 +520,9 @@ def test_a_still_redo_buys_one_pair_and_invalidates_only_scene_3s_motion(engine,
 
     plan = redo_plan(engine, storyboard_id, "still", 3)
     assert plan["action"] == REDO_ACTION and plan["model_id"] == "seedream5_pro"
-    assert plan["credits"] == 18 and plan["cap_credits"] == 54
+    # Scene 3's still was made once: the redo holds the rounds the renders cap still leaves
+    # it (the suite's three, tests/conftest.py, less the one made), never a render past it.
+    assert plan["credits"] == 18 and plan["cap_credits"] == 36 and plan["max_rerolls"] == 1
     assert plan["replaces"] == [stills_before[3].id]
     assert plan["invalidates"] == [shots[3]]
 

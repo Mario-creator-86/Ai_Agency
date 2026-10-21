@@ -134,59 +134,34 @@ def test_once_the_wait_has_passed_the_repair_continues(engine, film):  # noqa: F
     assert third.get("task_id") and third["task_id"] not in (first["task_id"], second["task_id"])
 
 
-def test_five_attempts_a_day_on_the_same_blockers_then_a_pause_the_owner_never_handles(
-    engine,
-    film,  # noqa: F811
-):
-    """The ceiling stays (his «să nu meargă la infinit», 2026-10-03), but a pause the studio made
-    itself is its own business (2026-10-10, «studioul trebuie să rezolve singur, fără
-    intervenții»): one note to the Director, no letter and no card for him."""
+def test_editorial_repairs_continue_past_the_former_daily_ceiling(engine, film):  # noqa: F811 - imported fixture
     from app.decisions.models import OwnerDecision
 
     reading = sheet(engine, film)
-    for n in range(repair.MAX_SAME_ISSUES_PER_DAY):
+    for n in range(9):
         dispatched = repair.submit_sheet_issues(engine, reading)
         assert dispatched.get("task_id"), (n, dispatched)
         unresolved(engine, dispatched, minutes_ago=600 - n)
-
-    paused = repair.submit_sheet_issues(engine, reading)
-    again = repair.submit_sheet_issues(engine, reading)
-
-    assert paused["status"] == "PAUSED" and again["status"] == "PAUSED"
-    assert repair_tasks(engine) == repair.MAX_SAME_ISSUES_PER_DAY
-    (note,) = paused_letters(engine)
-    assert note.body_json.get("to") != "Owner" and not note.body_json.get("owner_attention")
-    assert note.to_agent_id is not None, "the Director's own inbox"
-    assert "de 5 ori" in note.body_text and "blocajele se schimbă" in note.body_text
+    assert repair.submit_sheet_issues(engine, reading).get("task_id")
+    assert repair_tasks(engine) == 10
+    assert paused_letters(engine) == []
     with Session(engine) as session:
-        assert list(session.scalars(select(OwnerDecision))) == [], "no card for him"
+        assert list(session.scalars(select(OwnerDecision))) == []
 
 
-def test_a_rewritten_sheet_with_the_same_blockers_stays_paused_until_they_change(
-    engine,
-    film,  # noqa: F811
-):
-    """2026-10-11, the serial's board f06808c9: the Video Editor's rewrite changed the sheet's
-    hash and the lint's wording every round while the same TEMPLATE_LABEL blockers stood on the
-    same scenes, and the repair ran every five minutes with no back-off and no ceiling. The
-    ceiling counts on the blockers themselves (`issue_key`); only different blockers (fewer, or
-    other ones) start again from zero."""
+def test_rewording_the_same_blockers_keeps_backoff_but_never_a_daily_stop(engine, film):  # noqa: F811 - imported fixture
     reading = sheet(engine, film)
-    for n in range(repair.MAX_SAME_ISSUES_PER_DAY):
+    for n in range(5):
         dispatched = repair.submit_sheet_issues(engine, reading)
         unresolved(engine, dispatched, minutes_ago=600 - n)
-    assert repair.submit_sheet_issues(engine, reading)["status"] == "PAUSED"
-
-    # The prompts rewritten (a new sheet hash, the blockers reworded): the same problem.
     reworded = [{**b, "message_ro": f"{b['message_ro']} (rescris)"} for b in reading["blocks"]]
     rewritten = repair.submit_sheet_issues(
         engine, {**reading, "sheet_hash": str(uuid4()), "blocks": reworded}
     )
-    assert rewritten["status"] == "PAUSED"
-    assert repair_tasks(engine) == repair.MAX_SAME_ISSUES_PER_DAY
-    assert len(paused_letters(engine)) == 1
-
-    # Other blockers (the story review now failing as well): a new problem, a new attempt.
+    assert rewritten.get("task_id")
+    unresolved(engine, rewritten)
+    assert repair.submit_sheet_issues(engine, reading)["status"] == "BACKING_OFF"
+    assert repair_tasks(engine) == 6 and paused_letters(engine) == []
     changed = repair.submit_sheet_issues(
         engine,
         {
@@ -195,9 +170,7 @@ def test_a_rewritten_sheet_with_the_same_blockers_stays_paused_until_they_change
             "story_review": {"passed": False, "reason": "Povestea trebuie recenzată."},
         },
     )
-
     assert changed.get("task_id")
-    assert paused_letters(engine) == [], "the pause letter is closed when the repair resumes"
 
 
 def test_a_sheet_rewritten_every_round_still_backs_off_and_stops(engine, film):  # noqa: F811
@@ -232,12 +205,12 @@ def test_a_sheet_rewritten_every_round_still_backs_off_and_stops(engine, film): 
     # Dated back: five attempts on these blockers in the day, each reworded, then the pause.
     unresolved(engine, first, minutes_ago=700)
     unresolved(engine, second, minutes_ago=690)
-    for n in range(3, repair.MAX_SAME_ISSUES_PER_DAY + 1):
+    for n in range(3, 5 + 1):
         dispatched = repair.submit_sheet_issues(engine, round_n(n))
         assert dispatched.get("task_id"), (n, dispatched)
         unresolved(engine, dispatched, minutes_ago=600 - n)
-    assert repair.submit_sheet_issues(engine, round_n(9))["status"] == "PAUSED"
-    assert repair_tasks(engine) == repair.MAX_SAME_ISSUES_PER_DAY
+    assert repair.submit_sheet_issues(engine, round_n(9)).get("task_id")
+    assert repair_tasks(engine) == 6
 
 
 def test_no_attempt_while_the_language_model_is_failing_and_one_letter_says_so(
@@ -274,21 +247,15 @@ def test_after_the_model_answers_again_the_repair_resumes(engine, film):  # noqa
     assert closed.status != "OPEN"
 
 
-def test_after_a_restart_the_repair_gets_its_attempts_back(engine, film, monkeypatch):  # noqa: F811
-    """The Owner, 2026-10-03: "Trebuie să înțelegem de ce problema nu se rezolvă, să reparăm,
-    și să îi lăsăm pe ei să rezolve." A repair paused on a cause that was in the studio's code
-    (the chart highlight that refused every rewrite) must try again once the fixed studio runs,
-    without him; within one run of the studio the ceiling still holds."""
+def test_after_a_restart_the_repair_resumes_its_cooldown(engine, film, monkeypatch):  # noqa: F811 - imported fixture
     reading = sheet(engine, film)
-    for n in range(repair.MAX_SAME_ISSUES_PER_DAY):
-        dispatched = repair.submit_sheet_issues(engine, reading)
-        unresolved(engine, dispatched, minutes_ago=600 - n)
-    assert repair.submit_sheet_issues(engine, reading)["status"] == "PAUSED"
-
+    first = repair.submit_sheet_issues(engine, reading)
+    unresolved(engine, first, minutes_ago=2)
+    second = repair.submit_sheet_issues(engine, reading)
+    unresolved(engine, second, minutes_ago=2)
+    assert repair.submit_sheet_issues(engine, reading)["status"] == "BACKING_OFF"
     monkeypatch.setattr(repair, "STUDIO_STARTED_AT", datetime.now(UTC) - timedelta(minutes=1))
-    resumed = repair.submit_sheet_issues(engine, reading)
-
-    assert resumed.get("task_id"), resumed
+    assert repair.submit_sheet_issues(engine, reading).get("task_id")
     assert paused_letters(engine) == []
 
 

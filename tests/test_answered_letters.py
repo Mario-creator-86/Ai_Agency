@@ -1,6 +1,16 @@
-"""Offline regression tests for test answered letters.
+"""Letters to the Owner that ask about something no longer waiting close themselves.
 
-Providers are faked; all data is synthetic."""
+2026-10-09 (film babcf272): the Owner closed six «Foaia de filmare: … așteaptă răspunsul tău la
+pasul …» letters by hand, each about a question he had already answered on the sheet or a state
+the film had already left. `answered_letters.retire_answered_letters` (the watchdog's pass and
+the sheet letter's writer) closes them:
+
+- a sheet letter whose question (``approval_id``) was answered, withdrawn or expired;
+- a sheet letter a newer sheet letter about the same film moved past;
+- the list of his standing questions once none of them waits.
+
+A letter that reports a fact (money, books), an open question and another film's letter stay.
+"""
 
 from __future__ import annotations
 

@@ -1,6 +1,19 @@
-"""Offline regression tests for test owner chose flagged still.
+"""The Owner's own choice of a still the local check rejected may start a paid shot.
 
-Providers are faked; all data is synthetic."""
+Film babcf272 (2026-10-09, «The Particle That Shouldn't Exist (But Does)»): scene 1's still was
+REJECTED by the old local sharpness gate (LOCAL.STILL_GATE, since recalibrated). The Owner
+looked at it and chose it himself (POST /media/takes/{id}/decision APPROVED); the take kept its
+LOCAL.* code, and the motion plan held the scene as «păstrată doar pentru repetiție», so his
+explicit choice could never be animated.
+
+The rule now: a still carrying a failed local check (LOCAL.*) starts a paid shot only when the
+Owner himself decided THAT take APPROVED after the failure was recorded, proven by his
+`media.scene_take_decided` event for the take. The rehearsal's adoption (which may write
+``approved_by="owner"`` on the row) never lifts the hold, a decision made before a later
+failure does not, and neither does a rejection. The plan, the sheet and the step agree.
+
+Every provider is faked (test_film_costing's spies); no socket is opened.
+"""
 
 from __future__ import annotations
 

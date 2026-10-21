@@ -423,7 +423,7 @@ def test_the_owners_own_quality_control_refuses_nothing_it_could_not_look_at(
 
     monkeypatch.setattr(
         "app.media.picture_qc.frames_for",
-        lambda path, ffmpeg_path, duration, scene_seconds=None: list(FRAMES),
+        lambda path, ffmpeg_path, duration, scene_seconds=None, picks=None: list(FRAMES),
     )
     staffed = staff(engine)
     ids = a_film(engine)

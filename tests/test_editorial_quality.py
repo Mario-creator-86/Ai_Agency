@@ -11,6 +11,7 @@ of these would otherwise be discovered after a render had already been paid for.
 from __future__ import annotations
 
 import json
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -273,26 +274,62 @@ def a_passed_review(engine, script_id) -> None:
         )
 
 
+# The fixture is a complete Kael-owned vendor payload. The old plan-only
+# fields were rejected correctly when final still/motion prompts became mandatory.
+# Each scene retains the same character and rainy flat, but uses its own framing.
+_SHOT_CAMERAS = (
+    ("medium close-up, slight low angle, 35mm lens", "dolly in", "her hands above the laptop"),
+    ("over-shoulder medium shot, 50mm lens", "tracking left", "the woman facing the laptop"),
+    ("wide shot of the desk, 24mm lens", "crane up", "the woman and desk by the rainy window"),
+    ("detail shot of her hand, 85mm lens", "slow pan right", "her hand beside the laptop"),
+    ("medium eye-level shot, 50mm lens", "dolly out", "the woman seated at her desk"),
+)
+
+
+def _editor_shot(index: int, purpose: str) -> dict[str, Any]:
+    camera, move, ending = _SHOT_CAMERAS[index - 1]
+    still = (
+        f"Premium cinematic documentary photograph, vertical 9:16, {camera}. "
+        "At the first instant a woman in her thirties with short dark hair and a "
+        "grey raincoat sits at a laptop in the same small flat at night, rain "
+        "tracing the dark window. A single warm desk lamp illuminates her face "
+        "and hands; cold blue light comes from the window. Natural proportions, "
+        "the same coat and desk in every shot, clear unobstructed composition."
+    )
+    motion = (
+        f"A steady {move} at a measured pace as the woman shifts her hand "
+        "toward the keyboard and pauses with curiosity. Rain streams down the "
+        "window and steam rises slowly from the mug, preserving the same flat, "
+        "night lighting and grey raincoat. The movement stays continuous. "
+        f"The shot ends on {ending}."
+    )
+    return {
+        "scene_index": index,
+        "story_purpose": purpose,
+        "subject": "A woman in her thirties, short dark hair, grey raincoat, at a laptop",
+        "action": "leaning in slowly, typing the address and stopping mid-keystroke",
+        "environment": "a small flat at night, rain on the window, one desk lamp",
+        "camera": camera,
+        "camera_move": move,
+        "lighting": "single warm practical from the desk lamp, cold blue window spill",
+        "composition": "subject left of centre in a vertical frame, laptop glow leading",
+        "motion": "hands slow to a stop; steam from a mug drifts across the light",
+        "emotion": "quiet curiosity turning to hesitation",
+        "background": "rain streaks and a dark street below, no people",
+        "continuity": "same grey raincoat, same flat, same night, same palette",
+        "ending_frame": ending,
+        "audio_intent": "rain, keyboard, narration dominates",
+        "transition": "dissolve on the screen glow",
+        "avoid": ["on-screen text", "daylight"],
+        "still_prompt": still,
+        "motion_prompt": motion,
+        "negative_prompt": "letters, logos, writing, watermarks",
+    }
+
+
 SHOT_ANSWER = {
     "shots": [
-        {
-            "scene_index": index,
-            "story_purpose": purpose,
-            "subject": "A woman in her thirties, short dark hair, grey raincoat, at a laptop",
-            "action": "leaning in slowly, typing the address and stopping mid-keystroke",
-            "environment": "a small flat at night, rain on the window, one desk lamp",
-            "camera": "medium close-up, slight low angle, 35mm character, slow push in",
-            "lighting": "single warm practical from the desk lamp, cold blue window spill",
-            "composition": "subject left of centre in a vertical frame, laptop glow leading",
-            "motion": "hands slow to a stop, steam from a mug drifting across the light",
-            "emotion": "quiet curiosity turning to hesitation",
-            "background": "rain streaks and a dark street below, no people",
-            "continuity": "same grey raincoat, same flat, same night, same palette",
-            "ending_frame": "her hand resting on the keyboard, screen still lit",
-            "audio_intent": "rain, a keyboard, narration dominates",
-            "transition": "dissolve on the screen glow",
-            "avoid": ["on-screen text", "daylight"],
-        }
+        _editor_shot(index, purpose)
         for index, purpose in enumerate(
             ["HOOK", "SETUP", "DEVELOPMENT", "REVEAL", "ENDING"], start=1
         )
@@ -697,19 +734,21 @@ def test_13_and_14_light_and_camera_are_decided_not_left_to_the_model(engine, st
         return json.dumps(bare)
 
     registry, _ = registry_with(studio, answer)
-    result = write_shot_prompts(engine, registry, board["id"], str(uuid4()))
-    # Nothing is left to the model: what the shot did not say, the film's own bible does.
-    assert result["bible"]["lighting"]
+    # Kael must now supply final vendor texts and a real camera_move. A model
+    # that returns only an empty plan must be refused rather than silently
+    # inheriting synthetic imagery and spending credits on the fake result.
+    from app.media.prompt_agent import ShotPlanUnusable
+
+    with pytest.raises(ShotPlanUnusable):
+        write_shot_prompts(engine, registry, board["id"], str(uuid4()))
     with Session(engine) as session:
-        for scene in session.scalars(
-            select(StoryboardScene).where(StoryboardScene.storyboard_id == board["id"])
-        ):
-            package = dict(scene.prompt_json or {})
-            assert package["lighting"].strip(), "a shot with no light has its light invented"
-            assert package["camera"].strip(), "the frame is a decision, not a default"
-            assert package["composition"].strip()
-            assert "vertical" in package["composition"] or "9:16" in package["composition"]
-            assert package["lighting"] == BIBLE_ANSWER["lighting"], "inherited from the bible"
+        assert session.get(Storyboard, board["id"]).status == "NEEDS_SHOT_PLAN"
+        assert all(
+            (scene.prompt_json or {}).get("source") != "model"
+            for scene in session.scalars(
+                select(StoryboardScene).where(StoryboardScene.storyboard_id == board["id"])
+            )
+        )
 
 
 def test_15_the_picture_serves_the_narration_it_is_under(engine, studio):
@@ -1083,8 +1122,10 @@ def test_the_refusal_tells_the_writer_where_the_line_is():
     )
     reason = checks["duration_is_realistic"]["reason"]
     # "Too long" is not a brief. The length measured, the target, and the band that would have
-    # been accepted are all in the sentence the writer receives on the rewrite.
-    assert "115.4s" in reason
+    # been accepted are all in the sentence the writer receives on the rewrite. The length is
+    # the film the montage cuts from the words, breaths included (`film_length`).
+    measured = checks["duration_is_realistic"]["estimated_seconds"]
+    assert measured > 100.0 and f"{measured:.1f}s" in reason
     assert "ținta de 30s" in reason
     assert "15-45s" in reason
 
@@ -1109,10 +1150,16 @@ def test_a_few_words_over_is_not_a_refusal():
 
 def test_a_short_may_never_outgrow_the_format(engine):
     """However long the target, the outer wall is the format itself."""
-    from app.factual.editorial import MAX_SHORT_SECONDS, narration_budget
+    from app.factual.editorial import MAX_SHORT_SECONDS, length_ceiling_seconds, narration_budget
+    from app.media.film_length import Timing
 
-    assert narration_budget(45)["max_seconds"] == MAX_SHORT_SECONDS
-    assert narration_budget(300)["max_seconds"] == MAX_SHORT_SECONDS
+    assert narration_budget(45)["max_seconds"] == 67.5  # under the wall: its own tolerance
+    # The wall itself: since «pauza vocii» the film's estimate carries its own margin on its
+    # words (2026-10-16); with the pause rules off, the wall less the legacy margin.
+    assert length_ceiling_seconds() == MAX_SHORT_SECONDS
+    assert length_ceiling_seconds(Timing()) < MAX_SHORT_SECONDS
+    assert narration_budget(200)["max_seconds"] == length_ceiling_seconds()
+    assert narration_budget(300)["max_seconds"] == length_ceiling_seconds()
 
 
 # --------------------------------------------------------------------------------------------
@@ -1841,7 +1888,9 @@ def test_a_shot_plan_is_not_thrown_away_for_one_long_field():
     pack = _parse_shot_pack(answer)
     assert pack is not None
     assert [shot.scene_index for shot in pack.shots] == [1, 2]
-    assert len(pack.shots[1].audio_intent) <= 200
+    # 2026-10-14 (the Owner: complete messages, no silent shortening): the long field is
+    # kept whole, not cut to the schema's old 200.
+    assert len(pack.shots[1].audio_intent) == len(long_audio.strip())
     assert pack.shots[0].lighting == "Soft amber from the front, no harsh shadows."
 
     bible = _parse_bible(

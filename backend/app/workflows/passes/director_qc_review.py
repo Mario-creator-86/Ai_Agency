@@ -1,6 +1,35 @@
-"""Director qc review: existing local-first media checks.
+"""A film whose QC failed is read by the Director, never left to a mechanical redo (2026-10-10).
 
-Private production traces omitted; implementation unchanged."""
+Film babcf272: its QC report d4ea68d2 failed at 11:04 UTC and the mechanical repair redid scenes
+1 and 2 unasked, retiring the takes the Owner had approved; nothing was delivered and he
+stopped the studio. Since the same day nothing is redone before the Director has read a failed
+report and decided (`app.runbook.stages.director_decides_failed_film`). A report nobody put
+before her (d4ea68d2 itself, after the restart) or one she could not decide yet (no model, an
+answer that did not validate twice: the report then waits in her inbox) would stand forever:
+the day's QC only measures films not measured yet.
+
+So this pass finds each film whose newest finished render's newest QC report FAILED and has no
+final decision of hers (`app.media.director_qc.decision_state`), and queues the film's
+continuation (FILM_CONTINUE, `app.services.queue_film_continue`): the walk reads the report,
+she decides, and what she decided is carried out under his rules. A REPAIR of hers that waits
+on a take bought for it (BOUGHT_WAITING) is queued again once that take is approved (``ready``:
+a still the vendor delivered late and the gate approved has no look of his to queue it), and
+when candidates bought for it that a gate refused wait for her own look (``look``: the walk
+shows them to her, 2026-10-10, the Owner: she decides whether the picture is good); one whose
+wait lapsed (his no, an expired question) is hers again and queued like an undecided one.
+
+One continuation per report and run of it (the key counts the continuations that already ran
+for the report). Once she was asked, the next waits `RETRY_MINUTES`; a walk that never reached
+her (refused by safe mode or his mode, the film busy) waits twice as long each time, up to
+`MAX_WAIT_MINUTES`, and does not count as a try (2026-10-10 review: two dozen walks refused by
+his mode used up the tries, and the film was dropped with no note anywhere). After `MAX_TRIES`
+rounds that reached her without a decision the film waits in her inbox (each such round left
+the note there, `wait_for_director`) until a new report or his answer moves it. Only reports
+of the last `LOOKBACK_DAYS`: a film that failed weeks ago is not woken up to be published or
+bought for. A film closed, a film with a continuation queued or at work, a studio outside
+PRODUCTION: nothing is queued. Nothing here buys or decides; the walk asks for anything paid
+under his rule, behind his stop, safe mode and his mode.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +49,31 @@ LOOKBACK_DAYS = 7
 MAX_TRIES = 24
 #: The continuation's cause, per report: the walk records it on `runbook.film_continued`.
 CAUSE_PREFIX = "director_qc:"
+#: When the Owner's renders cap went live (ea51f27, 2026-10-15: three renders a layer, then
+#: she accepts the best and the film is published). A film that had used up its tries before
+#: that — «The Zero Script Club» (40 walks, 22 renders of scene 4) and the cyclotron (29
+#: walks), both standing since 13-14 October with «nimic nu se putea reface» — gets ONE walk
+#: under the rule, so her decision runs once more and the cap ships what there is. The Owner,
+#: 21:06Z: «Cu acestea ce facem? Le lasă așa?»
+CAP_RULE_SINCE = "2026-10-15T12:30:00+00:00"
+#: How long after her newest decision a walk's record still belongs to the walk that produced
+#: it: that walk heard her (`_heard_until`); a later one did not.
+HEARD_WINDOW = timedelta(minutes=5)
+
+
+def _heard_until(asked_at: str) -> str:
+    """The ISO moment until which a walk's record counts as the walk that produced her
+    newest decision (``asked_at`` + `HEARD_WINDOW`); ``asked_at`` itself when it is not a
+    moment (no decision yet: every walk is unheard)."""
+    try:
+        moment = datetime.fromisoformat(asked_at)
+    except (TypeError, ValueError):
+        return asked_at
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return (moment + HEARD_WINDOW).isoformat()
+
+
 #: A continuation of the film already queued or at work: it reads the report itself.
 PENDING_TASK_STATES = ("QUEUED", "RETRYING", "CLAIMED", "RUNNING")
 
@@ -42,24 +96,156 @@ def _his_card_open(session: Any, storyboard_id: str) -> bool:
     )
 
 
+#: How long after a walk that could not publish a film accepted under the cap the next one
+#: waits (doubling after each).
+PUBLISH_RETRY_MINUTES = 10
+
+
+def _walks_since(session: Any, storyboard_id: str, cause: str, viewing_id: str) -> list[datetime]:
+    """When the film's walks under ``cause`` ended since the refused viewing ``viewing_id``
+    was written, oldest first."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.media.models import EditorialReview  # noqa: PLC0415
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    review = session.get(EditorialReview, viewing_id)
+    since = str(review.created_at) if review is not None else ""
+    moments: list[datetime] = []
+    for event in session.scalars(
+        select(DomainEvent).where(
+            DomainEvent.event_type == "runbook.film_continued",
+            DomainEvent.aggregate_id == storyboard_id,
+        )
+    ):
+        if (event.payload or {}).get("cause") != cause or str(event.timestamp) <= since:
+            continue
+        moment = datetime.fromisoformat(str(event.timestamp))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        moments.append(moment)
+    return sorted(moments)
+
+
+def _refused_viewing_to_publish(session: Any, asset_id: str) -> str | None:
+    """The id of the newest viewing that refused a film accepted under the Owner's cap and
+    not out on a channel, else None: its walk is queued once per such viewing (the key names
+    it), and `runbook.stages._publish_one` has her view the film again, as notes."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.agents.editorial import accepted_under_cap  # noqa: PLC0415
+    from app.media.models import EditorialReview  # noqa: PLC0415
+    from app.publishing.models import PublicationRecord  # noqa: PLC0415
+
+    newest = session.scalar(
+        select(EditorialReview)
+        .where(EditorialReview.media_asset_id == asset_id)
+        .order_by(EditorialReview.created_at.desc())
+    )
+    if newest is None or str(newest.verdict) == "APPROVE":
+        return None
+    if accepted_under_cap(session, asset_id) is None:
+        return None
+    out = session.scalar(
+        select(PublicationRecord.id).where(
+            PublicationRecord.media_asset_id == asset_id,
+            PublicationRecord.status.in_(("PUBLISHED", "SCHEDULED", "REMOTE_CONFIRMED")),
+        )
+    )
+    return None if out is not None else str(newest.id)
+
+
 def _developer_waits(session: Any, report_id: str) -> bool:
     """Whether this failed report waits on the developer: its only fix, a free one, was made
     `runbook.stages.FREE_FIXES_PER_FILM` times without curing a measured serious defect, and
     the Director noted it for the developer (`runbook.stages._free_fix_defect_note`). She is
-    not asked again about the same report every hour; a new report (a new film) reads anew."""
-    from sqlalchemy import select  # noqa: PLC0415
+    not asked again about the same report every hour; a new report (a new film) reads anew.
+    So for a REPAIR that met the same lasting stop below the caps walk after walk
+    (`runbook.stages._impossible_repair_note`, the loop guard), for
+    `runbook.stages.IMPOSSIBLE_NOTE_HOURS` after its note: then she is asked again."""
+    from sqlalchemy import or_, select  # noqa: PLC0415
 
     from app.agents.director import DEVELOPER_DEFECT_KIND  # noqa: PLC0415
     from app.agents.models import AgentMessage  # noqa: PLC0415
-    from app.runbook.stages import FREE_FIX_NOTE_SUBJECT  # noqa: PLC0415
+    from app.runbook.stages import (  # noqa: PLC0415
+        FREE_FIX_NOTE_SUBJECT,
+        IMPOSSIBLE_DEFECT,
+        IMPOSSIBLE_NOTE_SUBJECT,
+        impossible_note_holds,
+    )
 
     for row in session.scalars(
-        select(AgentMessage).where(AgentMessage.subject.like(f"{FREE_FIX_NOTE_SUBJECT}%"))
+        select(AgentMessage).where(
+            or_(
+                AgentMessage.subject.like(f"{FREE_FIX_NOTE_SUBJECT}%"),
+                AgentMessage.subject.like(f"{IMPOSSIBLE_NOTE_SUBJECT}%"),
+            )
+        )
     ):
         body = row.body_json if isinstance(row.body_json, dict) else {}
-        if body.get("kind") == DEVELOPER_DEFECT_KIND and body.get("report_id") == report_id:
-            return True
+        if body.get("kind") != DEVELOPER_DEFECT_KIND or body.get("report_id") != report_id:
+            continue
+        if body.get("defect") == IMPOSSIBLE_DEFECT and not impossible_note_holds(row.created_at):
+            continue
+        return True
     return False
+
+
+def _stopped_by_caps(context: WatchdogContext, state: dict[str, Any]) -> bool:
+    """Whether her newest decision on the report is a REPAIR that carried out nothing and now
+    publishes the film with what it has (`runbook.stages.stored_repair_ships_under_cap`: only
+    the caps, or a redo she met as impossible, stop it, and no verdict is one that is not hers):
+    the walk publishes it from that decision without asking her (`stages._ship_stored_repair`)."""
+    from app.runbook.stages import stored_repair_ships_under_cap  # noqa: PLC0415
+
+    return (
+        stored_repair_ships_under_cap(context.engine, context.settings, state.get("decision"))
+        is not None
+    )
+
+
+#: The walks that publish a film from her stored REPAIR stopped only by the caps, after her
+#: tries ran out: the first at once, each next one twice as long after the last walk, up to
+#: `MAX_WAIT_MINUTES` — never only once (the review of 2026-10-17: a walk stopped, refused by
+#: safe mode or his mode, or failing, would have left f06808c9 standing for good).
+CAP_SETTLE_KEY = "film-continue-{storyboard_id}-cap-settle-{report_id}-"
+
+
+def _cap_settle_owed(
+    session: Any, storyboard_id: str, report_id: str, runs: list[str], now: datetime
+) -> str | None:
+    """The key of the next cap-settle walk of this report when one is owed, else None: none
+    queued or at work under it, and the wait after the newest walk of the report (its
+    `runbook.film_continued`, written by every walk, a refused one too) or the newest such
+    task's last change has passed."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.workflows.models import TaskQueueItem  # noqa: PLC0415
+
+    prefix = CAP_SETTLE_KEY.format(storyboard_id=storyboard_id, report_id=report_id)
+    tasks = list(
+        session.scalars(
+            select(TaskQueueItem).where(TaskQueueItem.idempotency_key.like(f"{prefix}%"))
+        )
+    )
+    if any(task.status in PENDING_TASK_STATES for task in tasks):
+        return None
+    if tasks:
+        moments = [
+            moment
+            for moment in (*runs, *(str(task.updated_at or task.created_at) for task in tasks))
+            if moment
+        ]
+        last = datetime.fromisoformat(max(moments))
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        wait = min(RETRY_MINUTES * 2 ** (len(tasks) - 1), MAX_WAIT_MINUTES)
+        if now - last < timedelta(minutes=wait):
+            return None
+    key = f"{prefix}{len(tasks)}"
+    if session.scalar(select(TaskQueueItem.id).where(TaskQueueItem.idempotency_key == key)):
+        return None
+    return key
 
 
 @watchdog_pass("director_qc_review", order=160, on_error={"queued": []})
@@ -67,6 +253,7 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
     from sqlalchemy import select  # noqa: PLC0415
     from sqlalchemy.orm import Session  # noqa: PLC0415
 
+    from app.agents.editorial import accepted_under_cap  # noqa: PLC0415
     from app.db import lock_for_write  # noqa: PLC0415
     from app.media.director_qc import decision_state  # noqa: PLC0415
     from app.media.models import QualityControlReport, Storyboard, VideoRenderJob  # noqa: PLC0415
@@ -104,8 +291,13 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
             if storyboard_id in busy:
                 continue
             board = session.get(Storyboard, storyboard_id)
-            if board is None or board.status == "REJECTED":
-                continue  # closed (by her, or a viewing refused): nothing to decide
+            if board is None:
+                continue
+            if board.status == "REJECTED" and accepted_under_cap(session, asset_id) is None:
+                # Closed by her, or a viewing refused it: nothing to decide. A film accepted
+                # under the Owner's cap that a viewing refused is not closed (2026-10-15,
+                # 13:10Z: the pass skipped 2d276038 on that status and nothing moved).
+                continue
             if _his_card_open(session, storyboard_id):
                 # His cap stopped her repair and his card asks what becomes of the film
                 # (`decisions.producers.redo_cap`): she is not asked again until he answers.
@@ -119,6 +311,32 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
                 .order_by(QualityControlReport.verified_at.desc())
                 .limit(1)
             )
+            if report is not None and report.status == "PASSED":
+                # Accepted under the Owner's cap (the PASSED report her decision stands on),
+                # then refused by her viewing on the publish path (12:49Z, 2d276038): walked
+                # again once per such viewing, so the walk publishes it, her viewing being
+                # notes now, not a veto (`editorial_review`); once out, nothing more.
+                viewing = _refused_viewing_to_publish(session, asset_id)
+                shipped = accepted_under_cap(session, asset_id) if viewing else None
+                if viewing and shipped and shipped.get("report_id"):
+                    failed_report = str(shipped["report_id"])
+                    cause = f"{CAUSE_PREFIX}{failed_report}"
+                    # The walks under this cause since the refused viewing: the next waits
+                    # twice as long after each (13:31Z: the first walk found «niciun material
+                    # aprobat de QC» on the queue's own reading of that refusal), so a
+                    # publication that cannot go out is neither a loop nor forgotten.
+                    walks = _walks_since(session, storyboard_id, cause, viewing)
+                    wait = min(
+                        PUBLISH_RETRY_MINUTES * 2 ** max(len(walks) - 1, 0), MAX_WAIT_MINUTES
+                    )
+                    key = f"film-continue-{storyboard_id}-publish-again-{viewing}-{len(walks)}"
+                    standing = session.scalar(
+                        select(TaskQueueItem.id).where(TaskQueueItem.idempotency_key == key)
+                    )
+                    recent = walks and now - walks[-1] < timedelta(minutes=wait)
+                    if standing is None and not recent:
+                        owed.append((storyboard_id, key, cause, failed_report))
+                continue
             if report is None or report.status != "FAILED" or str(report.verified_at) < since:
                 continue
             if _developer_waits(session, str(report.id)):
@@ -138,14 +356,51 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
                 if (event.payload or {}).get("cause") == cause and event.timestamp
             )
             if int(state["tries"]) >= MAX_TRIES:
-                continue  # it waits in her inbox; a new report or his answer moves it
+                # It waits in her inbox; a new report or his answer moves it — except a REPAIR
+                # stopped only by the Owner's caps: walked until it is published, from her
+                # stored decision and without a model call (`stages._ship_stored_repair`), the
+                # walks spaced out (`_cap_settle_owed`). 2026-10-16, f06808c9: 26 tries, its
+                # one cap-rule walk at 22:21Z the night before the continuation's cap fix, and
+                # nothing walked it again.
+                if _stopped_by_caps(context, state):
+                    settle = _cap_settle_owed(session, storyboard_id, str(report.id), runs, now)
+                    if settle is not None:
+                        owed.append((storyboard_id, settle, cause, str(report.id)))
+                    continue
+                # Once under the renders cap: a film whose tries ran out before the cap rule
+                # has never been judged under it, and is walked one more time (CAP_RULE_SINCE).
+                if any(moment >= CAP_RULE_SINCE for moment in runs):
+                    continue
+                key = f"film-continue-{storyboard_id}-cap-rule-{report.id}"
+                standing = session.scalar(
+                    select(TaskQueueItem.id).where(TaskQueueItem.idempotency_key == key)
+                )
+                if standing is None:
+                    owed.append((storyboard_id, key, cause, str(report.id)))
+                continue
             # Asked before (a wait of hers, or a walk that ran): not again before RETRY_MINUTES,
             # and after walks that never reached her (safe mode, his mode, the film busy) twice
             # as long each time, so a refusal is neither a loop nor the end of the film.
             asked_at = str(state["last_at"] or "")
-            unheard = sum(1 for moment in runs if moment > asked_at)
+            # A walk that ended within HEARD_WINDOW of her newest decision is the walk that
+            # produced it (the decision is written first, the walk's record seconds later):
+            # heard, not unheard. 11:29:53Z, 2d276038: the walk's record came 19 ms after her
+            # decision and was counted as a walk that never reached her, so the lapsed repair
+            # waited the hour after the 11:42Z restart while nothing moved.
+            heard_until = _heard_until(asked_at)
+            unheard = sum(1 for moment in runs if moment > heard_until)
             moments = [moment for moment in (*runs, asked_at) if moment]
-            if moments:
+            # What her REPAIR waited for has come (``ready``: a take bought for her list is
+            # approved; ``look``: candidates wait for her own look) and no walk has read it
+            # since her decision: carried on now, not an hour from now. 2026-10-15, 2d276038:
+            # her repair's new still was approved at 10:14Z and the film stood until the
+            # hour after her 10:24Z decision had passed, the Owner asking where the
+            # publication was. A walk that ran since (``unheard``) is throttled as before, so
+            # a film the walk cannot move is not walked every ten minutes.
+            # A repair that lapsed (what was bought for it came back refused, his no) is hers
+            # again on the same terms: read now, once; walked since, it waits the hour.
+            carried_on_now = (state["ready"] or state["look"] or state["lapsed"]) and unheard == 0
+            if moments and not carried_on_now:
                 last = datetime.fromisoformat(max(moments))
                 if last.tzinfo is None:
                     last = last.replace(tzinfo=UTC)

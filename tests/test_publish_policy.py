@@ -1219,7 +1219,7 @@ def test_a_seeded_channel_keeps_todays_category_and_speaks_the_content_language(
     factual, serial = channels["MAIN_FACTUAL"], channels["OFFICE_SERIAL"]
     assert factual["youtube_category_id"] == "28" and serial["youtube_category_id"] == "28"
     assert factual["made_for_kids"] is False and factual["default_language"] is None
-    assert factual["shorts_max_seconds"] == 60 and serial["shorts_max_seconds"] == 70
+    assert factual["shorts_max_seconds"] == 180 and serial["shorts_max_seconds"] == 180
     bundle = _create_verified_asset_bundle(engine, tmp_path)
     provider, requests = _youtube(monkeypatch, _two_answers())
     publish_media_asset(
@@ -1245,12 +1245,12 @@ def test_the_upload_settings_are_part_of_the_versioned_policy(engine):
     result = change_publish_policy(
         engine,
         channel["id"],
-        _command(youtube_category_id="24", shorts_max_seconds=180, default_language="ro"),
+        _command(youtube_category_id="24", shorts_max_seconds=150, default_language="ro"),
     )
     assert result["status"] == "COMMITTED"
     assert result["channel"]["policy_version"] == 2
     assert result["channel"]["youtube_category_id"] == "24"
-    assert result["channel"]["shorts_max_seconds"] == 180
+    assert result["channel"]["shorts_max_seconds"] == 150
     event = _events(engine, "publishing.channel_policy_changed")[-1]
     assert set(event.payload["changed"]) == {
         "youtube_category_id",
@@ -1261,7 +1261,7 @@ def test_the_upload_settings_are_part_of_the_versioned_policy(engine):
     again = change_publish_policy(
         engine,
         channel["id"],
-        _command(expected_version=2, youtube_category_id="24", shorts_max_seconds=180),
+        _command(expected_version=2, youtube_category_id="24", shorts_max_seconds=150),
     )
     assert again["status"] == "NO_CHANGE"
     # An empty language goes back to the studio's content language.
@@ -1363,9 +1363,10 @@ def test_migration_0053_gives_existing_channels_todays_settings_and_takes_them_b
                 )
             }
 
+    # 0053 gave them 60 and 70; 0058 (2026-10-16, the Owner's 180 s) raised both.
     assert rows() == {
-        "MAIN_FACTUAL": ("28", 0, None, 60),
-        "OFFICE_SERIAL": ("28", 0, None, 70),
+        "MAIN_FACTUAL": ("28", 0, None, 180),
+        "OFFICE_SERIAL": ("28", 0, None, 180),
     }
     _downgrade(engine, "0052_publication_remote_state")
     with sqlite3.connect(path) as raw:

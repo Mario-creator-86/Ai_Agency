@@ -1,11 +1,11 @@
 """compile_prompts: two prompts per filmed scene, each written for the model that reads it.
 
-The Nepal film (storyboard 0000003f, 2026-09-26) sent the image model and the video model the
+The Nepal film (storyboard 1d530880, 2026-09-26) sent the image model and the video model the
 same template text: enum codes, a hex palette, "Camera: medium shot, locked camera" on every
 scene, an 8-item "Avoid:" list, and never the bible's "No human faces" rule. Three scenes came
 back with faces and the clips came back almost static. These tests replay the Nepal bible and
 the shot plan the model actually wrote (recovered from the scratchpad copy; see
-tests/fixtures/factual_sample) through the compiler, and hold what the vendors' guides ask:
+tests/fixtures/nepal_1d530880) through the compiler, and hold what the vendors' guides ask:
 
 - the still prompt is plain photographic prose that opens with the film's look block;
 - the motion prompt describes only movement: one camera move, one environment motion, one
@@ -42,6 +42,7 @@ from app.media.prompt_lint import (
     ENUM_CODE,
     MOTION_CLOSING,
     MOTION_WORDS,
+    STILL_WORDS,
     NEGATION,
     LintScene,
     camera_moves,
@@ -52,7 +53,7 @@ from app.media.prompt_lint import (
 from app.media.series_look import FACTUAL_LOOK_FILE, load_factual_look, look_block
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = Path(__file__).parent / "fixtures" / "factual_sample"
+FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
 
 
 def test_airless_scene_does_not_gain_invented_weather():
@@ -115,7 +116,7 @@ def test_a_scene_of_objects_is_not_asked_for_people_under_a_face_ban():
 
 #: Palette instructions belong to the still, never to the motion prompt. The colour of a
 #: named object ("the gold medal on the green cloth") is the subject's, not a palette: the
-#: motion prompt must name what is in the picture (2026-10-11, 00000160 scene 4: a motion
+#: motion prompt must name what is in the picture (2026-10-11, aa170155 scene 4: a motion
 #: prompt that named nothing had the model improvise people).
 PALETTE_WORDS = re.compile(
     r"\b(?:palette|hues?|tones?|colou?r\s+grad\w*|saturat\w*|desaturat\w*)\b", re.IGNORECASE
@@ -206,7 +207,9 @@ def test_nepal_still_prompts_are_prose_that_opens_with_one_look_and_hides_every_
             assert "diffuse daylight" not in block.lower(), block
         if package.get("environment"):
             assert "as it is today" not in block.lower(), block
-        assert 60 <= len(still.split()) <= 120, len(still.split())
+        # The Owner raised the still-word allowance to 900 in October 2026. Check the
+        # current configured policy rather than the obsolete 120-word Nepal-era limit.
+        assert STILL_WORDS[0] <= len(still.split()) <= STILL_WORDS[1], len(still.split())
         # Every person the prompt shows is kept from behind or in the distance, within the
         # words around it, in its own sentence.
         for sentence in re.split(r"(?<=[.!?;])\s+", still):
@@ -359,7 +362,13 @@ def test_caps_come_from_the_contract_and_cut_whole_sentences():
             assert text.endswith("."), text
             # Only whole sentences of the uncapped prompt survive, never a slice of one.
             for sentence in re.split(r"(?<=[.!?])\s+", text):
-                assert sentence in full[key], sentence
+                from app.media.prompt_agent import MOVE_SHORT
+
+                assert sentence in full[key] or (
+                    key == "motion_prompt"
+                    and sentence in MOVE_SHORT.values()
+                    and camera_moves(text)[0][0] == camera_moves(full[key])[0][0]
+                ), sentence
     # veo's own promptText limit (1000 UTF-16 units) is the default.
     assert utf16_units(full["still_prompt"]) <= 1000
     for source in ("backend/app/media/prompt_agent.py", "backend/app/media/assembler.py"):
@@ -597,3 +606,45 @@ def test_the_assembler_speaks_the_dialect_of_the_model_that_films_the_scene(engi
     assert not NEGATION.search(sent["prompt"]), sent["prompt"]
     assert "human faces" in sent["extra"]["negative_prompt"]
     assert sent["prompt"] == motion_prompt_for(third, "veo3.1")[0]
+
+
+def test_motion_comma_lists_keep_their_predicate_and_exclusions_cannot_turn_positive():
+    from app.media.prompt_agent import _clauses_of
+
+    text = (
+        "The flask, clamp stand, valve, and tubing stay locked in identical position and shape "
+        "throughout; no extra figure, reflection, or ghost image appears."
+    )
+    assert _clauses_of(text, motion=True) == [
+        "The flask, clamp stand, valve, and tubing stay locked in identical position and shape "
+        "throughout"
+    ]
+
+
+def test_the_real_kelvin_candidate_keeps_hardware_fixed_and_never_requests_a_ghost():
+    import json
+    from pathlib import Path
+
+    from app.media.prompt_agent import compile_prompts
+    from app.media.prompt_lint import utf16_units
+
+    data = json.loads(
+        (Path(__file__).parent / "fixtures" / "kelvin_probe_motion_2026-10-14.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    compiled = compile_prompts(data["package"], data["bible"])
+    motion = compiled["motion_prompt"]
+    assert "stay locked in identical position and shape throughout" in motion
+    assert "ghost image appears" not in motion.lower()
+    assert "The flask. Clamp stand. Valve." not in motion
+    assert "mercury column in the curved glass tube now visibly lower" in motion
+    assert utf16_units(motion) <= 1000
+
+
+def test_still_exclusions_cannot_revive_the_rest_of_a_comma_list():
+    from app.media.prompt_agent import _clauses_of
+
+    assert _clauses_of(
+        "A brass flask on a wooden bench; no extra figure, reflection, or ghost image appears"
+    ) == ["A brass flask on a wooden bench"]

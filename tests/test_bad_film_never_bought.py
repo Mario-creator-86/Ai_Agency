@@ -3,9 +3,9 @@
 The wiring tests (test_clip_qc_wiring.py) script the clip check's verdict. Here the studio's own
 qc.check_clip measures what the faked vendor delivered, so what is asserted is what the Owner's
 next paid film would meet: a frozen clip on a moving shot and a clip showing a face the bible
-forbids are measured wrong, bought again at most once inside the cap, REJECTED, and never
-assembled into a PRODUCTION film; and a question he answers after the plan changed buys
-nothing. Every provider is faked; 0 credits.
+forbids are measured wrong, not bought again automatically without the Director's review,
+REJECTED, and never assembled into a PRODUCTION film; and a question he answers after the
+plan changed buys nothing. Every provider is faked; 0 credits.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from test_approvals import answer
 from test_film_costing import SEEDANCE, VEO_FAST, Account, Models, SpyVideo, a_film, approved, run
 
 FFMPEG = shutil.which("ffmpeg")
-FIXTURES = Path(__file__).parent / "fixtures" / "factual_sample"
+FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
 requires_ffmpeg = pytest.mark.skipif(FFMPEG is None, reason="ffmpeg is not installed")
 requires_yunet = pytest.mark.skipif(
     not detector_available(), reason="the YuNet detector is not installed"
@@ -119,12 +119,14 @@ def test_a_frozen_clip_on_an_aerial_drift_is_measured_wrong_and_never_assembled(
         face_counter=_no_faces,
     )
 
-    # One purchase and one retry inside the 680-credit cap; never a third.
-    assert models.posts() == 2
+    # QC refuses the frozen first clip. A replacement needs the Director's separate
+    # review of its corrected prompt; an unavailable review never authorizes a paid retry.
+    assert models.posts() == 1
     assert summary["spent_credits_quoted"] <= summary["cap_credits"]
     (entry,) = summary["scenes"]
     assert entry["status"] == "NEEDS_OWNER"
     assert entry["clip_qc"]["verdict"] == "FAILED"
+    assert len(entry["clip_qc"]["reports"]) == 1
     for report in entry["clip_qc"]["reports"]:
         motion = next(c for c in report["checks"] if c["code"] == "motion")
         assert motion["status"] == "FAILED", report
@@ -151,9 +153,12 @@ def test_a_face_the_bible_forbids_is_caught_by_yunet_when_the_vision_model_misse
         clip_judge=_judge_says_keep,  # the real YuNet counts the faces (face_counter=None)
     )
 
-    assert models.posts() == 2
+    # The measured face-policy failure stops before a mechanical paid retry;
+    # the same rejected still is not purchased again without approved correction.
+    assert models.posts() == 1
     (entry,) = summary["scenes"]
     assert entry["status"] == "NEEDS_OWNER" and entry["clip_qc"]["verdict"] == "FAILED"
+    assert len(entry["clip_qc"]["reports"]) == 1
     faces = next(c for c in entry["clip_qc"]["reports"][0]["checks"] if c["code"] == "faces")
     assert faces["status"] == "FAILED", faces
     _never_in_production(engine, storyboard_id, tmp_path)

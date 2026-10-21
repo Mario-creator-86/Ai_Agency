@@ -32,6 +32,44 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.real_encode)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _two_still_candidates_as_the_suite_was_written():
+    """Production buys ONE still per scene since 2026-10-15 21:10Z (the Owner: «vreau să facem
+    doar 1», `cost_plan.STILL_CANDIDATES`); the suite's fixtures, prices and choices were
+    written on two candidates, and keep them. `test_production_buys_one_still_per_scene`
+    reads the production value from the source."""
+    from app.agents import reviews
+    from app.media import assembler, cost_plan, shooting_sheet, stills_stage
+
+    holders = (cost_plan, stills_stage, shooting_sheet, assembler, reviews)
+    before = {id(m): m.STILL_CANDIDATES for m in holders}
+    for module in holders:
+        module.STILL_CANDIDATES = 2
+    yield
+    for module in holders:
+        module.STILL_CANDIDATES = before[id(module)]
+
+
+@pytest.fixture(autouse=True)
+def pinned_voice_profiles(request, monkeypatch):
+    """The voices the suite is timed by («pauza vocii», 2026-10-16), pinned the way
+    STILL_CANDIDATES is: every estimate, freeze and render reads
+    `pause_timing.PINNED_VOICE_PROFILES`, never the kept takes of the test's own media folder,
+    so a kept take never moves a test's numbers; the tests derive them through the rules' own
+    formulas (`pause_timing.pause`). A test marked measured_voices measures the voices itself."""
+    if request.node.get_closest_marker("measured_voices") is not None:
+        return
+    import copy
+
+    from app.media import pauses
+    from pause_timing import PINNED_VOICE_PROFILES
+
+    def pinned(media_root=None, *, rules, write=True):
+        return copy.deepcopy(PINNED_VOICE_PROFILES)
+
+    monkeypatch.setattr(pauses, "load_profiles", pinned)
+
+
 @pytest.fixture(autouse=True)
 def shipped_music_library(monkeypatch):
     """Every test reads the music library the release ships (empty), never the Owner's own
@@ -40,6 +78,35 @@ def shipped_music_library(monkeypatch):
     from app.media import music_library
 
     monkeypatch.setattr(music_library, "LIBRARY_PATH", music_library.SHIPPED_LIBRARY)
+
+
+@pytest.fixture(autouse=True)
+def montage_off_unless_marked(request, monkeypatch):
+    """The montage (a scene cut into shots, 2026-10-16) is switched off for the suite: its
+    films were written one still and one clip a scene, and their counts stand. A test marked
+    montage runs with it on."""
+    marked = request.node.get_closest_marker("montage") is not None
+    monkeypatch.setenv("STUDIO_MONTAGE_ENABLED", "1" if marked else "0")
+    # The suite's scripts were written for 30-second shorts; production aims at 160 since
+    # 2026-10-16 (`Settings.target_video_seconds`, read from the source by its own test).
+    monkeypatch.setenv("STUDIO_TARGET_VIDEO_SECONDS", "30")
+
+
+#: The renders cap the suite's fixtures, caps and counts were written on (`renders_cap`).
+SUITE_RENDERS_PER_LAYER = 3
+
+
+@pytest.fixture(autouse=True)
+def three_renders_unless_marked(request, monkeypatch):
+    """Production makes a shot's picture, or its motion, at most twice since 2026-10-16 (the
+    Owner: «limităm acum la 2 randări … maxim încă o randare», `Settings.renders_per_layer`);
+    the suite's fixtures, caps, re-roll counts and repair rounds were written on three, and
+    keep them (STUDIO_RENDERS_PER_LAYER=3), the way STILL_CANDIDATES and the montage are
+    pinned. A test marked ``renders_per_layer(n)`` runs at ``n``; the production default is
+    read from the settings model by `test_renders_cap`."""
+    marker = request.node.get_closest_marker("renders_per_layer")
+    value = int(marker.args[0]) if marker is not None and marker.args else SUITE_RENDERS_PER_LAYER
+    monkeypatch.setenv("STUDIO_RENDERS_PER_LAYER", str(value))
 
 
 @pytest.fixture(autouse=True)

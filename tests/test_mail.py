@@ -160,6 +160,8 @@ def test_a_reply_and_a_forward_stay_in_the_thread_and_the_thread_reads_in_order(
 
 
 def test_a_letter_reaches_the_addressee_with_the_earlier_exchange(engine, staffed):
+    """Through the mail task, one thread at a time (2026-10-16, «Context pe sarcină»): the
+    letter and the earlier exchange are its data; her identity carries no letter."""
     sarah, elena = staffed["agents"]["Director"], staffed["agents"]["FactChecker"]
     with Session(engine) as session, session.begin():
         first = post_message(
@@ -170,7 +172,7 @@ def test_a_letter_reaches_the_addressee_with_the_earlier_exchange(engine, staffe
             from_agent_id=elena.id,
             to_agent_id=None,
         )
-        post_message(
+        asked = post_message(
             session,
             intent="REQUEST_INFO",
             subject="Re: Verificare: 3 afirmații",
@@ -179,11 +181,17 @@ def test_a_letter_reaches_the_addressee_with_the_earlier_exchange(engine, staffe
             to_agent_id=elena.id,
             in_reply_to=first.id,
         )
+        asked_id = asked.id
     with Session(engine) as session:
         system = compose_identity(session, session.get(Agent, elena.id)).system
-    assert "Caută o sursă pentru a treia până diseară" in system
-    assert "earlier, Elena (Fact Checker): Verificare: 3 afirmații" in system
-    assert "a treia nu are sursă" in system
+    assert "Caută o sursă pentru a treia" not in system
+    registry, model = registry_with(staffed, letter_json("Caut sursa. Elena"))
+    answer_mail(engine, registry, asked_id)
+    prompt = model.calls[-1]["prompt"]
+    assert "Caută o sursă pentru a treia până diseară" in prompt
+    assert "Elena (Fact Checker) → the Director's inbox · STATUS: Verificare: 3 afirmații" in prompt
+    assert "a treia nu are sursă" in prompt
+    assert "Caută o sursă" not in model.calls[-1]["system"]
 
 
 # --------------------------------------------------------------------------- answering
@@ -222,6 +230,86 @@ def test_an_employee_answers_a_question_in_its_thread_and_the_question_closes(en
         run = session.get(AgentRun, sent["run_id"])
         assert run.task_type == "answer_mail"
         assert run.context_json["task_summary"].startswith("Răspund la «Ce sursă are cifra")
+
+
+def test_a_letter_about_the_performance_intake_carries_the_studios_measurements(
+    engine, staffed, monkeypatch
+):
+    """2026-10-15 21:39Z: the Director asked Dr. Aris for per-film click-through and retention
+    on the intake's report, and he answered that he needed «access to the analytics dashboard
+    or a CSV» — the figures stood in the studio's own table, read from YouTube Analytics a
+    minute before. A thread opened by the intake's report carries them; the source's limits
+    (no impressions, no click-through) are said; another thread carries nothing."""
+    from app.analytics import services as analytics
+
+    sarah, aris = staffed["agents"]["Director"], staffed["agents"]["LeadResearcher"]
+    monkeypatch.setattr(
+        analytics,
+        "story_performance",
+        lambda engine, channel_id=None: {
+            "videos": [
+                {
+                    "title": "Why the Speed of Light Is Exactly 299,792,458 m/s",
+                    "measured_at": "2026-10-15T21:37:00+00:00",
+                    "seconds": 48.0,
+                    "views": 90,
+                    "measured_view_percentage": 81.32,
+                    "measured_ctr": 0.0,
+                    "measured_engagement_percentage": 1.11,
+                    "editorial_scores": {"hook": 8},
+                    "editorial_total": 38,
+                    "story_review": "APPROVED",
+                }
+            ],
+            "sample_size": 1,
+            "measured_view_percentage": 81.32,
+            "measured_engagement_percentage": 1.11,
+            "note": "means over every measured film",
+        },
+    )
+    with Session(engine) as session, session.begin():
+        report = post_message(
+            session,
+            intent="STATUS",
+            subject="Preluarea performanței: încheiată — 7 publicări măsurate pe 2 canale.",
+            body={"stage": "performance_intake", "status": "COMPLETED"},
+            body_text="7 publicări măsurate pe 2 canale.",
+            from_agent_id=sarah.id,
+            to_agent_id=None,
+        )
+        asked = post_message(
+            session,
+            intent="REQUEST_INFO",
+            subject="De investigat: Preluarea performanței: încheiată.",
+            body_text="Dr. Aris must pull per-film click-through and retention.",
+            from_agent_id=sarah.id,
+            to_agent_id=aris.id,
+            in_reply_to=report.id,
+        )
+        asked_id = asked.id
+        elsewhere = post_message(
+            session,
+            intent="REQUEST_INFO",
+            subject="Ce sursă are cifra de 40%?",
+            body_text="Aris, pe ce stă 40%? Sarah",
+            from_agent_id=sarah.id,
+            to_agent_id=aris.id,
+        )
+        elsewhere_id = elsewhere.id
+    registry, model = registry_with(
+        staffed, letter_json("Sarah, retenția medie e 81,32% pe un eșantion de 1 film.", done=True)
+    )
+
+    answer_mail(engine, registry, asked_id)
+
+    prompt = model.calls[-1]["prompt"]
+    assert "studio-records" in prompt and "mail-thread" in prompt
+    assert "Why the Speed of Light" in prompt and "81.32" in prompt and '"sample_size": 1' in prompt
+    assert "does not report impressions or click-through" in prompt
+    assert "do not ask anyone for a dashboard" in prompt
+
+    answer_mail(engine, registry, elsewhere_id)
+    assert "studio-records" not in model.calls[-1]["prompt"]
 
 
 def test_an_instruction_stays_open_until_the_employee_says_the_work_is_done(engine, staffed):
@@ -320,7 +408,7 @@ def test_a_schema_example_echoed_back_is_not_a_letter_and_the_second_try_is(engi
     registry = ProviderRegistry()
     registry.register(staffed["provider_id"], Narrator(lambda p: ""))
     sent = answer_mail(engine, registry, asked_id)
-    assert calls == [{"format": "json"}, {"think": True}]
+    assert calls == [{"format": "json", "think": False}, {"think": True}]
     with Session(engine) as session:
         reply = session.get(AgentMessage, sent["message_id"])
         assert reply.body_text.startswith("Sarah, cele 59 de rulări")
@@ -618,7 +706,7 @@ def test_a_day_that_stops_writes_to_the_owner_where_and_why(engine, settings, st
 # --------------------------------------------------------------------------- 2026-09-11
 
 
-def test_the_configured_adapter_asks_ollama_for_thinking_off_and_reports_how_it_ended(
+def test_the_configured_adapter_asks_cloud_nothing_about_thinking_and_reports_how_it_ended(
     monkeypatch,
 ):
     """The studio's connections run through ConfiguredLLM, not the seeded local adapter."""
@@ -633,7 +721,9 @@ def test_the_configured_adapter_asks_ollama_for_thinking_off_and_reports_how_it_
     import asyncio
 
     result = asyncio.run(adapter.generate("qwen3.5:397b", "Verify", max_tokens=700))
-    assert seen["path"] == "/api/generate" and seen["body"]["think"] is False
+    # Cloud is asked nothing about thinking (2026-10-15: `think: false` made glm-5.3-flash
+    # narrate its reasoning into the answer); the local endpoint still is.
+    assert seen["path"] == "/api/generate" and "think" not in seen["body"]
     assert seen["body"]["options"]["num_predict"] == 700
     assert result.text == "" and result.raw_response["done_reason"] == "length"
     assert "thinking" not in result.raw_response
@@ -769,15 +859,15 @@ def test_an_analysis_without_its_object_is_asked_again_with_native_thinking(engi
     result = director_review(engine, registry, str(uuid4()))
 
     assert result["reviewed"] == 1
-    assert [c["extra"] for c in calls] == [{"format": "json"}, {"think": True}]
+    assert [c["extra"] for c in calls] == [{"format": "json", "think": False}, {"think": True}]
     assert calls[0]["prompt"] == calls[1]["prompt"]
     with Session(engine) as session:
         runs = session.scalars(
             select(AgentRun).where(AgentRun.task_type == "director_review")
         ).all()
         assert sorted(r.prompt_template_version for r in runs) == [
-            "director-review-v1",
-            "director-review-v1+think",
+            "director-review-v2",
+            "director-review-v2+think",
         ]
         assert session.get(AgentMessage, hold_id).status == "RESOLVED"
 
@@ -1287,3 +1377,47 @@ def test_a_letter_about_money_that_went_out_is_written_each_time(engine, staffed
         resolve_message(session, first, resolution="Am trecut-o de mână.", resolved_by="Owner")
     assert write() != first
     assert len(_owner_rows(engine)) == 2
+
+
+def test_a_letter_that_is_the_directors_matter_goes_to_her_inbox_not_to_the_owner(engine):
+    """The Owner, 2026-10-15 19:30Z, checking his alerts: fifteen open letters, fourteen of
+    them the studio's own matter under his rule of 2026-10-12 (a day the studio cut and
+    resumes itself, the GPU guard's off, her acceptance of a film after QC…). Such a letter is
+    written to the Director in the same words; a paid step that waits on HIS cap still reaches
+    him."""
+    from app.agents.memory import agent_for_role
+    from app.agents.messages import is_for_owner, post_message
+    from app.agents.services import seed_initial_workforce
+    from sqlalchemy.orm import Session
+
+    seed_initial_workforce(engine)
+    with Session(engine) as session, session.begin():
+        director = agent_for_role(session, "Director")
+        hers = post_message(
+            session,
+            intent="ESCALATE",
+            subject="Ziua din 2026-10-15 a fost întreruptă la etapa «alegerea subiectului»",
+            body={"kind": "day_interrupted", "date": "2026-10-15"},
+            body_text="Ziua a fost întreruptă; se reia singură.",
+            to_owner=True,
+        )
+        walk = post_message(
+            session,
+            intent="ESCALATE",
+            subject="Foaia de filmare: «Storyboard: X» așteaptă decizia ta pe foaia de filmare",
+            body={"kind": "owner_shooting_sheet", "status": "WAITING"},
+            body_text="GPU-ul a fost oprit în timpul pasului.",
+            to_owner=True,
+        )
+        his = post_message(
+            session,
+            intent="ESCALATE",
+            subject="Foaia de filmare: «Storyboard: Y» așteaptă aprobarea ta",
+            body={"kind": "owner_shooting_sheet", "status": "NEEDS_APPROVAL"},
+            body_text="Pasul costă peste plafonul tău.",
+            to_owner=True,
+        )
+        assert hers.to_agent_id == director.id and not is_for_owner(hers)
+        assert hers.body_json["to"] == "Director" and hers.body_json["redirected_from"] == "Owner"
+        assert walk.to_agent_id == director.id and not is_for_owner(walk)
+        assert his.to_agent_id is None and is_for_owner(his)

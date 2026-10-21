@@ -9,7 +9,7 @@ Following docs/architecture/08_VIDEO_PIPELINE.md:
 - Picture spans QC: every filmed scene is judged on the first, middle and last frame of its
   span on the film's timeline, at the delivered 1080 px, with the per-clip checklist
   (picture_qc.judge_clip), YuNet counts faces on each frame when the bible forbids them, and
-  each frame is read for a flat band that splits it into panels (`flat_band`).
+  the model's required `one_picture` verdict decides whether a frame is a collage.
 - Character Drift QC: the same look, against the Character Bible's canonical description.
 - Rights/License QC: all assets must be clear of copyright blocks.
 - Audio QC: the film measures at the platform's loudness, under the true-peak ceiling.
@@ -48,6 +48,7 @@ from app.db import lock_for_write
 from app.factual.editorial import dangles
 from app.factual.models import FactualClaim
 from app.media.cards import film_finish
+from app.media.markings import planned_markings
 from app.media.models import (
     MediaAsset,
     QualityControlReport,
@@ -74,6 +75,7 @@ from app.media.picture_qc import (
     judge_clip,
 )
 from app.media.prompt_lint import bible_face_rule
+from app.media.renders_cap import clip_retries, renders_of_ro
 from app.media.schemas import QCReportView
 from app.media.toolchain import (
     LOUDNESS_TARGET_LUFS,
@@ -310,12 +312,12 @@ DEGENERATE_SSIM = 0.94
 
 
 def still_is_degenerate(ffmpeg: str | None, path: Path) -> str | None:
-    """Why a still is not a picture (stripes, bands, a blank field), or None when it is one.
+    """Whether a still is essentially uniform/blank, or None when it is not.
 
-    Measured with the encoder the studio already has: the still is squeezed to a single row
-    (and then to a single column), stretched back, and compared with itself. No image library,
-    no model, no opinion. None also when it cannot be measured — this check refuses pictures,
-    it never invents a refusal.
+    Compare the image to a row/column-collapsed version. Only BOTH axes above
+    the uniformity threshold cause an automatic refusal. A stripe or dark band
+    alone never does: a vision model checks composition and scene relevance.
+    None also means the image could not be measured.
     """
     import re  # noqa: PLC0415
     import subprocess  # noqa: PLC0415
@@ -354,10 +356,9 @@ def still_is_degenerate(ffmpeg: str | None, path: Path) -> str | None:
     columns, rows = scores["columns"], scores["rows"]
     if columns >= DEGENERATE_SSIM and rows >= DEGENERATE_SSIM:
         return f"blank or uniform picture, no scene (structure {columns:.2f}/{rows:.2f})"
-    if columns >= DEGENERATE_SSIM:
-        return f"vertical stripes, no scene (structure {columns:.2f})"
-    if rows >= DEGENERATE_SSIM:
-        return f"horizontal bands, no scene (structure {rows:.2f})"
+    # Single-axis similarity cannot establish a split image or a defective
+    # picture. Skies, desk fronts and horizons caused false paid rerolls.
+    # Stripes, panels and visual scene fidelity belong to the vision model.
     return None
 
 
@@ -422,6 +423,20 @@ SOFT_EDGE_STEP = 3.0
 #: c1); a still more than half flat is a blank field with a strip of picture faded into it,
 #: which the look alone would otherwise have to catch (review of this rule, 2026-10-10).
 SOFT_BAND_MAX_SHARE = 0.5
+#: A flat band glued to the BOTTOM edge that is a coloured surface of the scene — a desk
+#: front, a floor, the base of a wall — not a strip pasted on: its grey level is neither
+#: black nor white (SURFACE_LEVELS, 8-bit) and it takes no more than SURFACE_BAND_MAX_SHARE of
+#: the height. 2026-10-16 02:33Z, 87c05891: the dark wood front of Sarah's desk, 16 % of the
+#: frame in every scene drawn from the episode's reference picture, refused four scenes as
+#: «o bandă plată pe toată lățimea, jos» before the look saw them. Black bands (the Nepal
+#: lower third, letterboxes) and white caption strips stay splits.
+SURFACE_LEVELS = (24.0, 231.0)
+SURFACE_BAND_MAX_SHARE = 0.3
+#: A dark surface is still a drawn surface when its rows carry texture — wood grain, shading
+#: — where a pasted black strip has none: the mean range of a row's grey within the band.
+#: Measured 2026-10-16 05:04Z on 87c05891's desk fronts (grey level 7-12, read as black):
+#: mean row range 7.5-10.7; a pasted pure strip reads 0-1.
+SURFACE_TEXTURE_MIN = 4.0
 
 
 @dataclass(frozen=True)
@@ -439,6 +454,10 @@ class FlatBand:
     #: neighbouring rows within SOFT_EDGE_ROWS of its inner edge; None for a band in the
     #: middle, a band from edge to edge, or no band.
     edge_step: float | None = None
+    #: The band's mean grey (8-bit) over its rows; None when no band.
+    level: float | None = None
+    #: The mean range (max - min grey) of the band's rows: its texture; None when no band.
+    texture: float | None = None
 
     @property
     def rows(self) -> int:
@@ -470,13 +489,26 @@ class FlatBand:
         )
 
     @property
+    def surface(self) -> bool:
+        """Glued to the bottom edge only, a coloured surface of the scene (SURFACE_LEVELS:
+        neither black nor white) and no more than SURFACE_BAND_MAX_SHARE of the height: a desk
+        front, a floor, the base of a wall — the picture's own, not a strip pasted on."""
+        if not (self.rows > 0 and self.start > 0 and self.end == self.height - 1):
+            return False
+        if self.share > SURFACE_BAND_MAX_SHARE:
+            return False
+        coloured = self.level is not None and SURFACE_LEVELS[0] <= self.level <= SURFACE_LEVELS[1]
+        textured = self.texture is not None and self.texture >= SURFACE_TEXTURE_MIN
+        return coloured or textured
+
+    @property
     def splits_a_still(self) -> bool:
         """On a still, any band of at least PANEL_BAND_SHARE of the height but a soft-edged
-        one at the top or the bottom: pictures pasted together, a picture with a blank strip,
-        or a blank field (which the degenerate check refuses as well). Nothing on a still is
-        burned in and nothing fades, so no amount of blank beside a strip of picture makes it
-        one photograph."""
-        return self.wide and not self.soft_edge
+        one at the top or the bottom, or a coloured surface at the bottom (`surface`):
+        pictures pasted together, a picture with a blank strip, or a blank field (which the
+        degenerate check refuses as well). Nothing on a still is burned in and nothing fades,
+        so no amount of blank beside a strip of picture makes it one photograph."""
+        return self.wide and not self.soft_edge and not self.surface
 
     @property
     def splits_the_picture(self) -> bool:
@@ -590,6 +622,7 @@ def flat_band(ffmpeg: str | None, path: Path | str) -> FlatBand | None:
     if result.returncode != 0 or len(data) != width * height:
         return None
     means: list[float] = []
+    ranges: list[int] = []
     runs: list[tuple[int, int]] = []
     run_start, flat_rows = -1, 0
     for y in range(height + 1):
@@ -598,6 +631,7 @@ def flat_band(ffmpeg: str | None, path: Path | str) -> FlatBand | None:
             row = data[y * width : (y + 1) * width]
             mean = sum(row) / width
             means.append(mean)
+            ranges.append(max(row) - min(row))
             if max(row) - min(row) < FLAT_ROW_RANGE:
                 flat = sum((value - mean) ** 2 for value in row) / width < FLAT_ROW_STD**2
         if flat:
@@ -609,7 +643,15 @@ def flat_band(ffmpeg: str | None, path: Path | str) -> FlatBand | None:
             runs.append((run_start, y - 1))
             run_start = -1
     bands = [
-        FlatBand(start, end, height, flat_rows, _edge_step(means, start, end))
+        FlatBand(
+            start,
+            end,
+            height,
+            flat_rows,
+            _edge_step(means, start, end),
+            level=sum(means[start : end + 1]) / (end - start + 1),
+            texture=sum(ranges[start : end + 1]) / (end - start + 1),
+        )
         for start, end in runs
     ]
     if not bands:
@@ -889,13 +931,23 @@ def production_path_verdict(
 
 #: The shortest film YouTube treats as a Short worth publishing here.
 SHORTS_MIN_SECONDS = 10.0
-#: What a measured length may run past the channel's maximum: the container's own rounding
-#: and the last breath after the final word, never a second scene.
-SHORTS_LENGTH_SLACK_SECONDS = 1.0
 #: The longest a channel may set: YouTube's own limit for vertical Shorts since 2024-10-15.
+#: Since «pauza vocii» (the Owner, 2026-10-16) it is the wall itself, with no slack: the film's
+#: last word is held for its planned END pause, every pause is planned and frozen, and the
+#: render fits them under min(the channel's maximum, this) (`pauses.wall_seconds`). Until then
+#: a measured film could run SHORTS_LENGTH_SLACK_SECONDS (1.0 s) past the channel's maximum,
+#: and a 181 s film passed.
 SHORTS_MAX_LIMIT_SECONDS = 180
 #: Per channel type, when the film's channel row carries no value of its own.
-SHORTS_MAX_BY_CHANNEL_TYPE = {"MAIN_FACTUAL": 60, "OFFICE_SERIAL": 70}
+SHORTS_MAX_BY_CHANNEL_TYPE = {"MAIN_FACTUAL": 180, "OFFICE_SERIAL": 180}
+
+
+def shorts_length_ceiling(max_seconds: float) -> float:
+    """The longest measured film quality control accepts on a channel that takes
+    ``max_seconds``: exactly the wall, min(the channel's maximum, SHORTS_MAX_LIMIT_SECONDS)
+    (the Owner, 2026-10-16: «maxim 180»), the one the pause rules fit the film under
+    (`pauses.wall_seconds`)."""
+    return min(float(max_seconds), float(SHORTS_MAX_LIMIT_SECONDS))
 
 
 def shorts_max_seconds(session: Session, media_asset_id: str) -> int:
@@ -1015,7 +1067,7 @@ def evaluate_media_qc(
         # The Shorts bounds: 10 s at least, at most what the film's channel takes (audit
         # PUB-15: 60 s for factual films, 70 s for the serial, up to YouTube's 180 s).
         max_dur = shorts_max_seconds(session, asset.id)
-        dur_valid = SHORTS_MIN_SECONDS <= measured_dur <= max_dur + SHORTS_LENGTH_SLACK_SECONDS
+        dur_valid = SHORTS_MIN_SECONDS <= measured_dur <= shorts_length_ceiling(max_dur)
 
         if probe.get("ok"):
             if not is_9_16:
@@ -1299,6 +1351,7 @@ def evaluate_media_qc(
             ffmpeg=ffmpeg if file_exists and probe.get("ok") else None,
             cues=read_cues,
             blocking=editorial_blocking(settings),
+            settings=settings,
         )
         if editorial["passed"] is False:
             failure_reasons.extend(f"Montaj: {reason}" for reason in editorial["reasons_ro"])
@@ -1306,13 +1359,16 @@ def evaluate_media_qc(
 
         # 2e. Motion QC — which LIVE scenes the film shows as a still. In PRODUCTION none may
         #     be, unless the Owner chose a locally animated still for that scene on the
-        #     sheet: the old ceiling of half the scenes let the Nepal film's two stills
-        #     through. In TEST two motion scenes are the policy and the rest push by design,
-        #     so the old ceiling only warns there. Cards are composed, never filmed.
+        #     sheet, or the Director moved it locally past his renders cap (no clip of it can
+        #     carry it): the old ceiling of half the scenes let the Nepal film's two stills
+        #     through. The two are recorded apart: his choices are his alone. In TEST two
+        #     motion scenes are the policy and the rest push by design, so the old ceiling
+        #     only warns there. Cards are composed, never filmed.
+        owner_choices: set[int] = set()
+        cap_choices: set[int] = set()
         if render_job is not None:
             owner_choices = owner_local_moves(session, render_job.storyboard_id)
-        else:
-            owner_choices = set()
+            cap_choices = cap_local_moves_of(session, render_job.storyboard_id)
         if not manifest.get("motion") and not manifest.get("scenes"):
             manifest_for_motion: dict[str, Any] = {"motion": {"scenes": len(storyboard_scenes)}}
         else:
@@ -1321,6 +1377,7 @@ def evaluate_media_qc(
             manifest_for_motion,
             environment=environment,
             owner_choices=owner_choices,
+            cap_choices=cap_choices,
             settings=settings,
         )
         if not motion["passed"]:
@@ -1544,8 +1601,10 @@ MOVE_FIXTURE: dict[str, str | None] = {
 #: largest frame-to-frame change is 4.9.
 CUT_SPIKE_RATIO = 8.0
 CUT_SPIKE_MIN_YDIF = 12.0
-#: One retry per failing clip, on the same model, with seed + 1, inside the approved cap.
-MAX_CLIP_RETRIES = 1
+# A failing clip's retries (on the same model, with seed + 1, inside the approved cap) are
+# read when it is decided: one, while the Owner's renders cap leaves a second render of the
+# motion, none at a cap of one (`renders_cap.clip_retries`, `Settings.renders_per_layer`).
+
 #: A frame whose YDIF is under this repeats the one before it. Measured: a 24 fps Nepal clip
 #: converted to 30 fps has exactly 20% such frames; the clips as delivered, none (their
 #: slowest frame reads 0.12).
@@ -1575,14 +1634,15 @@ WARN_VIDEO_BITRATE = 8_000_000
 #: How much longer than its narration, its planned breaths and its silent cards a film may
 #: run (film_length_budget).
 DURATION_OVER_NARRATION_SECONDS = 1.0
-#: The breath the timeline plans after each scene's words: the assembler's SPOKEN_TAIL_SECONDS,
-#: read from production['timeline']['spoken_tail_seconds'] when the render recorded it. The
-#: film used to be held within narration + 1.0 s, so the timeline shrank every breath to keep
-#: under 0.9 s: six speaking scenes kept about 0.11 s each and every cut felt rushed. A breath
-#: the writer planned is part of the film, not film over the narration. This is the fallback
-#: for a render that did not record its breath; renders since 2026-10-02 record 0.12 s, taken
-#: after the vendor's silence was trimmed from each take, and that recorded value is what
-#: counts (the narration they record is the trimmed words, so nothing is counted twice).
+#: LEGACY: the breath a timeline planned after each scene's words before «pauza vocii»: the
+#: assembler's LEGACY_SPOKEN_TAIL_SECONDS, read from production['timeline']['spoken_tail_seconds']
+#: when the render recorded it (0.12 s from 2026-10-02, 0.4 s on 2026-10-16), this value only
+#: for a render that recorded none. The film used to be held within narration + 1.0 s, so the
+#: timeline shrank every breath to keep under 0.9 s: six speaking scenes kept about 0.11 s each
+#: and every cut felt rushed. A pause the film planned is part of the film, not film over the
+#: narration. A film timed by its frozen pauses (the Owner, 2026-10-16) records each join's
+#: planned pause instead (``spans[].pause.planned``, `_recorded_pauses`): the voice's own pause
+#: at that kind of boundary, from the last letter of one take to the first sound of the next.
 BREATH_SECONDS = 0.35
 #: The scenes the studio composes itself: never filmed, never sent to a model.
 COMPOSED_KINDS = ("DATA_CARD", "TITLE_CARD", "BLACK")
@@ -2127,66 +2187,27 @@ def _panels_check(
     *,
     measured: dict[str, Any],
 ) -> ClipCheck:
-    """The flat band (`flat_band`) on the first, middle and last frames: a frame split by a
-    band of at least PANEL_BAND_SHARE of its height beside at least FRAME_PICTURE_FLOOR of
-    picture (`FlatBand.splits_the_picture`) is panels pasted together, or a blank strip, not
-    one picture; a soft-edged band at the top or the bottom is the scene's sky. Free, and
-    measured whether or not anybody looks."""
-    if not frames:
-        return ClipCheck("panels", "NOT_RUN", True, None, "cadrele nu au putut fi tăiate")
-    read: list[dict[str, Any]] = []
-    split: list[tuple[str, FlatBand]] = []
-    soft: list[tuple[str, FlatBand]] = []
-    unread = False
-    for at, moment, path in frames:
-        band = flat_band(ffmpeg, path)
-        if band is None:
-            unread = True
-            read.append({"at": at, "time": moment, "status": "NOT_RUN"})
-            continue
-        read.append({"at": at, "time": moment, "status": "MEASURED", **band.as_dict()})
-        if band.splits_the_picture:
-            split.append((at, band))
-        elif band.wide and band.soft_edge:
-            soft.append((at, band))
-    measured["panels"] = {
-        "frames": read,
-        "band_share_threshold": PANEL_BAND_SHARE,
-        "picture_share_floor": FRAME_PICTURE_FLOOR,
-    }
-    if split:
-        return ClipCheck(
-            "panels",
-            "FAILED",
-            True,
-            round(max(band.share for _at, band in split), 3),
-            "nu e o singură fotografie: "
-            + "; ".join(f"cadrul {at} are {band.detail_ro()}" for at, band in split),
-        )
-    if unread:
-        return ClipCheck(
-            "panels", "NOT_RUN", True, None, "benzile cadrelor nu au putut fi măsurate"
-        )
-    widest = max(float(entry["band_share"]) for entry in read)
-    detail = (
-        f"o singură imagine în fiecare cadru (cea mai lată bandă plată: {widest:.0%}, prag "
-        f"{PANEL_BAND_SHARE:.0%})"
+    """No pixel-band veto: AI vision is the sole judge of panels and split screens.
+
+    Keep a non-blocking entry for report compatibility. Do not scan pixels or
+    turn an undecodable frame into "panels"; the real video/vision gates handle
+    technical or unmeasured footage independently.
+    """
+    measured["panels"] = {"method": "vision_only", "frames": []}
+    return ClipCheck(
+        "panels",
+        "NOT_APPLICABLE",
+        False,
+        None,
+        "Verificarea benzilor și colajelor aparține exclusiv modelului AI (one_picture)",
     )
-    if soft:
-        named = ("în cadrul " if len(soft) == 1 else "în cadrele ") + ", ".join(
-            at for at, _band in soft
-        )
-        widest_soft = max((band for _at, band in soft), key=lambda band: band.rows)
-        detail += f"; {named}, {widest_soft.soft_edge_ro()}"
-    return ClipCheck("panels", "PASSED", False, widest, detail)
 
 
 def _still_must_change(
     measured: dict[str, Any], judgement: Any, *, fixes: Sequence[Mapping[str, Any]] = ()
 ) -> bool:
-    """Whether the clip's fault is its still's: the first frame (the still the clip was made
-    from) is split by a flat band, or the look saw more than one picture or asked for the
-    still to change, or an item checked on the clip that lives in the PICTURE (layer still,
+    """Whether a measured vision finding says the clip's initial still must change,
+    or an item checked on the clip that lives in the PICTURE (layer still,
     or both: no still was approved since it was found) is there again. Another seed on the
     same still buys the same fault (2026-10-09: scene 5 was a triptych, and its clip animated
     the triptych). A clip that repeats a mistake its MOVEMENT was rewritten to correct (layer
@@ -2194,9 +2215,6 @@ def _still_must_change(
 
     2026-10-12 (the review of 5fc7468, finding 5): a persisting item silenced the look's own
     ``back_to_still``, and seed + 1 was bought from a still that had to change."""
-    frames = (measured.get("panels") or {}).get("frames") or []
-    if any(entry.get("at") == "first" and entry.get("splits_the_picture") for entry in frames):
-        return True
     verdict = getattr(judgement, "verdict", None)
     if getattr(judgement, "status", None) != "MEASURED" or verdict is None:
         return False
@@ -2219,8 +2237,13 @@ def check_clip(
     judge: Callable[[list[Path]], Any] | None = None,
     work_dir: Path | None = None,
     must_fix: Sequence[Mapping[str, Any]] = (),
+    expected_markings: Sequence[str] = (),
 ) -> ClipReport:
     """Measure one bought clip before it is cut into the film, at 0 credits.
+
+    ``expected_markings`` (2026-10-13): the plan's objects that carry their own markings
+    (`still_gate.StillPlan.expected_markings`), kept on ``measured["picture"]`` so that a
+    writing refusal of such a clip is the Director's to overturn (`look_may_overturn`).
 
     - motion: mean YDIF at 540 px against the floor of its camera move (`motion_check`);
     - cuts: a hard cut inside the clip fails it (`cut_spikes`);
@@ -2307,6 +2330,8 @@ def check_clip(
             }
             if fixes:
                 measured["picture"]["fixes"] = fixes
+            if expected_markings:
+                measured["picture"]["planned_markings"] = [str(n) for n in expected_markings]
     finally:
         if owned:
             shutil.rmtree(folder, ignore_errors=True)
@@ -2489,6 +2514,20 @@ class ClipRetry:
     reason_ro: str
 
 
+def clip_capped_words(scene: int) -> str:
+    """Why a refused clip buys no retry once the scene's motion has had its renders: the
+    Owner's cap, its number read now, and what happens instead (a clip of the scene is kept
+    under the cap, `assembler._keep_clip_under_cap`: the one it has, the one the Director
+    chooses among several, or the studio's own pick when she cannot, `cap_choice`)."""
+    from app.media.cap_choice import CAP_KEEPS_RO  # noqa: PLC0415 - media reads the agents
+
+    return (
+        f"Scena {scene}: clipul a picat controlul, iar plafonul Proprietarului "
+        f"({renders_of_ro('mișcării')}) este atins; nu se mai cumpără o reluare: "
+        f"{CAP_KEEPS_RO}."
+    )
+
+
 def clip_retry_decision(
     report: ClipReport,
     *,
@@ -2497,10 +2536,17 @@ def clip_retry_decision(
     committed_credits: float,
     price_credits: float,
     cap_credits: float,
+    renders_left: int | None = None,
 ) -> ClipRetry:
     """What a clip's QC verdict buys: nothing more, one retry with seed + 1, a new still, or
     the Owner. A clip whose still is at fault (``report.back_to_still``) is never animated
-    again from that still: another seed animates the same panels (2026-10-09, scene 5)."""
+    again from that still: another seed animates the same panels (2026-10-09, scene 5).
+
+    ``renders_left``: how many more renders of the scene's motion the Owner's renders cap
+    allows after this clip (`renders_cap`), when the caller counted them. At none, no retry
+    is bought whatever the money says, and the refusal says so before the money is read: the
+    cap, not the approved credits, is what stops it, and past it the Director keeps the
+    closest clip (2026-10-16, «maxim încă o randare»)."""
     if report.passed:
         return ClipRetry("ACCEPT", seed, f"Scena {report.scene}: clipul a trecut controlul.")
     if report.back_to_still:
@@ -2519,6 +2565,8 @@ def clip_retry_decision(
             "aceeași imagine nu se mai animă. Scena are nevoie de o imagine nouă, apoi de "
             "mișcare nouă.",
         )
+    if renders_left is not None and renders_left <= 0:
+        return ClipRetry("ESCALATE", None, clip_capped_words(report.scene))
     if report.persists and report.matched_plan:
         # 2026-10-12, late evening (the review of 9ac0195, finding 3, for the clip): the clip
         # shows its corrected movement and the mistake is there again, so those words do not
@@ -2534,7 +2582,10 @@ def clip_retry_decision(
             f"«{_cut_words(persisted.get('finding'), 120)}»: {words} nu au corectat-o. Nu se "
             "cumpără o reluare pe aceleași cuvinte; Directoarea rescrie mișcarea.",
         )
-    if retries_done >= MAX_CLIP_RETRIES:
+    if retries_done >= clip_retries():
+        if not retries_done:
+            # A cap of one render: the clip was the motion's only one.
+            return ClipRetry("ESCALATE", None, clip_capped_words(report.scene))
         return ClipRetry(
             "ESCALATE",
             None,
@@ -2626,8 +2677,8 @@ def look_may_overturn(report: ClipReport) -> bool:
     is bought for it: a refusal measured whole (nothing unmeasured) on a reading — the motion
     floor, a cut, the plan, the look, a deformation, a corrected mistake seen again, the still
     sent back by the look's own reading (`sent_back_by_reading`) — and none of the bible's
-    hard limits (a face where faces are forbidden, writing, panels), which stay the code's
-    (the Owner, 2026-10-12).
+    hard limits (a face where faces are forbidden, panels), which stay the code's (the
+    Owner, 2026-10-12); writing is hers (2026-10-15).
 
     2026-10-12 (the review of 5fc7468, finding 8): a clip the look's reading sent back to its
     still bought a new still and new motion with nobody looking whether the reading was right.
@@ -2642,8 +2693,10 @@ def look_may_overturn(report: ClipReport) -> bool:
     picture = (report.measured or {}).get("picture") or {}
     flags = picture.get("verdict") if isinstance(picture, dict) else None
     flags = flags if isinstance(flags, dict) else {}
-    if flags.get("readable_text") or flags.get("one_picture") is False:
+    if flags.get("one_picture") is False:
         return False
+    # Writing is hers to judge (2026-10-15, the Owner: the scene's own writing stays; only
+    # text laid over the picture or a logo is serious, and she says which).
     faces = next((item for item in report.checks if item.code == "faces"), None)
     forbidden = faces is not None and faces.status != "NOT_APPLICABLE"
     return not (flags.get("faces_visible") and forbidden)
@@ -2679,22 +2732,27 @@ def qc_clip_with_retry(
     committed_credits: float,
     cap_credits: float,
     look: Callable[[ClipReport], Mapping[str, Any] | None] | None = None,
+    renders_left: int | None = None,
 ) -> ClipQCOutcome:
-    """Check a bought clip; when it fails, buy it again ONCE on the same model with seed + 1
-    and a firmer motion prompt, only when the approved cap still covers that; otherwise, or
-    when the retry fails too, hand the scene to the Owner. `buy(seed, prompt)` is the caller's
-    purchase of one shot and returns the new clip, or None when nothing was delivered. A clip
-    whose still is at fault buys nothing and comes back BACK_TO_STILL.
+    """Check a bought clip. Production supplies ``look``: a refusal goes to the existing
+    Director rewrite/review ladder before a replacement is bought. Without that workflow
+    callback the standalone helper retains its one mechanical retry inside the cap.
+    ``buy(seed, prompt)`` returns the delivered clip or None. A clip whose still is at fault
+    buys nothing and comes back BACK_TO_STILL.
 
     ``look(report)`` (2026-10-12; the Owner: «trece imaginile picate de la QC pe la Directoare
     și să decidă dacă au picat corect sau nu și dacă trebuie refăcute») is the Director's
     second look at a refused clip (`fix_check.director_second_look`), asked before the retry is
     bought and before a refusal goes on to a rewrite, wherever she may overturn it
     (`look_may_overturn`): a look that lets the clip stand (`fix_check.look_accepts`) buys
-    nothing more — ACCEPTED_BY_LOOK, the clip kept as hers; a confirmation goes with the retry
-    in its reason; no answer leaves everything as before. A clip sent back to its still only by
+    nothing more — ACCEPTED_BY_LOOK, the clip kept as hers. Otherwise the replacement words
+    require her separate review; an unavailable look cannot authorize a mechanical retry.
+    A clip sent back to its still only by
     a reading (`sent_back_by_reading`) is shown to her too before a new still is bought; a
-    refusal clip QC measured (`measured_refusal`) is kept only as «not in the clip»."""
+    refusal clip QC measured (`measured_refusal`) is kept only as «not in the clip».
+
+    ``renders_left``: the renders of the scene's motion the Owner's cap allows after this
+    clip (`clip_retry_decision`); at none, no retry is bought and the refusal names the cap."""
     from app.media.fix_check import look_accepts  # noqa: PLC0415 - a small module
 
     first = check(clip)
@@ -2705,6 +2763,7 @@ def qc_clip_with_retry(
         committed_credits=committed_credits,
         price_credits=price_credits,
         cap_credits=cap_credits,
+        renders_left=renders_left,
     )
     if decision.action == "ACCEPT":
         return ClipQCOutcome("PASSED", clip, 1, (seed,), (first,), 0.0, decision.reason_ro, "")
@@ -2749,6 +2808,25 @@ def qc_clip_with_retry(
             "",
             look=seen,
         )
+    if look is not None:
+        # The production caller has the Director's ladder. Her look at the OLD clip is
+        # not approval of replacement words: Kelvin's distorted face was followed by a
+        # generic calmer suffix that ignored her diagnosis. Route the refusal to her
+        # brief, the Editor's rewrite and her review before buying a replacement, also
+        # when the second look was unavailable or ineligible for a hard limit.
+        return ClipQCOutcome(
+            "ESCALATED",
+            None,
+            1,
+            (seed,),
+            (first,),
+            0.0,
+            f"Scena {first.scene}: promptul de înlocuire trebuie verificat de Directoare "
+            "pentru defectul constatat înainte de regenerare. Refuzul merge la rescriere; "
+            "nu se cumpără reluarea automată." + _her_words(seen),
+            "",
+            look=seen,
+        )
     prompt = retry_motion_prompt(motion_prompt, camera_move, first, model_id=model_id)
     again = buy(decision.seed, prompt)
     seeds = (seed, decision.seed)
@@ -2786,6 +2864,7 @@ def qc_clip_with_retry(
         committed_credits=committed_credits + price_credits,
         price_credits=price_credits,
         cap_credits=cap_credits,
+        renders_left=None if renders_left is None else renders_left - 1,
     )
     # The retry failed too: before the scene goes on to a rewrite or a new still (and a
     # purchase), she looks at the clip bought last, where she may (`look_may_overturn`).
@@ -2888,17 +2967,39 @@ def owner_local_moves(session: Session, storyboard_id: str) -> set[int]:
     return chosen
 
 
+def cap_local_moves_of(session: Session, storyboard_id: str) -> set[int]:
+    """The scenes the Director moved locally past the Owner's renders cap, while the move
+    stands (`renders_cap.cap_local_moves`: the scene's motion had its renders and no clip of
+    it can carry the scene — his rule of 2026-10-15, the film is published with what it has)."""
+    from app.media.renders_cap import cap_local_moves  # noqa: PLC0415 - it reads the assembler
+
+    return cap_local_moves(session, storyboard_id)
+
+
+def chosen_local_moves(session: Session, storyboard_id: str) -> set[int]:
+    """The scenes the film may show as a locally animated still: the Owner's own choices
+    (`owner_local_moves`) and the Director's past his renders cap (`cap_local_moves_of`).
+    Their union, for a reader that only asks whether a still is allowed; who chose which is
+    read from the two apart (`fallback_verdict`)."""
+    return owner_local_moves(session, storyboard_id) | cap_local_moves_of(session, storyboard_id)
+
+
 def fallback_verdict(
     production: dict[str, Any],
     *,
     environment: str,
     owner_choices: set[int],
+    cap_choices: set[int] | None = None,
     settings: Any | None = None,
 ) -> dict[str, Any]:
     """Whether the film's stills are allowed. In PRODUCTION no LIVE scene may be a still
-    unless the Owner chose a locally animated still for that very scene; no setting loosens
-    it. In TEST stills are the studio's own policy, so the old ceiling (the setting, else half
-    the scenes) only warns."""
+    unless the Owner chose a locally animated still for that very scene (``owner_choices``),
+    or the Director moved it locally past his renders cap because no clip of it could carry it
+    (``cap_choices``, `renders_cap.cap_local_moves`; his card of 2026-10-16); no setting
+    loosens it. The record keeps the two apart: ``owner_chosen`` lists his choices only,
+    ``director_cap_chosen`` hers under the cap (the dishonest-code audit of 2026-10-16,
+    STUB-004: her moves were listed as his). In TEST stills are the studio's own policy, so
+    the old ceiling (the setting, else half the scenes) only warns."""
     recorded = production.get("motion")
     motion: dict[str, Any] = recorded if isinstance(recorded, dict) else {}
     listed_scenes = production.get("scenes")
@@ -2908,15 +3009,19 @@ def fallback_verdict(
     listed = live_fallback_scenes(production)
     count = len(listed) if listed is not None else int(motion.get("fallback_scenes") or 0)
     fallbacks = listed or []
-    chosen = sorted(index for index in fallbacks if index in owner_choices)
-    unchosen = sorted(index for index in fallbacks if index not in owner_choices)
+    capped = cap_choices or set()
+    his = sorted(index for index in fallbacks if index in owner_choices)
+    hers = sorted(index for index in fallbacks if index in capped and index not in owner_choices)
+    chosen = sorted({*his, *hers})
+    unchosen = sorted(index for index in fallbacks if index not in chosen)
     record: dict[str, Any] = {
         "environment": environment,
         "scenes": total,
         "motion_scenes": moving,
         "fallback_scenes": count,
         "live_fallbacks": fallbacks,
-        "owner_chosen": chosen,
+        "owner_chosen": his,
+        "director_cap_chosen": hers,
         "unchosen": unchosen,
         "warning": None,
         "reason_ro": None,
@@ -2930,9 +3035,11 @@ def fallback_verdict(
                 f"{unexplained} scene filmate"
             )
             record["reason_ro"] = (
-                f"{named}: imagine fixă (fallback) fără alegerea Proprietarului. În PRODUCȚIE "
+                f"{named}: imagine fixă (fallback) pe care n-a ales-o nimeni. În PRODUCȚIE "
                 "nicio scenă filmată nu rămâne imagine fixă decât dacă Proprietarul a ales "
-                "„imagine fixă animată local” pentru ea pe foaia de filmare."
+                "„imagine fixă animată local” pentru ea pe foaia de filmare, sau dacă "
+                "Directoarea a mutat-o local după plafonul de randări, când niciun clip al ei "
+                "nu o poate acoperi."
             )
         return record
     ceiling = getattr(settings, "max_fallback_scenes", None)
@@ -2956,13 +3063,17 @@ def require_chosen_fallbacks(
     settings: Any | None = None,
 ) -> dict[str, Any]:
     """The assembler's gate: raise FallbackNotChosen before a PRODUCTION film is assembled
-    with a LIVE scene the Owner did not choose to show as a still. Returns the verdict."""
+    with a LIVE scene nobody chose to show as a still: the Owner on the sheet
+    (`owner_local_moves`), or the Director past his renders cap (`cap_local_moves_of`), each
+    recorded as whose it is. Returns the verdict."""
     with Session(engine) as session:
-        chosen = owner_local_moves(session, storyboard_id)
+        his = owner_local_moves(session, storyboard_id)
+        hers = cap_local_moves_of(session, storyboard_id)
     verdict = fallback_verdict(
         production,
         environment=environment or studio_environment(engine),
-        owner_choices=chosen,
+        owner_choices=his,
+        cap_choices=hers,
         settings=settings,
     )
     if not verdict["passed"]:
@@ -3043,16 +3154,19 @@ def technical_problems(
         )
     duration = float(probe.get("duration_seconds") or 0.0)
     breaths = float((budget or {}).get("breath_seconds") or 0.0)
+    rounded = float((budget or {}).get("frame_rounding_seconds") or 0.0)
     silent = float((budget or {}).get("silent_card_seconds") or 0.0)
+    allowed = narration_seconds + breaths + rounded + silent if narration_seconds is not None else 0
     if narration_seconds is None:
         floors.append(
             "Lungimea narațiunii nu este înregistrată; durata filmului nu poate fi judecată"
         )
-    elif duration > narration_seconds + breaths + silent + DURATION_OVER_NARRATION_SECONDS + 1e-6:
+    elif duration > allowed + DURATION_OVER_NARRATION_SECONDS + 1e-6:
         floors.append(
             f"Filmul durează {_ro_number(duration)} s, mai mult decât narațiunea "
             f"({_ro_number(narration_seconds)} s)"
             + (f", respirațiile dintre scene ({_ro_number(breaths)} s)" if breaths else "")
+            + (f", rotunjirea la cadre întregi ({_ro_number(rounded)} s)" if rounded else "")
             + (f", cardurile mute ({_ro_number(silent)} s)" if silent else "")
             + f" plus {_ro_number(DURATION_OVER_NARRATION_SECONDS)} s"
         )
@@ -3246,14 +3360,58 @@ def timeline_spans(
     return out
 
 
+def _planned_of(record: Any) -> float:
+    """One recorded join's planned pause (``planned``), else the pad the render wrote (a record
+    with no plan of its own)."""
+    if not isinstance(record, dict):
+        return 0.0
+    planned = _seconds(record.get("planned"))
+    if planned is None:
+        planned = _seconds(record.get("pad"))
+    return max(0.0, planned or 0.0)
+
+
+def _recorded_pauses(timeline: Any) -> dict[int, float] | None:
+    """Per scene, the pauses the film planned after its words and between its own takes
+    (``spans[].pause``: ``planned``, and each inner ``planned``; the ``pad`` where a record has
+    no plan), for a film timed by its frozen pauses («pauza vocii»); None for a film recorded
+    before them. A silent card's own length is its pause and is counted as a card."""
+    spans = timeline.get("spans") if isinstance(timeline, dict) else None
+    if not isinstance(spans, list) or not spans:
+        return None
+    found: dict[int, float] = {}
+    for span in spans:
+        pause = span.get("pause") if isinstance(span, dict) else None
+        if not isinstance(pause, dict):
+            return None
+        planned = _planned_of(pause)
+        for inner in pause.get("inner") or []:
+            planned += _planned_of(inner)
+        try:
+            found[int(span["scene_index"])] = round(planned, 4)
+        except (KeyError, TypeError, ValueError):
+            return None
+    return found
+
+
 def film_length_budget(
     production: dict[str, Any], planned: Mapping[int, float] | None = None
 ) -> dict[str, Any]:
     """What the film may last beyond its words, read from the render's own record.
 
     - the narration: every scene's recorded words (narration_seconds_of);
-    - the breaths: the breath the timeline plans after each speaking scene's words
-      (production['timeline']['spoken_tail_seconds'], else BREATH_SECONDS);
+    - the pauses: for a film timed by its frozen pauses («pauza vocii», 2026-10-16) every
+      join's planned pause, after a scene's words and between its own takes
+      (``spans[].pause.planned``, `_recorded_pauses`: 0 for a cut inside a take, whose pause is
+      the voice's own and inside its words); for a film recorded before them the legacy breath
+      after each speaking scene (production['timeline']['spoken_tail_seconds'], else
+      BREATH_SECONDS);
+    - the frame rounding: the timeline rounds each speaking scene's words and breath UP to a
+      whole frame (`assembler.scene_spans`), so each may run up to one frame past them. It is
+      read from the recorded spans (what each span ran past its words and its breath, at most
+      one frame of the timeline's fps), so a span that kept a longer plan is still film over
+      the narration. Before the montage a film had 6-12 speaking scenes and the rounding fitted
+      inside the 1.0 s; a film of 40-56 shots rounds about 1 s on its own (2026-10-16);
     - the silent cards: a composed scene (BLACK, TITLE_CARD, DATA_CARD) with no words is a
       deliberate silence, allowed up to its kind's MAX_SILENT_CARD_SECONDS. A longer one is
       allowed only up to that maximum and is named in ``overruns_ro``. A silent LIVE scene is
@@ -3269,11 +3427,28 @@ def film_length_budget(
         _seconds(timeline.get("spoken_tail_seconds")) if isinstance(timeline, dict) else None
     )
     breath = recorded_tail if recorded_tail is not None and recorded_tail >= 0 else BREATH_SECONDS
+    # A film timed by its frozen pauses («pauza vocii», 2026-10-16) recorded, per scene, the
+    # pauses it planned after its words and between its own takes (``pause.planned``): each
+    # speaking scene's breath is those, never a constant. The narration it recorded is each
+    # row's words from its start to its take's trimmed end, so a pause heard longer than its
+    # plan (a kept tail past it) runs over, as it should.
+    pads = _recorded_pauses(timeline)
     speaking = sum(
         1
         for span in spans
         if span["spoken"] is not None and span["spoken"] >= SILENT_SPOKEN_SECONDS
     )
+    recorded_fps = _seconds(timeline.get("fps")) if isinstance(timeline, dict) else None
+    frame = 1.0 / (recorded_fps if recorded_fps and recorded_fps > 0 else DEFAULT_TIMELINE_FPS)
+    recorded_spans = isinstance(timeline, dict) and bool(timeline.get("spans"))
+    rounding = 0.0
+    if recorded_spans:
+        for span in spans:
+            spoken = span["spoken"]
+            if spoken is None or spoken < SILENT_SPOKEN_SECONDS:
+                continue
+            tail = pads.get(int(span["scene_index"]), breath) if pads is not None else breath
+            rounding += min(frame, max(0.0, float(span["seconds"]) - spoken - tail))
     silent_cards: list[dict[str, Any]] = []
     overruns: list[str] = []
     allowance = 0.0
@@ -3301,17 +3476,28 @@ def film_length_budget(
                 f"maximul de {_ro_number(maximum)} s al unui {word} fără narațiune"
             )
     breaths = round(breath * speaking, 3)
+    if pads is not None:
+        breaths = round(
+            sum(
+                pads.get(int(span["scene_index"]), 0.0)
+                for span in spans
+                if span["spoken"] is not None and span["spoken"] >= SILENT_SPOKEN_SECONDS
+            ),
+            3,
+        )
     silent = round(allowance, 3)
+    rounded = round(rounding, 3)
     return {
         "narration_seconds": round(narration, 3) if narration is not None else None,
         "speaking_scenes": speaking,
         "breath_per_scene": breath,
         "breath_seconds": breaths,
+        "frame_rounding_seconds": rounded,
         "silent_cards": silent_cards,
         "silent_card_seconds": silent,
         "over_seconds": DURATION_OVER_NARRATION_SECONDS,
         "allowed_seconds": (
-            round(narration + breaths + silent + DURATION_OVER_NARRATION_SECONDS, 3)
+            round(narration + breaths + rounded + silent + DURATION_OVER_NARRATION_SECONDS, 3)
             if narration is not None
             else None
         ),
@@ -3756,11 +3942,14 @@ def span_picture_qc(
                         faces_forbidden=faces_forbidden,
                         bible_rules=rules,
                         look_block=str(asked.get("look_block") or ""),
+                        # A thermometer's scale is not writing (2026-10-13): the look is
+                        # told, and her second look at the scene may overturn the reading.
+                        expected_markings=planned_markings(asked.get("still_prompt")),
                     )
                     judgement = judge([path for _at, _moment, path in looked_at], plan)
                 picture = _picture_check(judgement, faces_forbidden=faces_forbidden)
-            # The same flat-band reading as the still's and the clip's: the scene's frames
-            # are one picture each, or the scene is panels (2026-10-09, scene 5).
+            # Compatibility-only report: geometric flat bands are no longer judged
+            # here; the vision model's required one_picture field decides panels.
             panels = _panels_check(band_reader, frames, measured=measured)
             entry["faces"] = {
                 "status": faces.status,
@@ -3794,16 +3983,17 @@ def span_picture_qc(
                 problems.append(panels.detail_ro)
             if picture.status == "FAILED":
                 problems.append(picture.detail_ro)
-            # A carried look measured nothing today; the faces and the band did, if they ran.
+            # A previously verified AI verdict may be reused for an unchanged shot.
+            # It is evidence, unlike the removed geometric panel detector.
             today = (faces, panels) if earlier is not None else (faces, picture, panels)
-            if any(item.status in ("PASSED", "FAILED") for item in today):
+            if earlier is not None or any(item.status in ("PASSED", "FAILED") for item in today):
                 measured_any = True
             if problems:
                 entry.update(status="FAILED", passed=False, reason="; ".join(problems))
                 record["failures"] += [f"Scena {index}: {problem}" for problem in problems]
             elif (
                 picture.status == "PASSED"
-                and panels.status == "PASSED"
+                and panels.status in ("NOT_APPLICABLE", "PASSED")
                 and faces.status in ("PASSED", "NOT_APPLICABLE")
             ):
                 entry.update(status="PASSED", passed=True, reason=picture.detail_ro)
@@ -3829,21 +4019,15 @@ def span_picture_qc(
     carried_words = (
         f"; {len(kept)} {'trecută' if len(kept) == 1 else 'trecute'} la un control anterior cu "
         f"aceleași preluări (sau acceptate de Directoare), "
-        f"{'neprivită' if len(kept) == 1 else 'neprivite'} din nou de model, dar citite de "
-        "YuNet și de banda plată"
+        f"{'neprivită' if len(kept) == 1 else 'neprivite'} din nou de model; "
+        "verdictul vizual anterior este păstrat"
         if kept
         else ""
     )
     if judge is None:
-        read = sum(
-            1
-            for entry in filmed
-            if (entry.get("panels") or {}).get("status") in ("PASSED", "FAILED")
-        )
         record["detail"] = (
-            "nimeni nu se uită la cadre (niciun model care vede nu este înregistrat); banda "
-            f"plată a fost citită pe {read} din {len(filmed)} scene filmate, pe primul, "
-            "mijlocul și ultimul cadru"
+            "nu este disponibil un model AI cu vedere; benzile și colajele nu au fost "
+            "evaluate vizual și nu primesc un verdict automat"
             + (", iar fețele au fost numărate de YuNet" if faces_forbidden else "")
             + carried_words
         )
@@ -3884,8 +4068,19 @@ def span_picture_qc(
 
 #: The picture is read at this width: enough for luma levels, motion and cuts, and quick.
 EDITORIAL_WIDTH = 270
-#: The longest silence allowed inside the narration, measured at -45 dB on the voice track.
+#: LEGACY: the longest silence allowed inside the narration of a film timed before «pauza
+#: vocii», measured at -45 dB on the voice track, beyond the breath the timeline planned there
+#: (`_planned_pauses`). A film timed by its frozen pauses is measured against its plan
+#: (`_frozen_silences`): a join is dead air when the silence heard there runs past its planned
+#: pause by the rules' dead_air_tolerance and a frame, any other silence when it runs past the
+#: rules' join ceiling (1.2 s), both read from config/pause_rules.json.
 MAX_NARRATION_SILENCE_SECONDS = 0.25
+#: The shortest silence read on the voice track of a film timed by its frozen pauses: the
+#: detector's own resolution, so an interruption's or a turn's pause is measured too.
+FROZEN_SILENCE_MIN_SECONDS = 0.1
+#: How far from a recorded span boundary a measured silence may sit and still be that
+#: boundary's breath: the detector's own resolution and a kept edge of the next take.
+PAUSE_BOUNDARY_TOLERANCE_SECONDS = 0.1
 NARRATION_SILENCE_DB = -45.0
 #: The last seconds of the film, and how long the picture may be black or frozen inside them.
 END_WINDOW_SECONDS = 3.0
@@ -3895,8 +4090,14 @@ BLACK_YAVG = 18.0
 #: A frame whose mean difference from the one before is under this (8-bit, at 270 px) did
 #: not move.
 FROZEN_YDIF = 0.1
-#: The longest average shot a short may have, and what counts as a cut (scdet, percent).
+#: The longest average shot a short may have with the montage off, and what counts as a cut
+#: (scdet, percent). With the montage on the limit follows its shots (`average_shot_limit`).
 MAX_AVERAGE_SHOT_SECONDS = 3.5
+#: How far past ``montage_shot_seconds`` of words a montage shot may run: a scene is cut only
+#: when its words reach one and a half shots (`montage.shot_count` rounds), so an uncut scene
+#: runs up to half a shot longer. The Owner's 160 s short at the brief's own 13-14 words a
+#: scene is 28 shots of about 5.8 s, which the 3.5 s limit named on every film (2026-10-16).
+MONTAGE_SHOT_TOLERANCE = 0.5
 CUT_SCORE_PERCENT = 15.0
 #: The picture must move inside the first half-second: the first frame decides the swipe.
 OPENING_SECONDS = 0.5
@@ -4060,6 +4261,51 @@ def _silent_beats(production: Mapping[str, Any]) -> list[tuple[float, float]]:
     return beats
 
 
+def _planned_pauses(production: Mapping[str, Any]) -> list[tuple[float, float]]:
+    """Where the timeline planned a pause after words, and how long: (the span's end, what the
+    span runs past its recorded words), for every span with words."""
+    timeline = production.get("timeline")
+    spans = timeline.get("spans") if isinstance(timeline, Mapping) else None
+    pauses: list[tuple[float, float]] = []
+    for span in spans or []:
+        if not isinstance(span, Mapping):
+            continue
+        spoken = _seconds(span.get("spoken_seconds"))
+        start, end = _seconds(span.get("start")), _seconds(span.get("end"))
+        if spoken is None or spoken <= SILENT_SPOKEN_SECONDS or start is None or end is None:
+            continue
+        pauses.append((end, max(0.0, end - start - spoken)))
+    return pauses
+
+
+def average_shot_limit(production: Mapping[str, Any], settings: Any | None = None) -> float:
+    """The longest average shot editorial QC lets pass without a note. With the montage off,
+    MAX_AVERAGE_SHOT_SECONDS. With it on, a montage shot: ``montage_shot_seconds`` of words and
+    half a shot more (MONTAGE_SHOT_TOLERANCE), plus the pause a shot holds after them: the mean
+    of a frozen film's planned pauses («pauza vocii»), else the breath the timeline recorded,
+    else the legacy one."""
+    from app.media.montage import montage_settings  # noqa: PLC0415 - read when measured
+
+    options = montage_settings(settings)
+    if not options["enabled"] or options["max_shots"] <= 1:
+        return MAX_AVERAGE_SHOT_SECONDS
+    timeline = production.get("timeline")
+    breath = (
+        _seconds(timeline.get("spoken_tail_seconds")) if isinstance(timeline, Mapping) else None
+    )
+    pauses = _recorded_pauses(timeline)
+    if pauses:
+        # A film timed by its frozen pauses: the mean pause a shot of it holds after its words
+        # (a cut inside a take holds none).
+        breath = sum(pauses.values()) / len(pauses)
+    if breath is None:
+        # The assembler reads qc: imported when measured.
+        from app.media.assembler import LEGACY_SPOKEN_TAIL_SECONDS  # noqa: PLC0415
+
+        breath = LEGACY_SPOKEN_TAIL_SECONDS
+    return round(float(options["shot_seconds"]) * (1 + MONTAGE_SHOT_TOLERANCE) + breath, 2)
+
+
 def _voice_source(film: Path, production: Mapping[str, Any]) -> Path:
     """The narration as it was joined (production['audio']['voice_track']), else the film."""
     audio = production.get("audio")
@@ -4072,11 +4318,94 @@ def _voice_source(film: Path, production: Mapping[str, Any]) -> Path:
     return film
 
 
+def _frozen_joins(production: Mapping[str, Any]) -> list[tuple[float, float]] | None:
+    """Where a film timed by its frozen pauses planned a pause between two takes, and how long:
+    (where the picture cut, the planned seconds) for every join after a scene's words and
+    between its own takes (``spans[].pause`` and its ``inner``), a cut inside a take and a
+    silent card excepted. A join with no silence of its own (an interruption) is planned as the
+    kept edges it is heard as (`assembler._lay_out_voice`). None for a film recorded before
+    them, or one whose limits cannot be read (`_silence_limits`): it is read as a legacy film."""
+    timeline = production.get("timeline")
+    spans = timeline.get("spans") if isinstance(timeline, Mapping) else None
+    if not isinstance(spans, list) or not spans or _silence_limits(production) is None:
+        return None
+    joins: list[tuple[float, float]] = []
+    for span in spans:
+        pause = span.get("pause") if isinstance(span, Mapping) else None
+        if not isinstance(pause, Mapping):
+            return None
+        for record in [pause, *[r for r in pause.get("inner") or [] if isinstance(r, Mapping)]]:
+            if str(record.get("class") or "") in ("IN_TAKE", "CARD"):
+                continue
+            at = _seconds(record.get("cut_at"))
+            if at is not None:
+                joins.append((at, _planned_of(record)))
+    return joins
+
+
+def _silence_limits(production: Mapping[str, Any]) -> tuple[float, float, float] | None:
+    """(the dead-air tolerance, the join ceiling, the frame) a frozen film's silences are read
+    against: the limits the film was frozen with (``timeline.pause_profile.limits``, from
+    config/pause_rules.json when its storyboard was built), else the rules file's own (in use
+    or not), and one frame of the film's recorded timeline. None when they cannot be read: no
+    number is made up here, and the film is read as a legacy one."""
+    timeline = production.get("timeline")
+    timeline = timeline if isinstance(timeline, Mapping) else {}
+    fps = _seconds(timeline.get("fps"))
+    if fps is None or fps <= 0:
+        return None
+    profile = timeline.get("pause_profile")
+    limits = profile.get("limits") if isinstance(profile, Mapping) else None
+    tolerance = _seconds(limits.get("dead_air_tolerance")) if isinstance(limits, Mapping) else None
+    ceiling = _seconds(limits.get("join_ceiling_seconds")) if isinstance(limits, Mapping) else None
+    if tolerance is None or ceiling is None:
+        from app.media import pauses  # noqa: PLC0415 - read when measured
+
+        rules = pauses.readable_rules()
+        if rules is None:
+            return None
+        tolerance, ceiling = rules.dead_air_tolerance, rules.join_ceiling_seconds
+    return tolerance, ceiling, 1.0 / fps
+
+
+def _frozen_limit(
+    start: float,
+    end: float,
+    joins: Sequence[tuple[float, float]],
+    production: Mapping[str, Any],
+) -> tuple[float, float | None]:
+    """The longest a silence from ``start`` to ``end`` may last in a film timed by its frozen
+    pauses, and the pause planned there: at a join (its cut within the boundary tolerance of
+    the silence), the planned pause x (1 + dead_air_tolerance) + one frame; anywhere else the
+    join ceiling (None planned), both the film's own (`_silence_limits`)."""
+    limits = _silence_limits(production)
+    if limits is None:  # `_frozen_joins` reads no joins without them
+        raise ValueError("the film's silence limits cannot be read")
+    tolerance, ceiling, frame = limits
+    near = [
+        planned
+        for at, planned in joins
+        if start - PAUSE_BOUNDARY_TOLERANCE_SECONDS <= at <= end + PAUSE_BOUNDARY_TOLERANCE_SECONDS
+    ]
+    if near:
+        planned = max(near)
+        return planned * (1.0 + tolerance) + frame, planned
+    return ceiling, None
+
+
 def _narration_silences(
     ffmpeg: str, film: Path, production: Mapping[str, Any], duration: float
 ) -> list[tuple[float, float]] | None:
-    """The silences inside the narration: after its first word, before its last, and not
-    on a silent card. None when the sound could not be read."""
+    """The silences inside the narration: after its first word, before its last, not on a
+    silent card, and longer than the pause the timeline planned where they fall. A film timed
+    by its frozen pauses («pauza vocii») is read against its plan (`_frozen_limit`: a join's
+    planned pause with the rules' tolerance and a frame, the join ceiling inside a take); a film
+    timed before them against its recorded breath (a silence across a span's end counts only
+    what runs past that span's breath by MAX_NARRATION_SILENCE_SECONDS or more). None when the
+    sound could not be read."""
+    joins = _frozen_joins(production)
+    if joins is not None:
+        return _frozen_silences(ffmpeg, film, production, duration, joins)
     spans = silence_spans(
         ffmpeg,
         _voice_source(film, production),
@@ -4086,6 +4415,7 @@ def _narration_silences(
     if spans is None:
         return None
     beats = _silent_beats(production)
+    pauses = _planned_pauses(production)
     inner: list[tuple[float, float]] = []
     for position, (start, end) in enumerate(spans):
         if start <= 0.02:
@@ -4097,8 +4427,52 @@ def _narration_silences(
         )
         if overlap >= 0.5 * (end - start):
             continue  # a silent card: the pause is the scene
+        if any(
+            start - PAUSE_BOUNDARY_TOLERANCE_SECONDS
+            <= boundary
+            <= end + PAUSE_BOUNDARY_TOLERANCE_SECONDS
+            and (end - start) - planned < MAX_NARRATION_SILENCE_SECONDS
+            for boundary, planned in pauses
+        ):
+            continue  # the breath the timeline planned after a shot's words
         inner.append((start, end))
     return inner
+
+
+def _frozen_silences(
+    ffmpeg: str,
+    film: Path,
+    production: Mapping[str, Any],
+    duration: float,
+    joins: Sequence[tuple[float, float]],
+) -> list[tuple[float, float]] | None:
+    """The dead air of a film timed by its frozen pauses: every silence on its voice track
+    after the first word and before the last, not on a silent card, longer than its
+    `_frozen_limit`."""
+    spans = silence_spans(
+        ffmpeg,
+        _voice_source(film, production),
+        threshold_db=NARRATION_SILENCE_DB,
+        min_seconds=FROZEN_SILENCE_MIN_SECONDS,
+    )
+    if spans is None:
+        return None
+    beats = _silent_beats(production)
+    dead: list[tuple[float, float]] = []
+    for position, (start, end) in enumerate(spans):
+        if start <= 0.02:
+            continue  # before the first word
+        if position == len(spans) - 1 and end >= duration - 0.05:
+            continue  # after the last word
+        overlap = max(
+            (min(end, b_end) - max(start, b_start) for b_start, b_end in beats), default=0.0
+        )
+        if overlap >= 0.5 * (end - start):
+            continue  # a silent card: the pause is the scene
+        limit, _planned = _frozen_limit(start, end, joins, production)
+        if end - start > limit + 1e-6:
+            dead.append((start, end))
+    return dead
 
 
 def _grade_outliers(production: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -4121,6 +4495,7 @@ def editorial_problems(
     ffmpeg: str | None = None,
     cues: list[dict[str, Any]] | None = None,
     blocking: bool = False,
+    settings: Any | None = None,
 ) -> dict[str, Any]:
     """What a viewer would feel in the editing of ``film``, measured, with Romanian reasons.
 
@@ -4130,6 +4505,7 @@ def editorial_problems(
     NOT_MEASURED (no encoder or no film: ``passed`` is None, never a pass by absence).
     """
     path = Path(film)
+    longest_average = average_shot_limit(production, settings)
     record: dict[str, Any] = {
         "passed": None,
         "status": "NOT_MEASURED",
@@ -4142,7 +4518,7 @@ def editorial_problems(
             "end_still_seconds": MAX_END_STILL_SECONDS,
             "end_window_seconds": END_WINDOW_SECONDS,
             "black_yavg": BLACK_YAVG,
-            "average_shot_seconds": MAX_AVERAGE_SHOT_SECONDS,
+            "average_shot_seconds": longest_average,
             "opening_seconds": OPENING_SECONDS,
             "grade_outlier_delta_e": GRADE_OUTLIER_DELTA_E,
         },
@@ -4161,14 +4537,35 @@ def editorial_problems(
     longest_silence = max((end - start for start, end in silences or []), default=0.0)
     if silences:
         start, end = max(silences, key=lambda span: span[1] - span[0])
-        problem(
-            "dead_air",
-            f"O tăcere de {_ro_number(end - start, 2)} s în mijlocul narațiunii (la "
-            f"{_ro_number(start)} s; cel mult {_ro_number(MAX_NARRATION_SILENCE_SECONDS, 2)} s): "
-            "în golurile vocii spectatorul pleacă.",
-            seconds=round(end - start, 3),
-            at=round(start, 3),
-        )
+        joins = _frozen_joins(production)
+        if joins is not None:
+            # Against the film's own plan («pauza vocii»): the pause planned at that cut, or
+            # the join ceiling inside a take.
+            limit, planned = _frozen_limit(start, end, joins, production)
+            where = (
+                f"la tăietura unde pauza plănuită e de {_ro_number(planned, 2)} s"
+                if planned is not None
+                else "în mijlocul unei replici"
+            )
+            problem(
+                "dead_air",
+                f"O tăcere de {_ro_number(end - start, 2)} s {where} (la {_ro_number(start)} s; "
+                f"cel mult {_ro_number(limit, 2)} s): în golurile vocii spectatorul pleacă.",
+                seconds=round(end - start, 3),
+                at=round(start, 3),
+                limit=round(limit, 3),
+                planned=planned,
+            )
+        else:
+            problem(
+                "dead_air",
+                f"O tăcere de {_ro_number(end - start, 2)} s în mijlocul narațiunii (la "
+                f"{_ro_number(start)} s; cel mult "
+                f"{_ro_number(MAX_NARRATION_SILENCE_SECONDS, 2)} s): "
+                "în golurile vocii spectatorul pleacă.",
+                seconds=round(end - start, 3),
+                at=round(start, 3),
+            )
 
     tail = [i for i, t in enumerate(trace.times) if t >= trace.duration - END_WINDOW_SECONDS]
     black_end = _longest_run([trace.yavg[i] <= BLACK_YAVG for i in tail], step)
@@ -4191,11 +4588,11 @@ def editorial_problems(
 
     cuts = len(editorial_cut_times(trace, production))
     average = round(trace.duration / (cuts + 1), 3)
-    if average > MAX_AVERAGE_SHOT_SECONDS:
+    if average > longest_average:
         problem(
             "long_shots",
             f"Un cadru durează în medie {_ro_number(average)} s (cel mult "
-            f"{_ro_number(MAX_AVERAGE_SHOT_SECONDS)} s): {cuts} "
+            f"{_ro_number(longest_average)} s): {cuts} "
             f"{'tăietură' if cuts == 1 else 'tăieturi'} în {_ro_number(trace.duration)} s.",
             seconds=average,
         )

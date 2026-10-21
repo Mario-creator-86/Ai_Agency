@@ -204,7 +204,6 @@ def test_a_two_speaker_beat_is_two_takes_in_two_voices_and_one_caption_track(
     in the voice the Owner bound to her; two takes, two voice ids, and one SRT whose cues
     carry the words in order with no name and no stage direction."""
     from app.media.assembler import assemble_video_job
-    from app.media.speaker_voices import SPEAKER_GAP_SECONDS
 
     use_cast(monkeypatch, tmp_path, {"Kael Video Editor": voices["first"]})
     bind(client, headers, bible(engine, "Sarah").id, voices["integration"], voices["second"])
@@ -249,8 +248,62 @@ def test_a_two_speaker_beat_is_two_takes_in_two_voices_and_one_caption_track(
     takes = first["segments"]
     assert [t["voice_id"] for t in takes] == [voices["first"], voices["second"]]
     assert [t["voice_source"] for t in takes] == ["voice_cast_proposal", "character_binding"]
-    spoken = sum(t["audio_seconds"] for t in takes) + SPEAKER_GAP_SECONDS
+    # Between the two speakers the frozen turn (`pause_plan`, «pauza vocii» 2026-10-16): the
+    # conversational gap (Stivers 2009, 0.236 s, clamped to [its floor, Kael's own full stop:
+    # the cast's pool, 0.28 s, as the suite pins it]), the pad the render adds being the turn
+    # less what the trim kept, and the silence heard there the turn, to within a frame.
+    from app.media import pauses
+    from pause_timing import PINNED_VOICE_PROFILES
+
+    rules = pauses.load_rules()
+    cast = pauses.voice_profile(
+        None, rules=rules, profiles=PINNED_VOICE_PROFILES, pool=pauses.CHARACTER_POOL
+    )
+    expected = pauses.target(
+        pauses.TURN,
+        out=cast,
+        inn=cast,
+        narrator=cast,
+        knobs=pauses.channel_pauses("serial", rules),
+        rules=rules,
+    )
+    assert expected == pytest.approx(rules.turn_seconds)
+    (turn,) = production["timeline"]["spans"][0]["pause"]["inner"]
+    assert turn["class"] == "TURN" and turn["planned"] == pytest.approx(expected)
+    laid = pauses.render_pad(turn["planned"], turn["keep_tail"], turn["head"])
+    assert turn["pad"] == pytest.approx(laid, abs=1e-3)
+    assert turn["heard"] == pytest.approx(turn["planned"], abs=1 / 24)
+    spoken = sum(t["audio_seconds"] for t in takes) + turn["pad"]
     assert first["audio_seconds"] == pytest.approx(spoken, abs=0.002)
+
+    # Read back from this render (RENDERED), each row's words and its share of the frozen
+    # pauses make exactly the span the render cut, the turn and the kept edges counted once
+    # (review of 2026-10-16: the render's audio held them and the share added them again).
+    from app.media.assembler import (
+        NARRATION_RENDERED,
+        expected_shot_spans,
+        narration_readings,
+        scene_view,
+    )
+    from app.media.models import StoryboardScene
+
+    with Session(engine) as session:
+        views = [
+            scene_view(row)
+            for row in session.scalars(
+                select(StoryboardScene)
+                .where(StoryboardScene.storyboard_id == board_id)
+                .order_by(StoryboardScene.scene_index)
+            )
+        ]
+        readings = narration_readings(session, board_id, views)
+    assert {reading.source for reading in readings.values()} == {NARRATION_RENDERED}
+    expected = expected_shot_spans(
+        views, {index: (reading.seconds, reading.source) for index, reading in readings.items()}
+    )
+    for span in production["timeline"]["spans"]:
+        laid = span["end"] - span["start"]
+        assert expected[span["scene_index"]] == pytest.approx(laid, abs=1e-4), span
 
     # One caption track, and it follows the speakers.
     srt = Path(production["captions"]["srt"])
@@ -265,7 +318,7 @@ def test_a_two_speaker_beat_is_two_takes_in_two_voices_and_one_caption_track(
     assert all(2 <= len(c["text"].split()) <= 5 for c in kael + sarah)
     # Each take's first card comes up on its first word (the voice's own word timing), inside
     # that take: Kael's from the scene's start, Sarah's after Kael's take and the breath.
-    sarah_from = takes[0]["audio_seconds"] + SPEAKER_GAP_SECONDS
+    sarah_from = takes[0]["audio_seconds"] + turn["pad"]
     assert 0.0 <= kael[0]["start"] < 0.5
     assert kael[-1]["end"] == pytest.approx(takes[0]["audio_seconds"], abs=0.002)
     assert sarah_from - 0.002 <= sarah[0]["start"] < sarah_from + 0.5
@@ -543,3 +596,116 @@ def test_the_shipped_voice_cast_proposes_eight_distinct_voices_for_the_eight_bib
     assert all(entry["catalogue_name"] for entry in raw["voices"].values())
     # The narrator on his data is the Organization default; no character takes its voice.
     assert "CwhRBWXzGAHq8TQ4Fs17" not in cast["voices"].values()
+
+
+def test_a_lines_direction_rides_with_the_take_and_the_voice_plays_it():
+    """The Owner, 2026-10-15: «la sunet … să avem intonație, surprindere, emoție». A take keeps
+    its lines' acting notes; ElevenLabs plays them as a tag before the words on v3/v4 and as
+    expressive settings on a v2 model, which would read the tag aloud; no note, nothing."""
+    from app.media.speaker_voices import speaker_segments
+    from app.providers.elevenlabs import EXPRESSIVE_SETTINGS, performance_terms
+
+    lines = [
+        {"speaker": KAEL, "text": "Zero. Again?", "direction": "surprised, half-laughing"},
+        {"speaker": KAEL, "text": "Fine.", "direction": "deadpan"},
+        {"speaker": SARAH, "text": "We ship tonight.", "direction": ""},
+    ]
+    takes = speaker_segments(lines, {KAEL: "k", SARAH: "s"})
+    assert takes[0]["direction"] == "surprised, half-laughing; deadpan"
+    assert takes[1]["direction"] == ""
+
+    assert performance_terms("surprised, half-laughing", "eleven_v3") == ("[surprised] ", {})
+    assert performance_terms("through gritted teeth", "eleven_v4_turbo") == (
+        "[through gritted teeth] ",
+        {},
+    )
+    assert performance_terms("whispering", "eleven_multilingual_v2") == ("", EXPRESSIVE_SETTINGS)
+    assert performance_terms("", "eleven_v3") == ("", {})
+    assert performance_terms(None, None) == ("", {})
+
+
+def test_a_lines_direction_reaches_the_built_take_and_the_voice_without_a_new_identity(
+    engine, staffed, client, headers, voices, monkeypatch, tmp_path
+):
+    """The side defect of 2026-10-16: the plan carried each take's acting note and
+    `factory.render_plan` dropped it from the takes it built, so no note ever reached the
+    voice. The note now rides with the built take to the voice; it is no part of the take's
+    identity (`narration_key`), so a changed note buys no take already paid for."""
+    from app.media.assembler import assemble_video_job, narration_fields
+    from app.media.serial_storyboard import storyboard_from_episode
+
+    use_cast(monkeypatch, tmp_path, {"Kael Video Editor": voices["first"]})
+    _, ids = letters_day(engine)
+    beats = beats_for(ids, [KAEL, SARAH], count=3)
+    beats[0]["lines"][0]["direction"] = "through gritted teeth"
+    episode = written(engine, monkeypatch, beats)
+    decide_episode(engine, episode["id"], True, "")
+    board_id = storyboard_from_episode(engine, episode["id"], str(uuid4()))
+    planned = planned_for(engine, board_id)
+
+    built = planned["voice_segments_for_scene"]({"scene_index": 1})
+    assert [take["direction"] for take in built] == ["through gritted teeth", ""]
+
+    asked: list[tuple[str, dict]] = []
+    original = RecordingVoice.synthesize
+
+    async def listening(self, text: str, **kwargs: Any):
+        asked.append((text, dict(kwargs.get("extra") or {})))
+        return await original(self, text, **kwargs)
+
+    monkeypatch.setattr(RecordingVoice, "synthesize", listening)
+    assemble_video_job(
+        engine,
+        board_id,
+        str(uuid4()),
+        storage_root=tmp_path / "media",
+        tts_adapter=None,
+        tts_adapter_for_scene=planned["tts_for_scene"],
+        voice_segments_for_scene=planned["voice_segments_for_scene"],
+        production_plan=planned["plan"],
+    )
+    kael = [extra for text, extra in asked if text == SPOKEN[0]]
+    assert kael and kael[0].get("direction") == "through gritted teeth"
+    bought = len(asked)
+    assert bought > 0
+
+    # The writer changes the acting note after the takes were paid for. The note reaches the
+    # built take, but the take's identity is its words, its voice and its neighbours, never
+    # its note (the Owner's decision 6): a second render hears nothing and buys nothing, and
+    # the sheet prices no character.
+    from app.factual.models import ScriptDraft
+    from app.media.assembler import narration_to_buy
+    from app.media.models import Storyboard
+
+    with Session(engine) as session, session.begin():
+        board = session.get(Storyboard, board_id)
+        script = session.get(ScriptDraft, board.script_draft_id)
+        stored = json.loads(json.dumps(script.scenes_json))
+        stored[0]["lines"][0]["direction"] = "softly, almost a whisper"
+        script.scenes_json = stored
+    again = planned_for(engine, board_id)
+    rebuilt = again["voice_segments_for_scene"]({"scene_index": 1})
+    assert rebuilt[0]["direction"] == "softly, almost a whisper"
+    assert (
+        narration_to_buy(
+            engine,
+            board_id,
+            tts_adapter_for_scene=again["tts_for_scene"],
+            voice_segments_for_scene=again["voice_segments_for_scene"],
+        )
+        == 0
+    )
+    assemble_video_job(
+        engine,
+        board_id,
+        str(uuid4()),
+        storage_root=tmp_path / "media-again",
+        tts_adapter=None,
+        tts_adapter_for_scene=again["tts_for_scene"],
+        voice_segments_for_scene=again["voice_segments_for_scene"],
+        production_plan=again["plan"],
+    )
+    assert len(asked) == bought, asked[bought:]
+    # The identity itself, as the render computes it, holds no note.
+    fields = narration_fields(SPOKEN[0], built[0]["adapter"])
+    assert "direction" not in json.dumps(fields)

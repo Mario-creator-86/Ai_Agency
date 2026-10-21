@@ -115,13 +115,13 @@ export class StudioScreens {
     this.dialog?.close();
     const dialog=document.createElement('dialog');dialog.className='studio-player';
     this.dialog=dialog;
-    const heading=document.createElement('h2');heading.textContent='Filmele studioului';dialog.append(heading);
+    const heading=document.createElement('h2');heading.id='studio-player-title';heading.textContent='Filmele studioului';dialog.setAttribute('aria-labelledby',heading.id);dialog.append(heading);
     const close=document.createElement('button');close.type='button';close.textContent='Închide';close.addEventListener('click',()=>dialog.close());dialog.append(close);
     const youtube=this.media?.youtube?.[0];
     if(youtube && /^[A-Za-z0-9_-]{11}$/.test(youtube.id)){
       const label=document.createElement('p');label.textContent=youtube.title;dialog.append(label);
       const frame=document.createElement('iframe');frame.title='YouTube · '+youtube.title;
-      frame.src=`https://www.youtube-nocookie.com/embed/${encodeURIComponent(youtube.id)}?playsinline=1&origin=${encodeURIComponent(location.origin)}`;
+      frame.src=`https://www.youtube-nocookie.com/embed/${encodeURIComponent(youtube.id)}?playsinline=1&enablejsapi=1&mute=${document.body.dataset.uiSound==='on'?'0':'1'}&origin=${encodeURIComponent(location.origin)}`;
       frame.allow='autoplay; encrypted-media; picture-in-picture';frame.referrerPolicy='strict-origin-when-cross-origin';frame.allowFullscreen=true;dialog.append(frame);
       const link=document.createElement('a');link.textContent='Deschide pe YouTube';link.href=`https://www.youtube.com/watch?v=${encodeURIComponent(youtube.id)}`;link.target='_blank';link.rel='noopener';dialog.append(link);
     }else if(this.url){const video=document.createElement('video');video.src=this.url;video.controls=true;video.playsInline=true;dialog.append(video);}

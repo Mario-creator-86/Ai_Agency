@@ -1,6 +1,6 @@
 """prompt_lint: the prompts are read before a credit is priced or spent.
 
-The Nepal film (storyboard 0000003f) is the fixture: its six as-sent prompts pasted enum
+The Nepal film (storyboard 1d530880) is the fixture: its six as-sent prompts pasted enum
 codes and hex palettes into the image model's prompt, gave every scene the same camera,
 asked a photo model for a bar chart and a black screen, and never told it "no faces".
 Nothing here calls a provider; the linter is pure text.
@@ -24,7 +24,7 @@ from app.media.prompt_lint import (
     lint_still_prompt,
 )
 
-FIXTURE = Path(__file__).parent / "fixtures" / "factual_sample" / "prompts.json"
+FIXTURE = Path(__file__).parent / "fixtures" / "nepal_1d530880" / "prompts.json"
 ROMANIAN_MARKS = set("ăâîșțĂÂÎȘȚ")
 
 GOOD_STILL = (
@@ -141,7 +141,7 @@ def test_lint_film_on_nepal_finds_the_same_camera_everywhere() -> None:
     data = _nepal()
     findings = lint_film(_nepal_scenes(), bible=data["visual_bible"])
     same = _by_code(findings, "SAME_CAMERA_EVERY_SCENE")
-    assert same and same[0].severity == BLOCK
+    assert same and same[0].severity == WARN
     assert same[0].scene is None
     assert has_block(findings)
     # The per-scene findings are part of the film's list too.

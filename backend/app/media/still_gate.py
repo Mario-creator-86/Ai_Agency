@@ -92,7 +92,7 @@ up to 68 credits a second. So the still is checked first, twice, at no credit co
        sigma 3-4 + letterbox bars  5-6                         (fails; the top-5 mean read 262)
        sigma 4 + a small white box 5-6                         (fails; the top-5 mean read 1228)
        sigma 4 + one subtitle line 11-15                       (fails)
-     The six Nepal stills as tests/fixtures/factual_sample keeps them (540x960 JPEG) read
+     The six Nepal stills as tests/fixtures/nepal_1d530880 keeps them (540x960 JPEG) read
      53-305 but keep 51-54 % (52-56 % upscaled to 1530x2720 bicubic): they fail, their half
      resolution is soft at 1080. Upscaled with lanczos and an unsharp mask (the rehearsal's
      stand-ins) they keep 40-45 % and pass: a sharpened upscale is left to the vision check.
@@ -143,7 +143,8 @@ buy_motion whose own answers contradict it (text seen, more than one picture, pl
 matched, a violation named) does not pass: the answers win over the summary.
 
 What happens next is `next_step`: a passing still buys motion; a still that should have
-been a card is routed to the local compositor; a failing still is re-rolled at most twice,
+been a card is routed to the local compositor; a failing still is re-rolled while the
+Owner's renders cap leaves room (`renders_cap.max_rerolls`: the cap less the first render),
 with its violations rewritten as positive words the image model obeys
 (`positive_instruction`), and then goes to the Owner. A block that is only "could not
 measure" is never re-rolled: buying another still does not install a detector. Before any
@@ -176,9 +177,12 @@ from app.media.fix_check import (
     fix_status,
     minor_traces,
 )
+from app.media.markings import markings_ro, named
 from app.media.picture_qc import StillJudgement, judge_still
-from app.media.qc import PANEL_BAND_SHARE, flat_band, still_is_degenerate
+from app.media.qc import still_is_degenerate
+from app.media.renders_cap import max_rerolls
 from app.media.toolchain import find_ffmpeg
+from app.wording import count as count_ro
 
 #: The width every picture check measures at: the final film's width.
 MEASURE_WIDTH = 1080
@@ -205,8 +209,10 @@ SHARPNESS_SCORE_SPAN = 100
 MOTION_BLUR_ANISOTROPY = 2.5
 #: Mean CIELAB distance to the look's named colours above which the palette is flagged.
 PALETTE_WARN_DELTA_E = 30.0
-#: How many times a failing still is bought again before the Owner decides.
-MAX_REROLLS = 2
+# How many times a failing still is bought again before the Owner decides is not a constant
+# here: it is the renders cap less the first render, read when a step decides
+# (`renders_cap.max_rerolls`, `Settings.renders_per_layer`; the Owner, 2026-10-16: two renders).
+
 #: How many times a still that repeats a corrected mistake is bought again on the same words,
 #: when it also missed its plan (one that showed its plan is never: its words are rewritten).
 PERSISTS_REROLLS = 1
@@ -331,6 +337,17 @@ class StillPlan:
     #: persists is refused (`decide`, ``finding_persists``). Clip QC reads the motion layer's
     #: items from the same field of its own plan (`assembler._clip_plan`).
     must_fix: tuple[dict[str, Any], ...] = ()
+    #: The objects the plan names that carry their own markings (`markings.planned_markings`;
+    #: the Owner, 2026-10-13, the Kelvin film's thermometer refused for its digits): the look
+    #: is told their scale is not writing, and a writing refusal of such a still is the
+    #: Director's to overturn (`may_be_overturned`), never a hard limit of the bible.
+    expected_markings: tuple[str, ...] = ()
+    #: The shot's form when the montage cut the scene into shots (`montage.beat_tag`):
+    #: {"shot": k, "of": n, "size": "wide" | "medium" | "detail"}, for a factual shot only
+    #: (`stills_stage.montage_shot`). Its ``scene_picture`` and ``narration`` are then this
+    #: shot's own, and the look is told it is shot k of n at that size (`picture_qc.judge_still`).
+    #: None for a scene that is its own one shot, which is asked exactly as before.
+    shot_form: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -367,6 +384,8 @@ class StillReport:
     #: The items whose trace the look called minor: accepted, carried as a warning on the take
     #: (`fix_check.record_take_note`) and on the stills step's entry.
     minor: tuple[dict[str, str], ...] = ()
+    #: The plan's objects that carry their own markings (`StillPlan.expected_markings`).
+    expected_markings: tuple[str, ...] = ()
 
     @property
     def matched_plan(self) -> bool:
@@ -692,42 +711,19 @@ def local_checks(
                 else CheckResult("degenerate", "PASSED", False, None, "structură de imagine")
             )
     if "panels" in measure:
-        band = flat_band(ffmpeg, path)
-        if band is None:
-            checks.append(
-                _unmeasured(
-                    "panels", f"Benzile imaginii nu au fost măsurate: {no_encoder}", environment
-                )
+        # Image/clip composition is a semantic judgement. A mathematically flat row
+        # may be a desk, sky or horizon rather than a pasted panel. Previous
+        # thresholds produced paid false refusals. Only the vision check's
+        # required one_picture / matches_plan / shows_scene fields can fail panels.
+        checks.append(
+            CheckResult(
+                "panels",
+                "NOT_APPLICABLE",
+                False,
+                None,
+                "Panourile și benzile sunt evaluate vizual de AI, nu de detectorul de rânduri",
             )
-        elif band.splits_a_still:
-            # A measured violation, so it is re-rolled with the positive words, unlike a
-            # check that could not run. The frames' waiver for captions and fades
-            # (qc.FRAME_PICTURE_FLOOR) is not a still's: a black still with a strip of
-            # picture 9.6 % tall passed both local checks under it.
-            checks.append(
-                CheckResult(
-                    "panels",
-                    "FAILED",
-                    True,
-                    round(band.share, 3),
-                    f"Imaginea nu e o singură fotografie: {band.detail_ro()}",
-                )
-            )
-        else:
-            # A wide band passes only glued to one edge with a soft edge: the scene's own
-            # night sky or background (2026-10-10, qc.SOFT_EDGE_STEP).
-            checks.append(
-                CheckResult(
-                    "panels",
-                    "PASSED",
-                    False,
-                    round(band.share, 3),
-                    f"o singură imagine: {band.soft_edge_ro()}"
-                    if band.wide
-                    else f"o singură imagine: cea mai lată bandă plată are {band.rows} rânduri "
-                    f"din {band.height} ({band.share:.0%}, prag {PANEL_BAND_SHARE:.0%})",
-                )
-            )
+        )
     if "sharpness" in measure:
         focus = measure_focus(ffmpeg, path)
         if focus is None:
@@ -831,7 +827,7 @@ def local_checks(
 
 
 def _required(plan: StillPlan) -> tuple[str, ...]:
-    base = ("degenerate", "panels", "sharpness", "motion_blur")
+    base = ("degenerate", "sharpness", "motion_blur")
     return base + (("faces",) if plan.faces_forbidden else ())
 
 
@@ -1088,7 +1084,17 @@ def decide(
                 )
                 violations.append("faces")
         if verdict.readable_text:
-            vision_reasons.append(f"Modelul de vedere a văzut text lizibil în imagine {said}")
+            marked = tuple(getattr(plan, "expected_markings", ()) or ())
+            if marked:
+                # The plan asks for an object with its own scale: the look was told so, and
+                # what it still reads as writing is the Director's to judge (2026-10-13).
+                vision_reasons.append(
+                    f"Modelul de vedere a văzut text lizibil în imagine, deși planul cere "
+                    f"{markings_ro(marked)}, care își poartă scala; Directoarea decide dacă "
+                    f"scrisul e al obiectului {said}"
+                )
+            else:
+                vision_reasons.append(f"Modelul de vedere a văzut text lizibil în imagine {said}")
             violations.append("readable_text")
         if not verdict.one_picture:
             # 2026-10-09: scene 5's triptych of three similar tunnels had no flat band to
@@ -1148,6 +1154,7 @@ def decide(
         measured=measured,
         fixes=tuple(fixes),
         minor=tuple(minor_traces(fixes)),
+        expected_markings=tuple(getattr(plan, "expected_markings", ()) or ()),
     )
 
 
@@ -1199,19 +1206,34 @@ def may_be_overturned(report: StillReport) -> bool:
     is bought for its scene: a refusal the gate measured whole (nothing unmeasured) whose
     reasons are a reading — the plan, the scene, the look, the technique, a corrected mistake
     seen again — and none of the bible's hard limits (`fix_check.HARD_LIMITS`: a face where
-    faces are forbidden, writing, panels, a blank field), which stay the code's."""
+    faces are forbidden, writing, panels, a blank field), which stay the code's. Writing on a
+    still whose plan asks for an object with its own markings (``expected_markings``) is a
+    reading, hers: a thermometer's scale is not the bible's writing (2026-10-13)."""
+    hard = set(report.violations) & HARD_LIMITS
+    if report.expected_markings:
+        hard.discard("readable_text")
     return (
         report.decision == "BLOCKED"
         and bool(report.violations)
         and not report.unmeasured
-        and not set(report.violations) & HARD_LIMITS
+        and not hard
         and report.outcome != "compose_locally"
     )
 
 
-def positive_instruction(violations: Iterable[str]) -> str:
-    """The violations rewritten as words the image model obeys (English, for the model)."""
-    words = [POSITIVE_WORDS[code] for code in dict.fromkeys(violations) if code in POSITIVE_WORDS]
+def positive_instruction(violations: Iterable[str], markings: Sequence[str] = ()) -> str:
+    """The violations rewritten as words the image model obeys (English, for the model). A
+    writing violation on a plan that asks for an object with its own markings (``markings``)
+    keeps that object's scale and asks every other surface plain (2026-10-13)."""
+    words: list[str] = []
+    for code in dict.fromkeys(violations):
+        if code == "readable_text" and markings:
+            words.append(
+                f"only {named(markings)}'s own scale and markings, every other surface plain "
+                "and unmarked, signs left blank"
+            )
+        elif code in POSITIVE_WORDS:
+            words.append(POSITIVE_WORDS[code])
     return "; ".join(words)
 
 
@@ -1277,16 +1299,22 @@ def next_step(report: StillReport, *, rerolls_done: int, words_correct: bool = F
             f"imaginea {how} «{_excerpt(persisted.get('finding'), 120)}»: {words} nu au "
             "corectat-o.",
         )
-    if rerolls_done < MAX_REROLLS:
+    allowed = max_rerolls()
+    if rerolls_done < allowed:
         return NextStep(
             "reroll",
-            positive_instruction(report.violations),
-            f"Scena {report.scene}: imaginea se reface ({rerolls_done + 1}/{MAX_REROLLS}): {first}",
+            positive_instruction(report.violations, report.expected_markings),
+            f"Scena {report.scene}: imaginea se reface ({rerolls_done + 1}/{allowed}): {first}",
         )
+    done = (
+        f"după {count_ro(allowed, 'refacere', 'refaceri')}"
+        if allowed
+        else "la singura randare permisă"
+    )
     return NextStep(
         "needs_owner",
         positive_instruction(report.violations),
-        f"Scena {report.scene}: după {MAX_REROLLS} refaceri imaginea tot nu trece ({first}). "
+        f"Scena {report.scene}: {done} imaginea tot nu trece ({first}). "
         "Decide Proprietarul pe foaia de filmare.",
     )
 

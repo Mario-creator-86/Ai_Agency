@@ -5,13 +5,13 @@
   "height": 887,
   "aspect": 1.3333333333333333,
   "profiles": [
-    {"employee_id":"00000000-0000-4000-8000-000000000190","roles":["Director"],"background":"executive office","rect":[0,0,444,333]},
-    {"employee_id":"00000000-0000-4000-8000-0000000000aa","roles":["LeadResearcher","Researcher"],"background":"scientific research room","rect":[444,0,443,332]},
-    {"employee_id":"00000000-0000-4000-8000-00000000017c","roles":["FactChecker"],"background":"evidence and reference library","rect":[887,0,444,333]},
-    {"employee_id":"00000000-0000-4000-8000-0000000001fc","roles":["ScriptWriter"],"background":"writing and storyboard room","rect":[1331,0,443,332]},
-    {"employee_id":"00000000-0000-4000-8000-00000000013c","roles":["VoiceArtist"],"background":"microphone and acoustic booth","rect":[0,444,444,333]},
-    {"employee_id":"00000000-0000-4000-8000-000000000051","roles":["VideoEditor"],"background":"video editing workstation","rect":[444,444,443,332]},
-    {"employee_id":"00000000-0000-4000-8000-00000000012e","roles":["Publisher"],"background":"distribution map and console","rect":[887,444,444,333]},
-    {"employee_id":"00000000-0000-4000-8000-000000000185","roles":["Accountant"],"background":"ledger and calculator desk","rect":[1331,444,443,332]}
+    {"employee_id":"c313fd50-34c0-4ae0-992d-b3b67270c0d8","roles":["Director"],"background":"executive office","rect":[0,0,444,333]},
+    {"employee_id":"4df0b539-49dc-41aa-b68f-748c67d87532","roles":["LeadResearcher","Researcher"],"background":"scientific research room","rect":[444,0,443,332]},
+    {"employee_id":"b823656e-9deb-46df-bac9-298a25ab4c9e","roles":["FactChecker"],"background":"evidence and reference library","rect":[887,0,444,333]},
+    {"employee_id":"fdd42e07-df06-44bb-994b-87454beff7a1","roles":["ScriptWriter"],"background":"writing and storyboard room","rect":[1331,0,443,332]},
+    {"employee_id":"99651f9f-0dd5-4e08-9b3b-6de599e99f10","roles":["VoiceArtist"],"background":"microphone and acoustic booth","rect":[0,444,444,333]},
+    {"employee_id":"24eee265-3ecd-49a6-b582-784d9423c89b","roles":["VideoEditor"],"background":"video editing workstation","rect":[444,444,443,332]},
+    {"employee_id":"93a7a70a-4033-4772-b30a-f39653144293","roles":["Publisher"],"background":"distribution map and console","rect":[887,444,444,333]},
+    {"employee_id":"bc55aecc-771c-427f-a88e-182709cf029f","roles":["Accountant"],"background":"ledger and calculator desk","rect":[1331,444,443,332]}
   ]
 }

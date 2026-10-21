@@ -42,8 +42,8 @@ def test_a_rendered_film_carries_its_newest_upload_and_others_none(engine, tmp_p
                 privacy_status="private",
                 status="PUBLISHED",
                 idempotency_key=str(uuid4()),
-                remote_video_id="fixture0001",
-                remote_url="https://youtube.com/shorts/fixture0001",
+                remote_video_id="IxQIzIulLBU",
+                remote_url="https://youtube.com/shorts/IxQIzIulLBU",
                 remote_privacy_status="private",
                 created_at=utc_now(),
                 published_at=utc_now(),
@@ -53,7 +53,7 @@ def test_a_rendered_film_carries_its_newest_upload_and_others_none(engine, tmp_p
     assert row["publication"] == {
         "status": "PUBLISHED",
         "privacy": "private",
-        "url": "https://youtube.com/shorts/fixture0001",
+        "url": "https://youtube.com/shorts/IxQIzIulLBU",
         "channel": channel["channel_name"],
         "published_at": row["publication"]["published_at"],
     }

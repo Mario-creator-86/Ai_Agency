@@ -102,26 +102,39 @@ def test_every_employee_is_told_who_it_is_from_stored_data(engine, staffed):
                 select(CharacterBible).where(CharacterBible.employee_id == row.id)
             )
             assert bible is not None, f"{role_name} has no character"
+            # A task nobody named (2026-10-16, «Context pe sarcină»): who it is, what it may
+            # and must never do, a short persona, the Owner's policies, the standing rules.
             identity = compose_identity(session, row)
             assert identity.system.startswith(f"You are {row.display_name}, {role_name} at AMN-AI")
             assert f"MISSION: {role.mission}" in identity.system
-            assert "NEVER LET PASS:" in identity.system and "STANDING RULES:" in identity.system
+            assert "YOU MUST NEVER:" in identity.system and "STANDING RULES:" in identity.system
             assert f"YOUR CHARACTER: {bible.canonical_name}." in identity.system
-            assert "WHAT YOU REMEMBER: nothing yet" in identity.system
-            assert identity.context["identity_version"] == "identity-v2"
+            assert "NEVER LET PASS:" not in identity.system
+            assert "WHAT YOU REMEMBER" not in identity.system
+            assert identity.context["identity_version"] == "identity-v4-task"
+            assert identity.context["profile"] == "BARE"
             assert identity.context["character_id"] == bible.id
             assert identity.context["memory_record_ids"] == []
+            # The Owner talking to it: the whole contract, and what it remembers.
+            chat = compose_identity(session, row, task_type="owner_chat")
+            assert "NEVER LET PASS:" in chat.system and "STANDING RULES:" in chat.system
+            assert "WHAT YOU REMEMBER: nothing recorded that this work needs." in chat.system
         sarah = session.get(Agent, staffed["agents"]["Director"].id)
-        assert "Show me the evidence" in compose_identity(session, sarah).system
+        chat = compose_identity(session, sarah, task_type="owner_chat").system
+        assert "Show me the evidence" in chat
+        assert "Show me the evidence" not in compose_identity(session, sarah).system
 
 
 def test_an_open_message_reaches_the_employee_it_is_addressed_to(engine, staffed):
-    """The Director's written indications travel with the employee into every run.
+    """The Director's written indications reach the employee through the mail task.
 
-    A HANDOFF filed to the sound department appears in Lyra's composed identity — subject,
-    intent, sender — and in the context manifest; nobody else's copy does, and a resolved
-    message stops following the employee around.
+    Until 2026-10-16 a HANDOFF rode every run of its addressee; the Owner's decision «Context
+    pe sarcină» gives the inbox to the mail tasks only, one thread at a time. A HANDOFF filed to
+    the sound department is a letter Lyra's mail round answers; it is in no identity of hers,
+    nobody else is asked to answer it, and a resolved message is not asked again.
     """
+    from app.agents.mail import letters_awaiting_answer
+
     with Session(engine) as session, session.begin():
         sarah_id = staffed["agents"]["Director"].id
         lyra_id = staffed["agents"]["VoiceArtist"].id
@@ -142,14 +155,13 @@ def test_an_open_message_reaches_the_employee_it_is_addressed_to(engine, staffed
         posted_id = posted.id
     with Session(engine) as session:
         lyra_row = session.get(Agent, lyra_id)
-        identity = compose_identity(session, lyra_row)
-        assert "WHAT IS ASKED OF YOU RIGHT NOW (1 open messages addressed to you" in identity.system
-        assert "Indicații de producție — voce mai caldă" in identity.system
-        assert "[HANDOFF from Sarah" in identity.system
-        assert "Alege vocea potrivită pentru publicul RO" in identity.system
-        assert identity.context["open_message_ids"] == [posted_id]
+        for task in ("", "sound_design", "review_narration", "answer_mail"):
+            identity = compose_identity(session, lyra_row, task_type=task)
+            assert "Indicații de producție" not in identity.system, task
+            assert identity.context["open_message_ids"] == [], task
+        assert letters_awaiting_answer(session) == [posted_id]
         kael_row = session.get(Agent, kael_id)
-        assert "WHAT IS ASKED OF YOU RIGHT NOW" not in compose_identity(session, kael_row).system
+        assert "Indicații de producție" not in compose_identity(session, kael_row).system
         sarah_row = session.get(Agent, sarah_id)
         assert "Indicații de producție" not in compose_identity(session, sarah_row).system
     with Session(engine) as session, session.begin():
@@ -157,10 +169,7 @@ def test_an_open_message_reaches_the_employee_it_is_addressed_to(engine, staffed
         message.status = "RESOLVED"
         message.resolved_by = "Test"
     with Session(engine) as session:
-        lyra_row = session.get(Agent, lyra_id)
-        after = compose_identity(session, lyra_row)
-        assert "WHAT IS ASKED OF YOU RIGHT NOW" not in after.system
-        assert after.context["open_message_ids"] == []
+        assert letters_awaiting_answer(session) == []
 
 
 def test_reseeding_keeps_the_owners_contract(client, headers, engine, staffed):
@@ -202,13 +211,20 @@ def test_a_run_carries_the_identity_and_records_what_the_model_was_given(
     assert result["status"] == "SUCCEEDED"
     system = model.calls[-1]["system"]
     assert system.startswith("You are Elena (Fact Checker), FactChecker at AMN-AI")
-    assert "a SUPPORTED verdict without a verbatim quote" in system
+    # A probe is BARE: who she is, never her contract (2026-10-16, «Context pe sarcină»).
+    assert "MISSION:" in system and "a SUPPORTED verdict without a verbatim quote" not in system
     assert model.calls[-1]["prompt"] == "Ești funcțională?"
     with Session(engine) as session:
         run = session.get(AgentRun, result["id"])
-        assert run.context_json["identity_version"] == "identity-v2"
+        assert run.context_json["identity_version"] == "identity-v4-task"
+        assert run.context_json["profile"] == "BARE"
         assert run.context_json["role_name"] == "FactChecker"
         assert run.context_json["system_sha256"]
+    # The Owner asking her about her work is told her whole contract.
+    with Session(engine) as session:
+        elena_row = session.get(Agent, elena.id)
+        chat = compose_identity(session, elena_row, task_type="owner_chat").system
+    assert "a SUPPORTED verdict without a verbatim quote" in chat
     view = client.get(f"/api/v1/agents/{elena.id}/identity", headers=headers).json()
     assert view["system_prompt"] == system
     assert view["character"]["canonical_name"] == "Elena Fact-Checker"
@@ -271,7 +287,9 @@ def test_memory_comes_from_real_outcomes_and_is_read_by_role_scope(
         assert ("OWNER_POLICY", None) in elena_classes
         assert ("STRATEGY", None) not in elena_classes, "not in the FactChecker's scope"
         assert ("AGENT_OPINION", vera.id) not in elena_classes, "another employee's own memory"
-        identity = compose_identity(session, vera_row)
+        # Her policies ride every call; what she remembers rides where a task needs it.
+        assert "The Owner stopped autonomy" in compose_identity(session, vera_row).system
+        identity = compose_identity(session, vera_row, task_type="owner_chat")
         assert "The Owner stopped autonomy" in identity.system
         assert set(identity.context["memory_record_ids"]) == {m.id for m in vera_memory}
     # The Owner can read and invalidate memory; an invalidated record is no longer told.
@@ -336,7 +354,10 @@ def test_a_verified_claim_becomes_a_fact_everyone_may_rely_on(engine, staffed):
         assert fact is not None and fact.agent_id is None and quote in fact.content
         assert fact.source_type == "run" and session.get(AgentRun, fact.source_id) is not None
         marcus = session.get(Agent, staffed["agents"]["ScriptWriter"].id)
-        assert "Supported claim: " + quote in compose_identity(session, marcus).system
+        told = compose_identity(session, marcus, task_type="owner_chat").system
+        assert "Supported claim: " + quote in told
+        # His scripts get their claims in their own data, not through his memory.
+        assert "Supported claim: " not in compose_identity(session, marcus).system
 
 
 # --------------------------------------------------------------------------- reports
@@ -425,14 +446,17 @@ def test_stage_reports_are_filed_by_their_owners_and_the_director_decides(
         assert session.scalar(
             select(DomainEvent).where(DomainEvent.event_type == "director.review_completed")
         )
-        # The Director's request to Kael is an open message addressed to him, so it travels
-        # in his identity until it is resolved — that is how assignments reach the employee
-        # now. Kael's own report went to her inbox: not addressed to him, never in his
-        # prompt.
+        # The Director's request to Kael is an open letter addressed to him, which his mail
+        # round answers (2026-10-16: the inbox is the mail tasks' only). Kael's own report went
+        # to her inbox: not addressed to him, never in his prompt.
+        from app.agents.mail import letters_awaiting_answer
+
         kael_row = session.get(Agent, kael.id)
         kael_identity = compose_identity(session, kael_row).system
-        assert "De investigat: Montaj și controlul calității: încheiată" in kael_identity
-        assert "WHAT IS ASKED OF YOU RIGHT NOW (1 open messages addressed to you" in kael_identity
+        assert "De investigat" not in kael_identity
+        # His own report is in the thread: he answers once his quarter of an hour has passed.
+        later = datetime.now(UTC) + timedelta(minutes=16)
+        assert request.id in letters_awaiting_answer(session, now=later)
     listed = client.get("/api/v1/agents/messages?status=OPEN", headers=headers).json()["messages"]
     assert {m["intent"] for m in listed} == {"STATUS", "REQUEST_INFO"}
     # The Owner may ask for a review at any time; the app's own registry has no model here,

@@ -197,6 +197,8 @@ def request(
         guard = _DeadlineGuard(connection, deadline) if deadline is not None else None
         try:
             response = connection.getresponse()
+            if guard is not None:
+                guard.watch_response(response)
             limit = MAX_JSON_BYTES if expect_json else MAX_MEDIA_BYTES
             payload = (
                 response.read(limit + 1)
@@ -293,6 +295,7 @@ class _DeadlineGuard:
         import threading  # noqa: PLC0415
 
         self._connection = connection
+        self._response: Any = None
         self.fired = False
         self._timer = threading.Timer(max(0.0, deadline - time.monotonic()), self._fire)
         self._timer.daemon = True
@@ -302,9 +305,19 @@ class _DeadlineGuard:
         self.fired = True
         sock = getattr(self._connection, "sock", None)
         if sock is None:
+            # Connection:close transfers the live socket to HTTPResponse before its body
+            # is read. The deadline still owns that read even when connection.sock is None.
+            raw = getattr(getattr(self._response, "fp", None), "raw", None)
+            sock = getattr(raw, "_sock", None)
+        if sock is None:
             return
         with contextlib.suppress(OSError):
             sock.shutdown(socket.SHUT_RDWR)
+
+    def watch_response(self, response: Any) -> None:
+        self._response = response
+        if self.fired:
+            self._fire()
 
     def cancel(self) -> None:
         self._timer.cancel()

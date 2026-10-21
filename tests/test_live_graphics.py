@@ -16,7 +16,6 @@ from app.config import ROOT
 
 sys.path.insert(0, str(ROOT / "scripts"))
 import live_graphics as lg  # noqa: E402
-
 import start  # noqa: E402
 
 sys.path.remove(str(ROOT / "scripts"))

@@ -12,7 +12,7 @@ her replies say the same thing, in the last two days and since the Director last
 a burst of September is history, not a loop of today. ``close_thread`` resolves every OPEN
 letter of such a thread, resolved by the Director with the reason; a letter to the Owner is
 his and is never touched, nor are the worker's own reports, the Director's standing weekly
-guidance to a department (it stays open all week by design, `agents.identity._open_messages`)
+guidance to a department (it stays open all week by design, `agents.identity.standing_direction`)
 or a budget request the Accountant's close forwards to the Owner while it is open. When the
 thread is the letter of one of her DirectorDecisions, that decision is closed too (the matter
 goes back to her loop, with the reason as its outcome), and a decision that asked what a film

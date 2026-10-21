@@ -139,8 +139,9 @@ DEFAULT_CHANNELS: list[dict[str, Any]] = [
         "brand_tagline": "Real World. Verified Facts. 60-Second Deep Dives.",
         # Seed default only: production may pick technology per video. Editable in the API.
         "production_policy": "FLEXIBLE",
-        # The longest film quality control accepts: the factual script's own ceiling.
-        "shorts_max_seconds": 60,
+        # The longest film quality control accepts: YouTube's Shorts limit (the Owner,
+        # 2026-10-16; migration 0058 raised the rows still at the old 60).
+        "shorts_max_seconds": 180,
     },
     {
         "channel_name": "Channel B - Office Serial",
@@ -150,8 +151,9 @@ DEFAULT_CHANNELS: list[dict[str, Any]] = [
         "brand_tagline": "AMN-AI (Autonomous Machine Nexus): Unscripted Silicon Life.",
         # Seed default only: recurring characters keep their locked identity. Editable in the API.
         "production_policy": "CONSISTENCY_LOCKED",
-        # Episodes are written for 45-70 s (app.story.review.MAX_SECONDS).
-        "shorts_max_seconds": 70,
+        # Episodes are written for 90-180 s (the Owner, 2026-10-16; migration 0058 raised
+        # the rows still at the old 70).
+        "shorts_max_seconds": 180,
     },
 ]
 
@@ -175,6 +177,12 @@ LIVE_PUBLICATION_STATES = [
     "STARTED",
     "SCHEDULED",
 ]
+
+#: Statuses of an upload the channel confirmed: with a remote video id, a film that is out, or
+#: booked to go out (the reading `media.shooting_sheet.film_is_closed` gives an upload). Every
+#: other row (a gate refusal, an upload that failed or YouTube refused, an intent not yet run,
+#: a retry, a simulated run) left nothing certain on the channel; the film may still be owed.
+CONFIRMED_UPLOAD_STATES = ("PUBLISHED", "SCHEDULED", "REMOTE_CONFIRMED")
 
 
 def film_identity(session: Session, media_asset_id: str) -> tuple[str | None, str | None]:

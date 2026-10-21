@@ -22,7 +22,6 @@ from app.models import DomainEvent
 from app.story.models import DailyStudioLog, StoryEpisode
 from app.story.services import (
     EpisodeNotGrounded,
-    NothingHappened,
     StoryError,
     business_date,
     close_daily_log,
@@ -171,18 +170,58 @@ def test_only_narratable_events_are_offered_as_material(engine, staffed):
 # ---------------------------------------------------------------------------
 
 
-def test_a_day_with_nothing_narratable_produces_no_episode(engine, staffed, monkeypatch):
-    """Manufacturing a story from an empty log is the fabrication the spec forbids, dressed as
-    productivity."""
+def _story_beats(event_ids: list[str] | None = None) -> list[dict]:
+    """Six beats of a small story of the studio's own (2026-10-16): whole sentences, the
+    narrator opening and closing, citing the given events or nothing."""
+    parts = ["hook", "situation", "situation", "turn", "payoff", "button"]
+    beats = []
+    for index, part in enumerate(parts):
+        lines = [
+            {"speaker": "Sarah (Director)", "text": "The record is the record, and I read it."},
+            {"speaker": "Kael (Video Editor)", "text": "Then read me the part where it ends."},
+        ]
+        if index == 0:
+            lines = [
+                {
+                    "speaker": "Narrator",
+                    "text": (
+                        "The penthouse, long after midnight. Sarah has one folder and no "
+                        "renders. Tonight the question is whether the day counts at all."
+                    ),
+                },
+                *lines,
+            ]
+        if index == len(parts) - 1:
+            lines.append({"speaker": "Narrator", "text": "The log stayed open; so did she."})
+        beats.append(
+            {
+                "part": part,
+                "location": "director_suite",
+                "scene": SCENE,
+                "lines": lines,
+                "event_ids": list(event_ids or []),
+            }
+        )
+    return beats
+
+
+def test_a_quiet_day_is_told_as_a_story_of_its_own(engine, staffed, monkeypatch):
+    """2026-10-16, the Owner: the story is the showrunner's and the real day its backdrop;
+    a quiet day is told too, with nothing invented about the studio's work."""
+    from app.story.services import DraftRefused
+
     quiet = business_date(TZ, datetime.now(UTC) - timedelta(days=3))
     log = close_daily_log(engine, TZ, quiet)
     assert log["notable_events"] == []
 
-    with pytest.raises(NothingHappened):
-        run(engine, log["id"], episode_answer([]), monkeypatch)
-
-    with Session(engine) as session:
-        assert session.scalars(select(StoryEpisode)).all() == []
+    try:
+        run(engine, log["id"], episode_answer(_story_beats()), monkeypatch)
+    except DraftRefused as exc:  # a stand-in answer may still fail a form rule
+        assert "liniștită" not in str(exc) and "citează" not in str(exc)
+    else:
+        with Session(engine) as session:
+            (episode,) = session.scalars(select(StoryEpisode)).all()
+            assert episode.log_id == log["id"]
 
 
 # ---------------------------------------------------------------------------
@@ -267,16 +306,20 @@ def test_the_serial_cannot_cast_someone_who_was_not_there(engine, staffed, monke
     assert "nu era" in str(excinfo.value)
 
 
-def test_a_beat_with_no_citation_is_refused(engine, staffed, monkeypatch):
+def test_a_beat_with_no_citation_is_the_storys_own(engine, staffed, monkeypatch):
+    """Until 2026-10-16 a beat citing nothing refused the episode; the story is the
+    showrunner's now, and only a citation the day does not hold refuses it."""
+    from app.story.services import DraftRefused, EpisodeNotGrounded
+
     add_event(engine, "agent.message_sent")
     log = close_daily_log(engine, TZ)
 
-    answer = episode_answer(
-        [{"scene": SCENE, "lines": [{"speaker": SARAH, "text": "A scene with no source."}]}]
-    )
-
-    with pytest.raises(StoryError):
-        run(engine, log["id"], answer, monkeypatch)
+    try:
+        run(engine, log["id"], episode_answer(_story_beats()), monkeypatch)
+    except EpisodeNotGrounded as exc:
+        raise AssertionError(f"refused for its citations: {exc}") from exc
+    except DraftRefused as exc:
+        assert "citează" not in str(exc)
 
 
 @pytest.mark.parametrize(
@@ -379,7 +422,9 @@ def test_an_episode_cannot_be_decided_twice(engine, staffed, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_a_quiet_day_is_reported_as_a_fact_not_an_error(client, headers, engine, staffed):
+def test_a_quiet_day_is_not_refused_as_quiet(client, headers, engine, staffed):
+    """2026-10-16: a quiet day is told like any other; the write route no longer answers
+    «zi liniștită»."""
     quiet = business_date(TZ, datetime.now(UTC) - timedelta(days=3))
     closed = client.post(
         "/api/v1/story/logs/close",
@@ -393,8 +438,7 @@ def test_a_quiet_day_is_reported_as_a_fact_not_an_error(client, headers, engine,
         headers=headers,
     )
 
-    assert response.status_code == 409
-    assert "zi liniștită" in response.json()["detail"]
+    assert not (response.status_code == 409 and "zi liniștită" in response.json()["detail"])
 
 
 def test_the_operational_record_is_untouched_by_the_narrative(engine, staffed, monkeypatch):

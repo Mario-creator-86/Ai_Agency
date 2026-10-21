@@ -35,7 +35,7 @@ from test_film_costing import a_film as film_with_stills
 from test_stills_stage import a_film as film_without_stills
 from test_stills_stage import still_prompt
 
-FIXTURES = Path(__file__).parent / "fixtures" / "factual_sample"
+FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
 
 #: The vendor's text on the Owner's sheet (takes of 2026-10-03 07:50-07:57 UTC), as kept.
 TOO_LARGE = (

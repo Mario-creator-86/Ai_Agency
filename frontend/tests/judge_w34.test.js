@@ -62,7 +62,7 @@ test('the two places that were «only through the API» now open the page\'s own
 });
 
 const CHANNELS = [
-  { id: '00000000-0000-4000-8000-00000000004d', channel_name: 'Main Channel A - Factual Shorts', channel_type: 'MAIN_FACTUAL', remote_channel_id: 'UC_EXAMPLE_CHANNEL', youtube_channel_title: 'NEXUS CURIOSITY', publisher_ready: true, director_may_approve_episodes: false, policy_version: 1 },
+  { id: '23d3ba8b-5f3c-4a99-9ab8-4993fe108f1a', channel_name: 'Main Channel A - Factual Shorts', channel_type: 'MAIN_FACTUAL', remote_channel_id: 'UCb6g_x2qeRFyGJkgIbkmKZA', youtube_channel_title: 'NEXUS CURIOSITY', publisher_ready: true, director_may_approve_episodes: false, policy_version: 1 },
   { id: '34acf9d6-d5e2-4891-a494-7dafc27a4438', channel_name: 'Channel B - Office Serial', channel_type: 'OFFICE_SERIAL', remote_channel_id: 'UCsJC65Up_k9TtKHA1eaEK3Q', youtube_channel_title: 'INSIDE THE NEXUS', publisher_ready: true, director_may_approve_episodes: false, policy_version: 3 },
 ];
 

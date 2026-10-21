@@ -1,6 +1,13 @@
-"""Offline regression tests for test media qc legacy.
+"""Quality control refuses a film the old way made (2026-10-02, DAY_FLOW_NO_STALL / A12).
 
-Providers are faked; all data is synthetic."""
+The second Nepal render (3ec1740c, 2026-09-26) was bought whole by the legacy path, from
+template prompts, after its shot plan was lost. It never reached quality control, so it sat in
+the queue as a video with no verdict: the next day's QC would have measured it as a file and
+could have handed it to publishing. A film is now judged on how it was made as well as on
+what the file measures: in PRODUCTION, scenes filmed from prompts no model wrote, or a film
+whose stills and shots the whole-film path bought from a paid vendor after the staircase
+cut-over, fail with a Romanian reason. Nothing here opens a socket or the Owner's database.
+"""
 
 from __future__ import annotations
 
@@ -155,7 +162,7 @@ def test_a_film_the_whole_film_path_bought_from_a_paid_vendor_fails_quality_cont
 
 
 def test_the_nepal_render_fails_on_both_counts(engine, tmp_path):
-    """Template prompts and the whole-film path together, as 0000008e was made."""
+    """Template prompts and the whole-film path together, as 3ec1740c was made."""
     film = a_film(engine, tmp_path, scenes=2)
     _templates(engine, film)
     asset = _render(

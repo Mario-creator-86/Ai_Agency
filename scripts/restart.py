@@ -180,6 +180,11 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true", help="show what would be done")
     parser.add_argument(
+        "--stop-only",
+        action="store_true",
+        help="stop the studio gracefully and do not start it again (stop, fix, restart)",
+    )
+    parser.add_argument(
         "--signal",
         nargs=2,
         metavar=("PID", "EVENT"),
@@ -202,7 +207,7 @@ def main() -> int:
             return code
     else:
         print("no running start.py process; starting fresh")
-    if args.dry_run:
+    if args.dry_run or args.stop_only:
         return 0
     return start()
 

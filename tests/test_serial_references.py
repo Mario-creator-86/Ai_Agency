@@ -228,3 +228,48 @@ def test_the_day_waits_for_the_reference_set_with_a_letter_in_romanian(
     assert letter.body_json["status"] == "NEEDS_REFERENCE"
     assert "înfățișarea blocată" in letter.body_text
     assert "referință" in letter.body_text
+
+
+def test_a_scene_in_another_room_gets_its_character_only_never_the_films_figure(engine, tmp_path):
+    """2026-10-15, episode 2 (2d276038): scene 1's still (Kael in the render bay) went with
+    every later scene «for its light, palette and grain», and the edit model drew its room —
+    monitors, RGB tower, lamps, street window — behind Sarah in the penthouse and behind
+    Dr. Aris in the research room, whatever the words said, through five paid rounds. The
+    film's Figure 1 goes only to a scene in its own room; a scene in another room is drawn
+    from its character's reference and its words alone, and does not wait for scene 1."""
+    storyboard_id = a_film(engine, tmp_path)
+    character_id = a_character(engine, tmp_path, referenced=True, locked=True)
+    cast(engine, storyboard_id, character_id, (1, 3))
+    with Session(engine) as session, session.begin():
+        for row in session.scalars(
+            select(StoryboardScene).where(StoryboardScene.storyboard_id == storyboard_id)
+        ):
+            room = (
+                "Executive Penthouse (Director / CEO), floor 4"
+                if row.scene_index in (3, 4)
+                else "Video & Render Bay, floor 1"
+            )
+            row.prompt_json = {**dict(row.prompt_json or {}), "location": room}
+    adapter = ReferenceStills()
+
+    approved_run(engine, storyboard_id, tmp_path, adapter, SpyJudge())
+
+    by_subject = {
+        scene: next(call for call in adapter.asked if SUBJECTS[scene] in call["prompt"])
+        for scene in (1, 2, 3, 4)
+    }
+    first = [t for t in takes(engine, storyboard_id) if t.scene_number == 1]
+    figure = Path(next(t for t in first if t.status == "APPROVED").path).read_bytes()
+    # Scene 2, in scene 1's room: the film's look as before.
+    assert by_subject[2]["references"] == [figure]
+    # Scene 3, in the penthouse with the character: the character only, no figure named.
+    assert by_subject[3]["references"] == [PORTRAIT]
+    assert stills_stage.FIGURE_TWO not in by_subject[3]["prompt"]
+    assert stills_stage.FIGURE_ONE not in by_subject[3]["prompt"]
+    assert "Figure 1 is the character reference" in by_subject[3]["prompt"]
+    # Scene 4, in the penthouse without the character: nothing is sent, the words alone.
+    assert by_subject[4]["references"] == []
+    assert "Figure" not in by_subject[4]["prompt"]
+    assert stills_stage.same_room("", "Video & Render Bay, floor 1")
+    assert stills_stage.same_room("Research, floor 3", "research,  floor 3")
+    assert not stills_stage.same_room("Research, floor 3", "Video & Render Bay, floor 1")

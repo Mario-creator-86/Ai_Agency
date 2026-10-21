@@ -54,7 +54,7 @@
       "original_path": "08_VIDEO_PIPELINE.md",
       "path": "docs/architecture/08_VIDEO_PIPELINE.md",
       "original_sha256": "fdf41c8590434a5d7c4447d1056ecca09f2cbf95de87084c0487f60e3c553833",
-      "sha256": "57d3f9c2289c307a12c544a1a5c8339ed0a5edd17563127fec924c87a22ff463"
+      "sha256": "96d42fc4a2fde323b46df1a77f662476558aee901c696b3dc9c54a07f2690d4d"
     },
     {
       "original_path": "09_CHANNELS_AND_AUTOMATION.md",
@@ -84,13 +84,13 @@
       "original_path": "13_ROADMAP_TODO.md",
       "path": "docs/project/13_ROADMAP_TODO.md",
       "original_sha256": "88bf0c953f794fb87873ac2daa6285ea601a63cee3524c3bc54dfa7b0ae11d7f",
-      "sha256": "65bf0464c6071c717a4104e7c2ce3a1f1e9505c9beffdfff725f80ff9127f110"
+      "sha256": "23a7cd7d3297455afb565a346ad8909cdc61e96345599f387a1b5fc94359bb70"
     },
     {
       "original_path": "14_AI_HANDOFF_PROTOCOL.md",
       "path": "docs/project/14_AI_HANDOFF_PROTOCOL.md",
       "original_sha256": "f772190f599a764fd9fc21c2ea993353f6dfb145d2d6684c9bde3c8cce33850a",
-      "sha256": "8ff609f97689d39804d955bfab8915264d8bfae59d34af1399a6662dd6432242"
+      "sha256": "db044499c09b71b535a6d714e02e72bc5a68b1fdb6d5adb390a3f7ce4f2759c2"
     },
     {
       "original_path": "15_SECURITY_COSTS_OBSERVABILITY.md",
@@ -102,7 +102,7 @@
       "original_path": "16_DECISION_LOG.md",
       "path": "docs/project/16_DECISION_LOG.md",
       "original_sha256": "6b0a37f4388316f4c2331d1550d61df0051bfa598bf05fd0152954d987ebae0a",
-      "sha256": "8d488642546f48fa2151a98232e346f68843b76c6c9a34f007a623a0bb6e6ccf"
+      "sha256": "d416b5340166eb0261bbb009a8647ddd6087c882328535ed5bed2ce83318d0c6"
     },
     {
       "original_path": "17_REALISM_CAPABILITY_MODEL.md",
@@ -450,13 +450,13 @@
       "original_path": "CHANGELOG.md",
       "path": "docs/project/CHANGELOG.md",
       "original_sha256": "66ab6caf7488c51f2e741810c4f4919654f4e6d457336eccb038785934d8ef48",
-      "sha256": "bf297b6806dae5d8e07fc0844fea21692e0b9f4b257d5d54b90b2e7741381958"
+      "sha256": "1721591e4741f8dd7de01e0ba674f9f0110775a99248400ae5dbd99897b16b90"
     },
     {
       "original_path": "CURRENT_STATUS.md",
       "path": "docs/project/CURRENT_STATUS.md",
       "original_sha256": "babde35f5f5b1a48d50875cb5b50784e4b73e139d53e613ffb66fdfb49b7ac1a",
-      "sha256": "2d5619cb166d07cf6d3bee1346889ea49a6bdec0c1c2673c54e5e4f4a3edd457"
+      "sha256": "babde35f5f5b1a48d50875cb5b50784e4b73e139d53e613ffb66fdfb49b7ac1a"
     },
     {
       "original_path": "MANIFEST.md",

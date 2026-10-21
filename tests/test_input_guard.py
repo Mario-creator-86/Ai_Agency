@@ -1,6 +1,15 @@
-"""Offline regression tests for test input guard.
+"""Never buy again an input identical to one that was refused (the Owner, 2026-10-12, 22:00:
+«DE CE NU SE SCHIMBĂ PROMPTUL!»; a new seed alone is not a change; a new still before another
+clip).
 
-Providers are faked; all data is synthetic."""
+The cyclotron film (aa170155), scene 1, as the record has it: 8 clips of still 4be4364e were asked
+for (6 paid) from the same first frame (JPEG sha 1948d8e9…) with the same motion words (08a2f75d,
+and the clip-QC retry's 2da0db70 = the same words plus one sentence), only the seed moving from
+580970442 to 580970451; clip QC refused every paid clip for faces in its frames. Here
+the same history is written on a test database (the journal row and the take of each purchase,
+the clip-QC report on the take) and `input_guard.refused_before` is asked about the next
+purchase. Nothing is bought: no vendor, no model, no network, 0 credits.
+"""
 
 from __future__ import annotations
 

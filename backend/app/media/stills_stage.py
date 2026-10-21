@@ -10,10 +10,12 @@ judged before any motion is priced.
 What this step does, in order, and what stops it:
 
 1. The plan (`stills_plan`): every LIVE scene's still prompt exactly as it will be sent, the
-   model (seedream5_pro), the ratio (1530:2720, i.e. 2K), two candidates per scene, at most
-   two re-rolls, and the credits: the expected round and the cap (the round plus two
-   re-rolls). A scene that already holds an APPROVED take for its prompt is not bought again
-   and costs 0. Its sha256 is the plan_hash the Owner's yes is bound to.
+   model (seedream5_pro), the ratio (1530:2720, i.e. 2K), the candidates per scene
+   (`STILL_CANDIDATES`), the re-rolls the Owner's renders cap leaves (`renders_cap`), and the
+   credits: the expected round and the cap (each scene's round as many times as its renders
+   cap still allows it, never a render past it). A scene that already holds an APPROVED take
+   for its prompt is not bought again and costs 0. Its sha256 is the plan_hash the Owner's yes
+   is bound to.
 2. Refusals before anything is asked or bought (`StillsStageRefused`, a 409 for the route):
    a plan_hash that is not the current plan's (STALE_PLAN); in PRODUCTION a LIVE scene whose
    prompt was not written by the model, or for the office serial composed from its fixed
@@ -35,9 +37,10 @@ What this step does, in order, and what stops it:
    the local checks did not stop is shown to the vision model (`picture_qc.judge_still`).
    The best passing candidate is APPROVED (by ``still_gate``), a passing runner-up stays PAID
    for the Owner to pick on the contact sheet, a failing one is REJECTED with its reasons.
-6. A scene with no passing candidate is bought again at most twice (MAX_REROLLS), with what
-   was wrong rewritten as positive words (`still_gate.positive_instruction`), then marked
-   NEEDS_OWNER with a WARNING event. Since 2026-10-12 (the Owner: «LLM-ul este pe abonament!
+6. A scene with no passing candidate is bought again while the Owner's renders cap leaves
+   room (`renders_cap.max_rerolls`: since 2026-10-16 the first render and at most one more),
+   with what was wrong rewritten as positive words (`still_gate.positive_instruction`), then
+   marked NEEDS_OWNER with a WARNING event. Since 2026-10-12 (the Owner: «LLM-ul este pe abonament!
    … GENERAREA DE IMAGINI ȘI MIȘCĂRI COSTĂ!») the Director looks first, for free, at the
    refused candidates the bible's hard limits did not stop (`_settle_round`): a candidate her
    look lets stand is approved by her and nothing more is bought; and a still that shows its
@@ -88,7 +91,8 @@ import asyncio
 import hashlib
 import inspect
 import json
-from collections.abc import Callable, Mapping, Sequence
+import re
+from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -101,6 +105,7 @@ from sqlalchemy.orm import Session
 from app.db import lock_for_write
 from app.media import fix_check
 from app.media.assembler import (
+    CAP_APPROVER,
     DEFAULT_STORAGE_ROOT,
     FREE_FAILURE_KINDS,
     LIVE_KIND,
@@ -114,7 +119,9 @@ from app.media.assembler import (
     UNJUDGED_DETAIL,
     UNJUDGED_FAILURE_CODE,
     SpendMeter,
+    _file_sha256,
     _record_intent,
+    budget_cut,
     classify_vendor_failure,
     collect_submitted_takes,
     failure_code_of,
@@ -123,6 +130,7 @@ from app.media.assembler import (
     identity_key,
     max_paid_attempts_per_scene,
     outcome_unknown,
+    owner_rejected_takes,
     possibly_charged,
     recode_not_queued,
     record_take,
@@ -144,6 +152,7 @@ from app.media.balance_rule import (
     purchase_stop_ro,
     start_refusal_ro,
 )
+from app.media.cap_choice import CapChoice, choose_under_cap, record_cap_choice
 from app.media.cost_plan import (
     STILL_CANDIDATES,
     STILLS_MODEL,
@@ -156,10 +165,13 @@ from app.media.cost_plan import (
 )
 from app.media.disk import LOW_DISK, disk_refusal
 from app.media.faces import FaceCounter
-from app.media.fix_check import STILL_LAYER, open_findings
+from app.media.fix_check import STILL_LAYER, open_findings, read_finding_events
+from app.media.markings import planned_markings
 from app.media.mode_guard import PurchaseGuard, unasked_refusal
 from app.media.models import SceneTake, Storyboard, StoryboardScene
+from app.media.montage import FACTUAL_SIZES, beat_of
 from app.media.picture_qc import StillJudgement, judge_still
+from app.media.prepared_batch import RoundWork, purchase_flow
 from app.media.prompt_lint import (
     BLOCK,
     LintScene,
@@ -168,10 +180,16 @@ from app.media.prompt_lint import (
     lint_film,
     summary_ro,
 )
+from app.media.renders_cap import (
+    at_cap,
+    renders_made,
+    renders_of_ro,
+    renders_per_layer,
+    renders_ro,
+)
 from app.media.still_gate import (
     ALL_CHECKS,
     COLOUR_WORDS,
-    MAX_REROLLS,
     REWRITE_PHRASE,
     StillPlan,
     StillReport,
@@ -195,6 +213,7 @@ from app.providers.runpod.batch import (
     supports_batch,
 )
 from app.providers.runpod.wiring import bind_scene, sync_take_quality
+from app.wording import count as count_ro
 
 #: The Policy Kernel's name for this step, and the sheet step it is bound to.
 STILLS_ACTION = "media.stills_purchase"
@@ -225,8 +244,9 @@ STILL_NEGATIVE: tuple[str, ...] = (
     "watermark",
 )
 STILL_NEGATIVE_FACES: tuple[str, ...] = ("visible faces", "portrait")
-#: The negative prompt is at most this long: a list, not a second prompt.
-NEGATIVE_CHARS = 400
+#: The actual local request schema's limit; a 400-character aesthetic target used to
+#: erase scene-specific corrections while retaining generic exclusions.
+NEGATIVE_CHARS = 20000
 
 
 def _bible_bans_faces(bible: Mapping[str, Any] | None) -> bool:
@@ -244,23 +264,45 @@ def _bible_bans_faces(bible: Mapping[str, Any] | None) -> bool:
     return any(BIBLE_NO_FACES.search(text) for text in texts)
 
 
-def still_negative(package: Mapping[str, Any] | None, bible: Mapping[str, Any] | None) -> str:
-    """The negative prompt of one still: `STILL_NEGATIVE`, the faces when the bible forbids
-    them, then the plan's own `avoid` items, each once, within `NEGATIVE_CHARS`."""
-    terms: list[str] = list(STILL_NEGATIVE)
+#: Of `STILL_NEGATIVE`, the terms a scene whose plan names an object with its own markings
+#: leaves out (`markings.planned_markings`, 2026-10-13): a negative channel told «text,
+#: lettering» beside «the thermometer keeps its scale» draws a blank instrument. Captions,
+#: subtitles, a logo and a watermark stay out of every still.
+_MARKED_OBJECT_KEEPS: frozenset[str] = frozenset({"text", "lettering"})
+
+
+def still_negative(
+    package: Mapping[str, Any] | None,
+    bible: Mapping[str, Any] | None,
+    markings: Sequence[str] = (),
+) -> str:
+    """The negative prompt of one still: `STILL_NEGATIVE` (without «text» and «lettering»
+    when the plan names an object that carries its own markings, ``markings``), the faces
+    when the bible forbids them, then the plan's own `avoid` items, each once, within
+    `NEGATIVE_CHARS`."""
+    if (package or {}).get("prompt_format") == "editor_final_v1":
+        return str((package or {}).get("negative_prompt") or "")
+    terms: list[str] = [
+        term for term in STILL_NEGATIVE if not (markings and term in _MARKED_OBJECT_KEEPS)
+    ]
     if _bible_bans_faces(bible):
         terms += STILL_NEGATIVE_FACES
-    avoid = (package or {}).get("avoid")
-    if isinstance(avoid, list):
+    for avoid in ((bible or {}).get("avoid"), (package or {}).get("avoid")):
+        if not isinstance(avoid, list):
+            continue
         for item in avoid:
             words = " ".join(str(item or "").split()).strip(" .;,").lower()
-            if words and len(words) <= 60 and words not in terms:
+            if words and words not in terms:
                 terms.append(words)
     said = ""
     for term in terms:
         more = term if not said else f"{said}, {term}"
         if len(more) > NEGATIVE_CHARS:
-            break
+            raise StillsStageRefused(
+                "NEGATIVE_PROMPT_TOO_LONG",
+                "Condițiile imaginii depășesc limita cererii; "
+                "scurtați-le fără a pierde corecțiile.",
+            )
         said = more
     return said
 
@@ -349,6 +391,7 @@ class _Scene:
     look_block: str
     camera_move: str
     source: str | None
+    prompt_format: str = "legacy"
     reuse: SceneTake | None = None
     #: Bought and not settled: SUBMITTED takes (task open) and UNJUDGED candidates on disk.
     pending: list[SceneTake] = field(default_factory=list)
@@ -364,6 +407,9 @@ class _Scene:
     #: re-rolls of a new round are seeded past them, so the same words make different
     #: candidates (2026-10-12: a serial scene made again on today's words after a decision).
     rolls: int = 0
+    #: How many times the scene's still has been made (`renders_cap.renders_made`): what the
+    #: Owner's renders cap leaves of it sizes the step's cap.
+    renders: int = 0
     #: What the still must not become (`still_negative`), for the model's negative channel.
     negative: str = ""
     #: What the scene asks for beside its prompt — its written picture, the narration over
@@ -375,6 +421,16 @@ class _Scene:
     #: What the scene's current words were rewritten to fix (`fix_check.open_findings`), for
     #: the gate to verify on every still bought for it (`still_gate.StillPlan.must_fix`).
     must_fix: tuple[dict[str, str], ...] = ()
+    #: The plan's objects that carry their own markings (`markings.planned_markings`), for the
+    #: gate (`still_gate.StillPlan.expected_markings`): a thermometer's scale is not writing.
+    expected_markings: tuple[str, ...] = ()
+    prompt_issues: tuple[str, ...] = ()
+    #: The room the beat names (a serial scene's plan ``location``; empty for a factual
+    #: scene): the film's Figure 1 goes only to a scene in its own room (`_references`).
+    location: str = ""
+    #: The shot's form when the montage cut a factual scene into shots (`montage_shot`):
+    #: {"shot", "of", "size"}, for the gate (`still_gate.StillPlan.shot_form`); None otherwise.
+    shot_form: dict[str, Any] | None = None
 
 
 @dataclass
@@ -387,6 +443,9 @@ class _Ledger:
     meter: SpendMeter = field(default_factory=SpendMeter)
     images: int = 0
     take_ids: list[str] = field(default_factory=list)
+    #: The step's hold on the budgets (`shooting_sheet.StepHold`): its next round, grown before
+    #: every later purchase. None (a scene redo, a direct call): the cap alone binds.
+    hold: Any = None
 
     @property
     def committed(self) -> float:
@@ -395,6 +454,37 @@ class _Ledger:
     @committed.setter
     def committed(self, value: float) -> None:
         self.meter.committed = value
+
+    def room(self, wanted: float = 0.0) -> float:
+        """The credits the step may still commit: the cap's rest and, with a budget hold, no
+        more than it covers once grown for ``wanted`` more (`StepHold.room`)."""
+        rest = float(self.cap) - self.committed
+        if self.hold is None:
+            return rest
+        return min(rest, float(self.hold.room(self.committed, wanted)))
+
+    def round_room(self, price: float) -> None:
+        """Before a round is fitted (`gpu_batch.run_rounds`): the hold grows to the round, or
+        by what the budgets have left, and the round is cut to what is held. Asked for
+        nothing (``price`` 0, RunPod measured more than estimated), it grows to what the step
+        owes."""
+        if self.hold is not None:
+            self.hold.room(self.committed, price, partial=True)
+
+    def hold_spent(self) -> None:
+        """What the step committed is held at once (`StepHold.hold_spent`): a vendor's quote
+        above the price is committed whole, and no other step reads it as free meanwhile."""
+        if self.hold is not None:
+            self.hold.hold_spent(self.committed)
+
+    def budget_words(self, wanted: float | None = None) -> str | None:
+        """The budget's words when the hold, not the cap, stopped the next purchase
+        (``wanted`` credits, when known)."""
+        if self.hold is None:
+            return None
+        if wanted is None:
+            return self.hold.budget_words()
+        return self.hold.budget_words(self.committed, wanted)
 
 
 # ------------------------------------------------------------------------------ the plan
@@ -420,12 +510,19 @@ def is_serial_package(package: Mapping[str, Any] | None) -> bool:
 def serial_scene_picture(package: Mapping[str, Any]) -> str:
     """A serial scene's written picture: what the composer draws its still from — the beat's
     room, the people in frame (`in_frame`, as the beat puts them there) and the first moment of
-    its action (`prompt_agent._still_moment`) — never the writer's line.
+    its action as the still says it (`prompt_agent.serial_still_moment`: no hand-by-hand
+    detail on an establishing or wide shot, its people small in the room) — never the writer's
+    line.
 
     2026-10-12, f06808c9 scene 1 (the review of 9ac0195, finding 4): ``writer_visual`` said
     «Marcus alone at his desk» while the composed beat put Marcus and Sarah in frame; a gate
     shown the writer's line refuses every correct still of the beat as «not the scene»."""
-    from app.media.prompt_agent import _short_name, _still_moment  # noqa: PLC0415 - large
+    from app.media.prompt_agent import (  # noqa: PLC0415 - large
+        _short_name,
+        partial_clothing_sentence,
+        serial_partial_characters,
+        serial_still_moment,
+    )
 
     people = [
         _short_name(person.get("name"))
@@ -433,10 +530,50 @@ def serial_scene_picture(package: Mapping[str, Any]) -> str:
         if isinstance(person, Mapping) and person.get("name")
     ]
     location = " ".join(str(package.get("location") or "").split()).rstrip(". ")
-    moment = " ".join(_still_moment(str(package.get("action") or "")).split()).rstrip(". ")
+    moment = " ".join(serial_still_moment(package).split()).rstrip(". ")
     parts = [
         f"{location}." if location else "",
         f"In frame: {', '.join(dict.fromkeys(people))}." if people else "",
+        f"{moment[:1].upper()}{moment[1:]}." if moment else "",
+    ]
+    parts.extend(partial_clothing_sentence(person) for person in serial_partial_characters(package))
+    return " ".join(part for part in parts if part)
+
+
+def montage_shot(package: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The form of a factual shot the montage cut from a writer's scene (`montage.beat_tag`):
+    ``{"shot": k, "of": n, "size": "wide" | "medium" | "detail"}``; None for a scene that is
+    its own one shot (the montage off, a short scene, a card) and for a serial beat, whose
+    picture is its own composed beat already (`serial_scene_picture`)."""
+    if not package or is_serial_package(package):
+        return None
+    tag = beat_of(dict(package))
+    shot, of, size = tag.get("shot"), tag.get("of"), str(tag.get("size") or "")
+    if not isinstance(shot, int) or not isinstance(of, int) or of <= 1 or not 1 <= shot <= of:
+        return None
+    if size not in FACTUAL_SIZES:
+        return None
+    return {"shot": shot, "of": of, "size": size}
+
+
+def factual_shot_picture(package: Mapping[str, Any]) -> str:
+    """A factual montage shot's written picture: the Editor's subject for this shot and the
+    first moment of its action (`prompt_agent._still_moment`, the moment its still is drawn
+    from), as `serial_scene_picture` gives a serial beat its own; empty when the shot's plan
+    names neither.
+
+    2026-10-16, audit finding 27: every shot of a cut scene (wide, medium, detail) was judged
+    against the writer's line for the WHOLE scene, so a right «detail: hands on the ledger»
+    of a scene written as «a slow drift through a dark detector cavern» failed shows_scene and
+    the Director's ladder bought it again."""
+    from app.media.prompt_agent import _still_moment  # noqa: PLC0415 - large
+
+    subject = " ".join(str(package.get("subject") or "").split()).rstrip(". ")
+    moment = " ".join(_still_moment(str(package.get("action") or "")).split()).rstrip(". ")
+    if moment and subject and moment.casefold() in subject.casefold():
+        moment = ""  # the plan's action is its subject (a template plan): said once
+    parts = [
+        f"{subject[:1].upper()}{subject[1:]}." if subject else "",
         f"{moment[:1].upper()}{moment[1:]}." if moment else "",
     ]
     return " ".join(part for part in parts if part)
@@ -458,6 +595,11 @@ def _scene_picture(
     line is «Return to the dark detector cavern from the opening shot…» — matched itself."""
     if serial or is_serial_package(package):
         return serial_scene_picture(package)
+    # A shot the montage cut from the writer's scene shows one part of it at its size: its
+    # picture is the shot's own (`factual_shot_picture`), never the whole scene's line.
+    shot = factual_shot_picture(package) if montage_shot(package) is not None else ""
+    if shot:
+        return shot
     writer = " ".join(str(package.get("writer_visual") or "").split())
     if writer:
         return writer
@@ -471,6 +613,50 @@ def _still_plan(scene: _Scene, *, faces_forbidden: bool, rules: tuple[str, ...])
     were rewritten to fix. The one place a still's plan is built, for every still bought or
     collected — the per-request path, the RunPod rounds and the scene redo — so none of them
     can leave the fix check out."""
+    requirements: list[dict[str, str]] = []
+    for match in re.finditer(
+        r"Only the body parts specified for (.+?) enter the frame; the face stays outside it",
+        scene.picture,
+        re.IGNORECASE,
+    ):
+        name = match.group(1)
+        requirements.append(
+            {
+                "finding": (
+                    f"{name} is cropped to the specified body parts; "
+                    f"no face, profile or head of {name} is visible."
+                ),
+                "expected": scene.picture,
+                "layer": "still",
+                "source": "current_plan",
+                "source_id": f"partial:{name}",
+                "cause": (
+                    "Verify this explicit framing condition on the actual image, "
+                    "not from the prompt. "
+                    "A large visible face is not a minor trace."
+                ),
+            }
+        )
+    if re.search(r"\bunruled\b", scene.words, re.IGNORECASE):
+        requirements.append(
+            {
+                "finding": (
+                    "The pages are blank and unruled: "
+                    "no ledger grid, printed lines, letters or numbers on the pages."
+                ),
+                "expected": (
+                    "Smooth undecorated blank pages; preserve markings "
+                    "on other objects explicitly named by the plan."
+                ),
+                "layer": "still",
+                "source": "current_plan",
+                "source_id": "unruled-pages",
+                "cause": (
+                    "A ruled grid contradicts the explicitly unruled pages "
+                    "even when its text is too small to read."
+                ),
+            }
+        )
     return StillPlan(
         scene=scene.index,
         still_prompt=scene.words,
@@ -482,17 +668,36 @@ def _still_plan(scene: _Scene, *, faces_forbidden: bool, rules: tuple[str, ...])
         scene_picture=scene.picture,
         narration=scene.narration,
         purpose=scene.purpose,
-        must_fix=scene.must_fix,
+        must_fix=(*scene.must_fix, *requirements),
+        expected_markings=scene.expected_markings,
+        shot_form=scene.shot_form,
     )
 
 
-def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], list[_Scene]]:
+def _read_scenes(
+    engine: Engine,
+    storyboard_id: str,
+    *,
+    choose: bool = False,
+    registry: Any | None = None,
+    correlation_id: str = "",
+    ffmpeg_path: str | None = None,
+) -> tuple[dict[str, Any], list[_Scene]]:
     """The film's scenes as the step reads them: each LIVE scene's still identity (its words
     and the reference picture of the character it shows, the identity `assemble_from_takes`
     looks for), its approved still, what was bought and not settled, and what it remembers
-    since the Owner last decided about it (`assembler.scene_memory`)."""
+    since the Owner last decided about it (`assembler.scene_memory`).
+
+    A scene at the Owner's renders cap keeps a still of its own (`_keep_under_renders_cap`):
+    with one on disk, that one. With two or more the Director chooses among them, and only a
+    caller that may ask her does it (``choose``: the free settle of what was bought, the stills
+    step; ``registry`` is hers to look through, and without one the studio keeps its own pick
+    and says so); a reading of the plan (``choose`` False) never calls a model, and holds such
+    a scene with its reason (`choice_reason`) until one of those, or the walk's ladder
+    (`settle_scene_under_cap`), has her choose."""
     from app.agents.editorial import is_serial_film  # noqa: PLC0415 - agents import media
     from app.factual.models import ScriptDraft  # noqa: PLC0415
+    from app.media.prompt_agent import incomplete_plan_fields  # noqa: PLC0415
     from app.media.services import ReferenceRequired  # noqa: PLC0415 - services imports media
 
     loaded: dict[str, bytes] = {}
@@ -514,6 +719,7 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
         if not rows:
             raise ValueError(f"Storyboard {storyboard_id} has no scenes")
         scenes: list[_Scene] = []
+        finding_events = read_finding_events(session, storyboard_id) if not choose else None
         for row in rows:
             package = dict(row.prompt_json or {})
             kind = scene_kind_of({"scene_kind": row.scene_kind})
@@ -533,26 +739,41 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                 except ReferenceRequired as exc:
                     missing = str(exc)
             identity = still_fields(visual, reference)
+            picture = _scene_picture(package, visual, words, serial=serial)
+            marked = planned_markings(words, picture)
             scene = _Scene(
                 index=int(row.scene_index),
                 kind=kind,
-                words=" ".join(words.split()),
+                words=words
+                if package.get("prompt_format") == "editor_final_v1"
+                else " ".join(words.split()),
+                prompt_format=str(package.get("prompt_format") or "legacy"),
                 identity=identity,
                 look_block=str(package.get("look_block") or ""),
                 camera_move=str(package.get("camera_move") or ""),
                 source=package.get("source") if isinstance(package.get("source"), str) else None,
                 reference=reference,
                 needs_reference=missing,
-                negative=still_negative(package, bible),
-                picture=_scene_picture(package, visual, words, serial=serial),
+                negative=still_negative(package, bible, marked),
+                picture=picture,
                 narration=" ".join(str(row.voiceover_segment or "").split()),
                 purpose=str(row.story_purpose or ""),
+                expected_markings=marked,
+                prompt_issues=tuple(incomplete_plan_fields(package, layers=("still",))),
+                location=" ".join(str(package.get("location") or "").split()),
+                shot_form=None if serial else montage_shot(package),
             )
             if kind == LIVE_KIND:
                 # The picture's open items only: a finding treated in the motion's words is
                 # the clip's to check (`assembler._clip_plan`), never answered by a still.
                 scene.must_fix = tuple(
-                    open_findings(session, storyboard_id, scene.index, layer=STILL_LAYER)
+                    open_findings(
+                        session,
+                        storyboard_id,
+                        scene.index,
+                        layer=STILL_LAYER,
+                        events=finding_events,
+                    )
                 )
             if kind == LIVE_KIND and missing is None:
                 found = usable_take(
@@ -577,6 +798,50 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                         or 0
                     )
             scenes.append(scene)
+    # The Owner's renders cap (`renders_cap`) for a scene held after its rounds: its stills
+    # made as many times as the cap allows, none approved, the rewrite ladder still turning —
+    # a still of its own is the scene's picture (approved under the cap: the one it has, or
+    # the one the Director chooses among several) and nothing more is bought for it (02:04Z,
+    # 87c05891 scene 1: the whole episode waited on a fourth). A
+    # scene whose motion has had its renders buys no new picture either: no clip could be made
+    # from it. One with nothing of its own left on disk to stand is not bought past the cap:
+    # it waits, said so (2026-10-16: «maxim încă o randare»).
+    # A scene whose last render is still pending (open at the vendor, or collected and not
+    # judged) is left to it: its candidates are judged first (`_settle_pending`), and the round
+    # applies the cap to them (`_settle_round`), so a paid render is never passed over for an
+    # older refused still.
+    capped: dict[int, str] = {}
+    cap_now = renders_per_layer()
+    for scene in scenes:
+        if scene.kind != LIVE_KIND or scene.reuse is not None or scene.needs_reference:
+            continue
+        with Session(engine) as session:
+            scene.renders = renders_made(session, storyboard_id, scene.index, "still")
+            motion_full = renders_made(session, storyboard_id, scene.index, "motion") >= cap_now
+        if scene.pending or (not motion_full and scene.renders < cap_now):
+            continue
+        with Session(engine) as session:
+            candidates = len(_cap_candidates(session, storyboard_id, scene.index))
+        if candidates > 1 and not choose:
+            capped[scene.index] = choice_reason(scene.index, candidates, motion=motion_full)
+            continue
+        kept = _keep_under_renders_cap(
+            engine,
+            storyboard_id,
+            scene.index,
+            registry=registry,
+            correlation_id=correlation_id,
+            ffmpeg_path=ffmpeg_path,
+        )
+        if kept is None:
+            with Session(engine) as session:
+                his_no = _owner_rejected_still(session, storyboard_id, scene.index)
+            capped[scene.index] = capped_reason(
+                scene.index, motion=motion_full, owner_rejected=his_no
+            )
+            continue
+        scene.reuse = kept
+        scene.pending = []
     # What each scene still to be bought remembers since the Owner last decided about it: a
     # scene the gate or the vendor left to him is held, and is never bought meanwhile.
     open_scenes = {
@@ -597,7 +862,31 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
         scene.attempts = remembered.attempts
         if not scene.pending:
             scene.hold_ro = remembered.hold_ro
+    for index, reason in capped.items():
+        held_scene = open_scenes.get(index)
+        if held_scene is not None and not held_scene.hold_ro:
+            held_scene.hold_ro = reason
     return bible, scenes
+
+
+def capped_reason(scene_index: int, *, motion: bool = False, owner_rejected: bool = False) -> str:
+    """Why a scene at the Owner's renders cap with nothing of its own on disk to stand is not
+    bought: past the cap nothing is bought, by any route (his press included: «maxim încă o
+    randare»); only his setting (STUDIO_RENDERS_PER_LAYER) moves the number. Paid renders
+    that left no picture are the vendor's (charged and undelivered, or unanswered); a picture
+    he rejected himself stands only if he chooses it again (``owner_rejected``)."""
+    layer = "mișcării" if motion else "imaginii"
+    left = (
+        "imaginea ei rămasă pe disc a fost respinsă de Proprietar și rămâne doar dacă o alege "
+        "din nou pe foaia de filmare"
+        if owner_rejected
+        else "nicio randare plătită nu a lăsat pe disc o imagine a ei care să rămână"
+    )
+    return (
+        f"Scena {scene_index}: plafonul Proprietarului de {renders_of_ro(layer)} este "
+        f"atins și {left}; nu se mai cumpără nimic pentru ea cât timp plafonul "
+        "(STUDIO_RENDERS_PER_LAYER) rămâne acesta."
+    )
 
 
 def _pending_takes(session: Session, storyboard_id: str, scene: _Scene) -> list[SceneTake]:
@@ -665,7 +954,16 @@ def stills_plan(
         # bought, and a film that cannot draw a locked character is bought for no scene.
         to_buy = []
     cost = per_scene * len(to_buy)
-    cap = cost * (1 + MAX_REROLLS)
+    # Each scene's round, bought as many times as the Owner's renders cap still allows it
+    # (`renders_cap`: the first render and its re-rolls, every render it already had counted):
+    # the step never holds money for a render past the cap.
+    by_index = {scene.index: scene for scene in live}
+    cap_now = renders_per_layer()
+    rerolls = cap_now - 1
+    rounds = {
+        index: max(1, min(1 + rerolls, cap_now - by_index[index].renders)) for index in to_buy
+    }
+    cap = per_scene * sum(rounds.values())
     # RunPod Serverless: every round is one batch job that pays a GPU start (cold start + idle
     # tail). Scene 1 goes first while the film has no Figure 1 when the later scenes can carry
     # it (a model that binds reference pictures; otherwise every scene is in round 1,
@@ -676,7 +974,7 @@ def stills_plan(
     series = 2 if first is not None and first.index in to_buy and len(to_buy) > 1 else 1
     if to_buy and overhead:
         cost += overhead * series
-        cap += overhead * series * (1 + MAX_REROLLS)
+        cap += overhead * series * max(rounds.values())
     planned = {
         "storyboard_id": storyboard_id,
         "step": STILLS_STEP,
@@ -684,7 +982,7 @@ def stills_plan(
         "ratio": STILL_RATIO,
         "resolution": STILLS_RESOLUTION,
         "candidates": STILL_CANDIDATES,
-        "max_rerolls": MAX_REROLLS,
+        "max_rerolls": rerolls,
         "faces_forbidden": bible_face_rule(bible) is not None,
         "scenes": [
             {
@@ -789,6 +1087,8 @@ def _prompt(
 ) -> str:
     """The words sent for one request: the scene, what a re-roll asks for, and what each
     reference picture is for, in the order the pictures go (`_references`)."""
+    if scene.prompt_format == "editor_final_v1":
+        return scene.words
     parts = [scene.words]
     if instruction:
         parts.append(f"Show {instruction}.")
@@ -800,8 +1100,27 @@ def _prompt(
     return " ".join(part for part in parts if part)
 
 
+def same_room(scene_location: str, figure_location: str) -> bool:
+    """Whether a scene is in the room of the film's Figure 1. 2026-10-15 (episode 2,
+    2d276038): the film's first still, Kael in the render bay, went with every later scene
+    «for its light, palette and grain», and the edit model (Qwen-Image-Edit) drew its room
+    — three monitors, the RGB tower, the lamps and the street window — behind Sarah in the
+    penthouse and behind Dr. Aris in the research room, whatever the words said, through
+    five paid rounds. A scene whose room is named and is not the figure's room is drawn
+    from its character's reference and its words alone; a scene with no room named (a
+    factual film) keeps the figure as before."""
+    mine = " ".join(str(scene_location or "").casefold().split())
+    theirs = " ".join(str(figure_location or "").casefold().split())
+    return not mine or not theirs or mine == theirs
+
+
 def _references(
-    scene: _Scene, figure_one: bytes | None, adapter: Any, *, first: bool
+    scene: _Scene,
+    figure_one: bytes | None,
+    adapter: Any,
+    *,
+    first: bool,
+    figure_location: str = "",
 ) -> tuple[list[bytes], bool, bool]:
     """(the pictures sent with the scene's request, whether its character's reference is
     among them, whether the film's Figure 1 is). The character's reference goes first, for
@@ -817,7 +1136,9 @@ def _references(
         if isinstance(data, bytes) and data:
             pictures.append(data)
             with_character = True
-    with_figure = figure_one is not None and not first
+    with_figure = (
+        figure_one is not None and not first and same_room(scene.location, figure_location)
+    )
     if with_figure and figure_one is not None:
         pictures.append(figure_one)
     most = getattr(adapter, "MAX_REFERENCES", None)
@@ -877,6 +1198,9 @@ def _buy(
     references: list[bytes],
     count: int,
     on_submitted: Callable[[str], None] | None = None,
+    *,
+    exact_prompt: bool = False,
+    negative_prompt: str = "",
 ) -> tuple[list[Any], float | None]:
     """The candidates of one request and the vendor's price for it (None when unstated).
 
@@ -885,6 +1209,8 @@ def _buy(
     generate = getattr(adapter, "generate_candidates", None)
     if callable(generate):
         heard: dict[str, Any] = {}
+        if exact_prompt and "exact_prompt" in inspect.signature(generate).parameters:
+            heard["exact_prompt"] = True
         if on_submitted is not None and _hears_submits(generate):
             heard["on_submitted"] = on_submitted
         results = asyncio.run(
@@ -894,6 +1220,10 @@ def _buy(
         # An image vendor without candidates: the same request, once per candidate.
         width, height = (int(part) for part in STILL_RATIO.split(":"))
         extra: dict[str, Any] = {}
+        if exact_prompt:
+            extra["prompt_format"] = "editor_final_v1"
+            if negative_prompt:
+                extra["negative_prompt"] = negative_prompt
         if references:
             extra["reference_image"] = {"bytes": references[0], "mime_type": "image/png"}
         results = [
@@ -994,11 +1324,20 @@ def _set_verdicts(
 
 @dataclass
 class _RoundEnd:
-    """What one judged round of a scene leads to: a take approved (by the gate or by her
-    look), another round on the same words with ``instruction``, or ``outcome``."""
+    """What one judged round of a scene leads to: a take approved (by the gate, by her look,
+    or under the Owner's renders cap), another round on the same words with ``instruction``, or
+    ``outcome``.
+
+    A round approved a take when ``take_id`` is set, and only then; ``report`` is that take's
+    verdict in this round, which a still kept under the cap from an EARLIER round does not have
+    (the review of the track-1 fix, 2026-10-16: every buyer read ``report`` as the approval,
+    and her choice of an earlier round's still fell over on ``outcome['status']`` after the
+    round was paid for). ``path`` is the approved take's file in every case (`picture`)."""
 
     take_id: str | None = None
     report: StillReport | None = None
+    #: The approved take's file, whichever round made it: Figure 1 is read from it.
+    path: str | None = None
     approved_by: str = GATE_REVIEWER
     again: bool = False
     instruction: str = ""
@@ -1009,6 +1348,15 @@ class _RoundEnd:
     #: She confirmed a refusal that says the WORDS ask for the wrong picture
     #: (`still_gate.content_refusal`): another seed on them is not bought.
     confirmed_content: bool = False
+
+    def picture(self) -> Path | None:
+        """The approved take's file: this round's candidate, or the still kept under the cap
+        from an earlier round. None when no take was approved."""
+        if self.take_id is None:
+            return None
+        if self.path:
+            return Path(self.path)
+        return Path(self.report.path) if self.report is not None else None
 
     def approved(self) -> dict[str, Any]:
         """The scene's outcome for the approved take, with what was accepted on it."""
@@ -1023,6 +1371,448 @@ class _RoundEnd:
         if self.report is not None and self.report.minor:
             said["minor_defects"] = [dict(item) for item in self.report.minor]
         return said
+
+
+# The Owner's renders cap (2026-10-15: «Randările odată făcute, de maxim 3x pentru fiecare
+# imagine sau mișcare … publicăm cu ce Directoarea alege ca fiind cel mai apropiat»; since
+# 2026-10-16 two, `Settings.renders_per_layer`, read through `renders_cap`): past the cap's
+# stills of a scene, the closest candidate stands as the scene's picture and the film goes on
+# (01:46Z, 87c05891 scene 1: a third still refused by the gate, and scenes 2, 4, 6, 8 — which
+# take their look from scene 1's picture — never bought).
+
+
+def _at_renders_cap(engine: Engine, storyboard_id: str, scene_index: int) -> bool:
+    """Whether the scene's still has had its renders already (every paid request among its
+    takes, `assembler._paid_attempts`; the cap read now, `renders_cap.renders_per_layer`)."""
+    with Session(engine) as session:
+        return at_cap(session, storyboard_id, scene_index, "still")
+
+
+def _motion_at_renders_cap(engine: Engine, storyboard_id: str, scene_index: int) -> bool:
+    """Whether the scene's motion (its test shot and shots) has had its renders already."""
+    with Session(engine) as session:
+        return at_cap(session, storyboard_id, scene_index, "motion")
+
+
+def _closest(verdicts: list[tuple[str, StillReport]]) -> tuple[str, StillReport]:
+    """The refused candidate nearest the plan: fewest faults measured or unmeasured, then
+    fewest reasons, then the best score."""
+    return min(
+        verdicts,
+        key=lambda pair: (
+            len(pair[1].violations) + len(pair[1].unmeasured),
+            len(pair[1].reasons_ro),
+            -pair[1].score,
+        ),
+    )
+
+
+def _scene_stills(
+    session: Session, storyboard_id: str, scene_index: int, status: str
+) -> list[SceneTake]:
+    """The scene's stills of ``status`` on disk, newest first, without those the Owner
+    rejected himself (`assembler.owner_rejected_takes`): a picture he turned down is not used
+    in a film unless he chooses it again, and the renders cap never approves it for him. A
+    file that is no longer the one bought (its sha256) is left out too: approved, it could
+    never be the scene's picture (`usable_take` checks the hash), and the walk would settle
+    it again on every pass (the dishonest-code audit of 2026-10-16, SAFE-013)."""
+    rows = list(
+        session.scalars(
+            select(SceneTake)
+            .where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == int(scene_index),
+                SceneTake.kind == "still",
+                SceneTake.status == status,
+            )
+            .order_by(SceneTake.created_at.desc())
+        )
+    )
+    his_no = owner_rejected_takes(session, rows)
+    return [
+        row
+        for row in rows
+        if row.id not in his_no
+        and row.path
+        and row.sha256
+        and Path(row.path).is_file()
+        and _file_sha256(Path(row.path)) == row.sha256
+    ]
+
+
+def _cap_candidates(session: Session, storyboard_id: str, scene_index: int) -> list[SceneTake]:
+    """Every still of the scene on disk that may stand when the cap stops another render, in
+    the studio's own order (`cap_choice.STUDIO_RULE_RO`: one the gate passed first — a judged
+    runner-up, or one approved on words rewritten since — then the newest): the refused ones,
+    the runner-ups, the ones approved on other words. Never one not judged yet, never one the
+    Owner rejected himself (`_scene_stills`). Past the cap the Director chooses among them
+    (`cap_choice.choose_under_cap`); with one, it stays."""
+    rows = [
+        row
+        for status in ("REJECTED", "PAID", "APPROVED")
+        for row in _scene_stills(session, storyboard_id, scene_index, status)
+        if row.failure_code != UNJUDGED_FAILURE_CODE
+    ]
+    newest_first = sorted(rows, key=lambda row: str(row.created_at or ""), reverse=True)
+    return sorted(newest_first, key=lambda row: 0 if row.status in ("PAID", "APPROVED") else 1)
+
+
+def _owner_rejected_still(session: Session, storyboard_id: str, scene_index: int) -> bool:
+    """Whether the scene has a still on disk that the Owner rejected himself."""
+    rows = [
+        row
+        for row in session.scalars(
+            select(SceneTake).where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == int(scene_index),
+                SceneTake.kind == "still",
+            )
+        )
+        if row.path and Path(row.path).is_file()
+    ]
+    return bool(owner_rejected_takes(session, rows))
+
+
+def choice_reason(scene_index: int, candidates: int, *, motion: bool = False) -> str:
+    """Why a scene at the Owner's renders cap with two or more stills of its own on disk waits
+    a moment in a reading of the plan: nothing more is bought for it, and the Director chooses
+    among them where she can be asked (the free settle of what was bought, the stills step,
+    the walk's ladder), never in a reading."""
+    layer = "mișcării" if motion else "imaginii"
+    return (
+        f"Scena {scene_index}: plafonul Proprietarului de {renders_of_ro(layer)} este atins; "
+        "nu se mai cumpără nimic pentru ea, iar Directoarea alege dintre cele "
+        f"{count_ro(candidates, 'imagine', 'imagini')} ale ei pe cea mai apropiată de plan."
+    )
+
+
+def _keep_under_renders_cap(
+    engine: Engine,
+    storyboard_id: str,
+    scene_index: int,
+    *,
+    registry: Any | None = None,
+    correlation_id: str = "",
+    ffmpeg_path: str | None = None,
+    first: str | None = None,
+    rule_ro: str | None = None,
+    lessons: Sequence[str] = (),
+) -> SceneTake | None:
+    """The still the scene keeps under the Owner's renders cap, APPROVED under it and
+    returned, detached; None when nothing of it is on disk to stand. Its candidates
+    (`_cap_candidates`; ``first`` put first, with ``rule_ro`` saying why: the round's measured
+    closest) go to the Director's one look when there are two or more
+    (`cap_choice.choose_under_cap`); with one it stays; when she cannot choose the studio keeps
+    the first. Her choice, or the studio's, is recorded with the approval."""
+    correlation_id = correlation_id or str(uuid4())
+    with Session(engine) as session:
+        ids = [str(row.id) for row in _cap_candidates(session, storyboard_id, scene_index)]
+    if first is not None and first in ids:
+        ids = [first, *(take_id for take_id in ids if take_id != first)]
+    choice = choose_under_cap(
+        engine,
+        registry,
+        storyboard_id=storyboard_id,
+        scene_index=int(scene_index),
+        layer="still",
+        take_ids=ids,
+        correlation_id=correlation_id,
+        ffmpeg_path=ffmpeg_path,
+        rule_ro=rule_ro,
+    )
+    if choice is None:
+        return None
+    _approve_under_cap(
+        engine,
+        choice,
+        storyboard_id=storyboard_id,
+        scene_index=int(scene_index),
+        correlation_id=correlation_id,
+        lessons=lessons,
+    )
+    with Session(engine) as session:
+        kept = session.get(SceneTake, choice.take_id)
+        if kept is not None:
+            session.expunge(kept)
+        return kept
+
+
+def _approve_under_cap(
+    engine: Engine,
+    choice: CapChoice,
+    *,
+    storyboard_id: str,
+    scene_index: int,
+    correlation_id: str,
+    lessons: Sequence[str] = (),
+) -> None:
+    """The chosen still APPROVED under the cap, its refusal cleared from the take and kept as
+    the lesson in its quality note and on the choice's event (`cap_choice.record_cap_choice`):
+    the note says who chose it and how, never more than happened."""
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        row = session.get(SceneTake, choice.take_id)
+        if row is None:
+            return
+        previous = {
+            "status": row.status,
+            "approved_by": row.approved_by,
+            "failure_code": row.failure_code,
+            "failure_detail": row.failure_detail,
+        }
+        left = "; ".join(
+            dict.fromkeys(text for text in (str(row.failure_detail or ""), *lessons) if text)
+        )[:2500]
+        row.status = "APPROVED"
+        row.approved_by = CAP_APPROVER
+        row.failure_code = None
+        row.failure_detail = None
+        sync_take_quality(
+            session,
+            row,
+            accepted=True,
+            reason=(
+                f"Acceptată sub plafonul Proprietarului ({renders_ro()}): {choice.words_ro}"
+                + (
+                    f" Ce a rămas sub standard e lecție pentru filmul următor: {left}"
+                    if left
+                    else ""
+                )
+            )[:4000],
+        )
+        record_cap_choice(
+            session,
+            choice,
+            storyboard_id=storyboard_id,
+            scene_index=scene_index,
+            correlation_id=correlation_id,
+            previous=previous,
+        )
+
+
+#: A refused still judged again by the gate, free (`rejudge_refused_stills`).
+REJUDGED_EVENT = "media.still_rejudged"
+#: The gate's own words when its local checks stopped a still before any look at it.
+LOCAL_STOP_MARK = "verificările locale au oprit-o"
+#: How many of a scene's refused stills are judged again at one ladder stop.
+MAX_REJUDGED = 2
+
+
+def rejudge_refused_stills(
+    engine: Engine,
+    storyboard_id: str,
+    scene_index: int,
+    correlation_id: str,
+    *,
+    registry: Any | None = None,
+    judge: Judge = judge_still,
+    face_counter: FaceCounter | None = None,
+    measure: Sequence[str] = ALL_CHECKS,
+    ffmpeg_path: str | None = None,
+) -> bool:
+    """A scene's refused stills that the gate's LOCAL checks stopped before any look are
+    judged again, by today's gate, when the scene has no approved still: 0 credits, no
+    purchase. The gate reads differently after a fix (2026-10-16 05:04Z, the band rule:
+    87c05891's desk fronts read as a pasted strip, then as a surface), but the refusal stood
+    on the take, the Director's brief had pinned it to the composer's fixed sentences, and
+    `scene_rewrite.scene_waits` stopped the ladder from asking her again — the episode could
+    not start («Directoarea nu a putut încă rescrie scena 8», ×14). A still the gate now
+    passes, local checks then the look, is APPROVED by the gate; one it refuses keeps its
+    refusal in today's words. Returns True when a still was approved.
+
+    Only a still made on the scene's CURRENT words and reference is judged again: one made on
+    words the ladder has rewritten since can never be the scene's picture (`usable_take`
+    reads the take's identity), so approving it moved nothing and the walk stopped at the
+    same scene again. With no model registry nothing is judged and no take is touched: the
+    look would answer «nu a fost privită», and that non-answer, written on the take, stripped
+    the local-stop mark for good (the shooting-sheet letter called the ladder without the
+    registry). A refusal the ladder had already sent to the Director's rewrite
+    (`REWRITE_PHRASE`) stays hers when the gate refuses the still again, so the serial does
+    not re-roll the same words; the take's job keeps its quality note, the verdict being the
+    same."""
+    from app.services import studio_environment, utc_now  # noqa: PLC0415 - it imports media
+
+    if registry is None or not registry.registered_ids():
+        return False
+    bible, scenes = _read_scenes(engine, storyboard_id)
+    scene = next((entry for entry in scenes if entry.index == int(scene_index)), None)
+    if scene is None or scene.kind != LIVE_KIND or scene.reuse is not None:
+        return False
+    with Session(engine) as session:
+        candidates = [
+            (str(row.id), Path(str(row.path)))
+            for row in session.scalars(
+                select(SceneTake)
+                .where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.scene_number == int(scene_index),
+                    SceneTake.kind == "still",
+                    SceneTake.status == "REJECTED",
+                    SceneTake.failure_code == GATE_FAILURE_CODE,
+                )
+                .order_by(SceneTake.created_at.desc())
+            )
+            if LOCAL_STOP_MARK in str(row.failure_detail or "")
+            and take_hash(scene.identity, row.model_id) == row.prompt_hash
+            and row.path
+            and Path(str(row.path)).is_file()
+        ][:MAX_REJUDGED]
+    if not candidates:
+        return False
+    environment = studio_environment(engine)
+    plan = _still_plan(
+        scene, faces_forbidden=bible_face_rule(bible) is not None, rules=_bible_rules(bible)
+    )
+    for take_id, path in candidates:
+        report = _judge_candidate(
+            engine,
+            registry,
+            path,
+            plan,
+            correlation_id,
+            environment=environment,
+            judge=judge,
+            face_counter=face_counter,
+            measure=measure,
+            ffmpeg_path=ffmpeg_path,
+        )
+        looked = report.judgement is not None and report.judgement.status == "MEASURED"
+        if not looked and not any(check.blocking for check in report.checks):
+            # Nobody judged it today (no model that sees, no 1080 px copy): the take keeps
+            # its refusal and its mark, for a ladder stop that has eyes.
+            continue
+        _event(
+            engine,
+            REJUDGED_EVENT,
+            storyboard_id,
+            {
+                "scene_index": int(scene_index),
+                "take_id": take_id,
+                "decision": report.decision,
+                "reasons_ro": list(report.reasons_ro)[:6],
+            },
+            correlation_id,
+        )
+        if report.decision == "PASSED":
+            _set_verdicts(engine, [(take_id, report)], report)
+            with Session(engine) as session, session.begin():
+                lock_for_write(session)
+                row = session.get(SceneTake, take_id)
+                if row is not None:
+                    # The old refusal goes with the approval (`_set_verdicts` clears only
+                    # the «not judged yet» mark).
+                    row.failure_code = None
+                    row.failure_detail = None
+                    row.updated_at = utc_now()
+            return True
+        # Refused again, in today's words: the Director's next look reads today's reasons. A
+        # refusal already sent to her rewrite keeps its content phrase first (`refusal_kind`
+        # would read today's blur or panels as TECHNICAL and the serial would re-roll the words
+        # her ladder holds back); the job's quality note is left, the verdict being the same.
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            row = session.get(SceneTake, take_id)
+            if row is not None:
+                today = "; ".join(report.reasons_ro) or "respinsă"
+                was = " ".join(str(row.failure_detail or "").split())
+                row.failure_detail = (
+                    _rewrite_marked(today) if was.startswith(REWRITE_PHRASE) else today[:500]
+                )
+                row.updated_at = utc_now()
+    return False
+
+
+def settle_scene_under_cap(
+    engine: Engine,
+    storyboard_id: str,
+    scene_index: int,
+    correlation_id: str,
+    *,
+    act: bool = True,
+    registry: Any | None = None,
+    ffmpeg_path: str | None = None,
+) -> bool:
+    """A stopped scene whose picture, or whose motion, has had its renders (`renders_cap`),
+    whatever stopped it: what it has stands under the Owner's cap, before any rewrite, and
+    nothing is bought or left to him (2026-10-15: «publicăm cu ce Directoarea alege ca fiind
+    cel mai apropiat»; 2026-10-16: «maxim încă o randare»).
+
+    Its picture: with no still approved for its words as they are now, a still of its own on
+    disk is approved under the cap (`_keep_under_renders_cap`): the one it has, or the one the
+    Director chooses among several by looking at them through ``registry``
+    (`cap_choice.choose_under_cap`), or, when she cannot, the studio's own pick, said as the
+    studio's; never one the Owner rejected himself. A motion at its cap settles the picture
+    whatever the picture's count: a new one could not be animated. Its motion, at its cap, or
+    with nothing left to buy because the picture kept under the cap cannot be animated again
+    (`renders_cap.motion_spent`): a clip it has stands (chosen the same way), else its still
+    moved locally (`assembler.settle_motion_under_cap`). A render still pending (at the
+    vendor, or collected and not judged) is judged first, never passed over. Returns True
+    only when something changed — a still now approved for the scene, a clip kept, a local
+    move — so a walk never turns on a scene it cannot move (05:20Z, 7c26a7ce scenes 1-2: the
+    still under the cap, three clips refused for it, and every walk stopped at «Directoarea
+    nu a putut încă rescrie» — the ladder ran before the cap could act).
+
+    ``act=False`` writes nothing, calls no model, and says whether it would settle something:
+    only such a scene is said to be the Director's to settle under the cap
+    (`runbook.stages._held_words`); one it cannot settle (a layer at the cap with nothing to
+    keep, or a stop the cap did not make) is not."""
+    from app.media.assembler import (  # noqa: PLC0415
+        scene_approved_still,
+        settle_motion_under_cap,
+    )
+
+    motion_full = _motion_at_renders_cap(engine, storyboard_id, scene_index)
+    picture_full = _at_renders_cap(engine, storyboard_id, scene_index)
+    if not motion_full and not picture_full:
+        return False
+    settled = False
+    with Session(engine) as session:
+        pending = session.scalar(
+            select(SceneTake.id).where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == int(scene_index),
+                SceneTake.kind == "still",
+                (SceneTake.status == "SUBMITTED")
+                | (
+                    (SceneTake.status == "PAID") & (SceneTake.failure_code == UNJUDGED_FAILURE_CODE)
+                ),
+            )
+        )
+    if pending is None and scene_approved_still(engine, storyboard_id, scene_index) is None:
+        if not act:
+            with Session(engine) as session:
+                if _cap_candidates(session, storyboard_id, scene_index):
+                    return True
+        else:
+            kept = _keep_under_renders_cap(
+                engine,
+                storyboard_id,
+                scene_index,
+                registry=registry,
+                correlation_id=correlation_id,
+                ffmpeg_path=ffmpeg_path,
+            )
+            # A change only when the scene now has its picture: a still approved that could
+            # not be the scene's would be approved again on every walk (SAFE-013).
+            settled = (
+                kept is not None
+                and scene_approved_still(engine, storyboard_id, scene_index) is not None
+            )
+    if motion_full or picture_full:
+        # A picture at the cap whose kept still cannot be animated again leaves the motion
+        # nothing to buy either (`renders_cap.motion_spent`, read by the settle itself): the
+        # clip the scene has stands, else her local move (2026-10-16, 87c05891 scene 1).
+        moved = settle_motion_under_cap(
+            engine,
+            storyboard_id,
+            scene_index,
+            correlation_id,
+            act=act,
+            registry=registry,
+            ffmpeg_path=ffmpeg_path,
+        )
+        settled = moved or settled
+    return settled
 
 
 def _approve_by_look(engine: Engine, take_id: str, look: Mapping[str, Any]) -> None:
@@ -1142,10 +1932,19 @@ def _mark_for_rewrite(engine: Engine, verdicts: list[tuple[str, StillReport]]) -
             detail = " ".join(str(row.failure_detail or "").split())
             if detail.startswith(REWRITE_PHRASE):
                 continue
-            row.failure_detail = (
-                f"{REWRITE_PHRASE}: runda nu se mai cumpără pe aceleași cuvinte, Directoarea "
-                f"le rescrie; {detail or 'respinsă'}"
-            )[:500]
+            row.failure_detail = _rewrite_marked(detail)
+
+
+def _rewrite_marked(detail: str) -> str:
+    """A refused take's detail led by the content phrase (`still_gate.REWRITE_PHRASE`), within
+    the take's 500 characters: the ladder reads it as a content refusal whatever follows."""
+    detail = " ".join(str(detail or "").split())
+    if detail.startswith(REWRITE_PHRASE):
+        return detail[:500]
+    return (
+        f"{REWRITE_PHRASE}: runda nu se mai cumpără pe aceleași cuvinte, Directoarea "
+        f"le rescrie; {detail or 'respinsă'}"
+    )[:500]
 
 
 def _settle_round(
@@ -1160,10 +1959,10 @@ def _settle_round(
 ) -> _RoundEnd:
     """One judged round of one scene, the same in the per-request path, the RunPod rounds and
     the paid still redo: the gate's best candidate APPROVED; else, before anything more is
-    bought, her look at the refused ones; else the next step (`still_gate.round_step`) — a
-    re-roll with the violations as positive words, the scene's words sent back to her ladder
-    (a corrected mistake seen again on a picture that shows its plan), the local compositor or
-    the Owner. A round with no candidate at all goes to the Owner («nicio imagine»)."""
+    bought, her look at the refused ones; else the next step (`still_gate.round_step`). A
+    proposed reroll goes to her brief/editor/review ladder before buying replacement words;
+    a second look at the old image cannot approve the new prompt. The local compositor and
+    unavailable measurements retain their own outcomes. No candidates: «nicio imagine»."""
     reports = [report for _take, report in verdicts]
     best = choose_best(reports)
     _set_verdicts(engine, verdicts, best)
@@ -1188,15 +1987,46 @@ def _settle_round(
             _after_approval(engine, storyboard_id, scene, looked, correlation_id)
             return looked
         confirmed = looked.confirmed
-        if step.action == "reroll" and looked.confirmed_content:
-            # 2026-10-12 (the review of 5fc7468, finding 4): she looked and confirmed that the
-            # picture is not what the words should give; a re-roll on the same words was up to
-            # four paid stills of the same mistake, bought blind. The words go back to her
-            # ladder (free); only a technical refusal is re-rolled.
+        if _at_renders_cap(engine, storyboard_id, scene.index):
+            # The Owner's cap (`renders_cap`): its stills made, none passed, her look let none
+            # stand — nothing more is bought, and a still of the scene stands as its picture:
+            # the one the Director chooses among its stills on disk, this round's and earlier
+            # ones' (`_keep_under_renders_cap`); when she cannot choose, the studio keeps the
+            # round's measured closest (`_closest`).
+            measured, _report = _closest(verdicts)
+            kept = _keep_under_renders_cap(
+                engine,
+                storyboard_id,
+                scene.index,
+                registry=registry,
+                correlation_id=correlation_id,
+                first=measured,
+                rule_ro="cea cu cele mai puține abateri măsurate în runda aceasta",
+                lessons=confirmed,
+            )
+            if kept is not None:
+                # She may choose a still of an earlier round: it has no report in this one,
+                # and the buyers read the approval from ``take_id`` and the file from ``path``.
+                report = next((rep for take, rep in verdicts if take == kept.id), None)
+                end = _RoundEnd(
+                    take_id=kept.id,
+                    report=report,
+                    path=str(kept.path) if kept.path else None,
+                    approved_by=CAP_APPROVER,
+                    confirmed=confirmed,
+                )
+                _after_approval(engine, storyboard_id, scene, end, correlation_id)
+                return end
+        if step.action in ("reroll", "needs_owner") and any(
+            report.violations for report in reports
+        ):
+            # Her second look concerns the old image, never the replacement prompt. Every
+            # regeneration goes through the existing brief/editor/review ladder, including
+            # technical faults, unavailable looks and hard limits she cannot overturn.
             step = rewrite_step(
                 scene.index,
-                "Directoarea a privit și confirmă că imaginea nu arată ce cere scena; o altă "
-                "sămânță pe aceleași cuvinte ar cumpăra aceeași greșeală.",
+                "promptul de înlocuire trebuie verificat de Directoare pentru defectul "
+                "constatat înainte de regenerare; o completare automată nu este o revizuire.",
             )
     if step.action == "rewrite":
         _mark_for_rewrite(engine, verdicts)
@@ -1304,12 +2134,15 @@ def _settle_pending(
         end = _settle_round(
             engine, registry, storyboard_id, scene, verdicts, correlation_id, rerolls=0
         )
-        if end.report is not None:
+        if end.take_id is not None:
+            # Approved: one of these candidates, or, past the cap, the still she (or the
+            # studio) kept among the scene's, of whichever round.
+            picture = end.picture()
             return {
                 **end.approved(),
                 "credits": 0,
                 "judged_collected": len(verdicts),
-                "path": str(end.report.path),
+                "path": str(picture) if picture is not None else None,
             }
         if end.outcome is not None and end.outcome.get("rewrite"):
             return {**end.outcome, "judged_collected": len(verdicts)}
@@ -1367,7 +2200,16 @@ def settle_stills(
     fix_check.read_film_reasons(
         engine, registry, storyboard_id=storyboard_id, correlation_id=correlation_id
     )
-    bible, scenes = _read_scenes(engine, storyboard_id)
+    # A scene at the renders cap with stills of its own to choose from is settled here too,
+    # free: the Director chooses (`_read_scenes` with ``choose``).
+    bible, scenes = _read_scenes(
+        engine,
+        storyboard_id,
+        choose=True,
+        registry=registry,
+        correlation_id=correlation_id,
+        ffmpeg_path=ffmpeg_path,
+    )
     results: list[dict[str, Any]] = []
     for scene in scenes:
         if scene.kind != LIVE_KIND or scene.reuse is not None or not scene.pending:
@@ -1481,6 +2323,8 @@ class _StillRounds:
     unverified: bool = False
     #: A one-scene still redo (`assembler._redo_still`): its hold event says so.
     redo: bool = False
+    #: The room of the film's Figure 1 (scene 1's): the figure goes only to its own room.
+    figure_location: str = ""
 
     # ------------------------------------------------------------------ requests
 
@@ -1490,6 +2334,7 @@ class _StillRounds:
             self.figure_one,
             self.adapter,
             first=state.scene.index == self.first_live,
+            figure_location=self.figure_location,
         )
         state.references = tuple(refs)
         state.with_character, state.with_figure = with_character, with_figure
@@ -1502,7 +2347,7 @@ class _StillRounds:
         """Whether this scene's request would carry the film's Figure 1 once scene 1 has its
         still (`_references` with this adapter's reference limits): only such a scene waits."""
         _pictures, _character, with_figure = _references(
-            scene, _ANY_FIGURE, self.adapter, first=False
+            scene, _ANY_FIGURE, self.adapter, first=False, figure_location=self.figure_location
         )
         return with_figure
 
@@ -1551,9 +2396,32 @@ class _StillRounds:
                 "reason": attempts_reason(state.scene.index, state.requests, self.limit),
             }
             return []
+        from app.media.input_guard import (  # noqa: PLC0415
+            REFUSAL_CODE,
+            identity_of_request,
+            record_refusal,
+            refused_before,
+        )
+
+        requests = self._requests(state)
+        identity = identity_of_request(requests[0])
+        with Session(self.engine) as session, session.begin():
+            lock_for_write(session)
+            refusal = refused_before(session, identity)
+            if refusal is not None:
+                record_refusal(session, identity, refusal, correlation_id=self.correlation_id)
+        if refusal is not None:
+            state.outcome = {
+                "status": "NEEDS_OWNER",
+                "failure_code": REFUSAL_CODE,
+                "rewrite": refusal.layer is not None,
+                "layer": refusal.layer,
+                "reason": refusal.reason_ro,
+            }
+            return []
         state.requests += 1
         state.verdicts, state.failed = [], []
-        return self._requests(state)
+        return requests
 
     # ------------------------------------------------------------------ callbacks
 
@@ -1731,9 +2599,10 @@ class _StillRounds:
             self.correlation_id,
             rerolls=state.rerolls,
         )
-        if end.report is not None:
-            if state.scene.index == self.first_live:
-                self.figure_one = Path(end.report.path).read_bytes()
+        if end.take_id is not None:
+            picture = end.picture()
+            if state.scene.index == self.first_live and picture is not None:
+                self.figure_one = picture.read_bytes()
             state.outcome = end.approved()
             return None
         if end.again:
@@ -1778,6 +2647,7 @@ class _StillRounds:
 
     # ----------------------------------------------------------------------- run
 
+    @purchase_flow
     def run(
         self,
         deferred: list[tuple[_Scene, dict[str, Any]]],
@@ -1785,8 +2655,8 @@ class _StillRounds:
         permit: Any,
         guard: PurchaseGuard | None,
         stopped: Callable[[], str | None],
-    ) -> dict[str, Any]:
-        from app.media.gpu_batch import run_rounds  # noqa: PLC0415 - gpu_batch reads runpod
+    ) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
+        from app.workflows.director_upkeep import director_wait_work  # noqa: PLC0415
 
         buying = {scene.index for scene, _entry in deferred}
         first: list[BatchRequest] = []
@@ -1822,15 +2692,17 @@ class _StillRounds:
             first += self._send(state)
         summary: dict[str, Any] = {"rounds": 0, "stopped": None, "cap_stop": None}
         if first:
-            summary = run_rounds(
-                self.engine,
-                self.adapter,
+            summary = yield RoundWork(
+                engine=self.engine,
+                adapter=self.adapter,
                 permit=permit,
                 purpose="image",
                 first_round=first,
                 next_round=self.next_round,
                 price_credits=self.price,
-                cap_left=lambda: float(self.ledger.cap) - self.ledger.committed,
+                cap_left=self.ledger.room,
+                # The budget hold grows to each round before it is fitted (`StepHold`).
+                make_room=self.ledger.round_room if self.ledger.hold is not None else None,
                 guard=guard,
                 stopped=stopped,
                 on_submitted=self.submitted,
@@ -1840,7 +2712,9 @@ class _StillRounds:
                     self.adapter, credit_usd=self.credit_usd
                 ),
                 on_unsent=self.unsent,
+                on_wait=director_wait_work(self.engine, self.registry),
             )
+        budget_cut(summary, self.ledger.budget_words)
         if summary.get("stopped") and summary.get("stopped") != UNCERTAIN:
             self.stop = self.stop or summary["stopped"]
         for index, state in self.states.items():
@@ -1909,6 +2783,7 @@ def run_stills_stage(
     margin: float | None = None,
     unasked: bool = True,
     timezone: str | None = None,
+    budget_hold: Any = None,
 ) -> dict[str, Any]:
     """The stills step of one film, bought only under the Owner's yes for this plan.
 
@@ -1933,6 +2808,10 @@ def run_stills_stage(
     `stills_plan`; the shooting sheet may pass ``plan_hash_of`` so its own sheet hash is the
     one the yes is bound to. Raises `StillsStageRefused` when nothing may be bought; otherwise
     returns what was bought and judged, per scene.
+
+    ``budget_hold`` is the sheet step's hold on the budgets (`shooting_sheet.StepHold`): it
+    holds the step's first round, and is grown before every later purchase or round; what it
+    cannot hold is not bought, and the step ends on the budget's words.
     """
     from app.economy.credits import record_measured_prices  # noqa: PLC0415
     from app.runbook.services import stop_requested  # noqa: PLC0415 - runbook imports media
@@ -1980,7 +2859,14 @@ def run_stills_stage(
     fix_check.read_film_reasons(
         engine, registry, storyboard_id=storyboard_id, correlation_id=correlation_id
     )
-    bible, scenes = _read_scenes(engine, storyboard_id)
+    bible, scenes = _read_scenes(
+        engine,
+        storyboard_id,
+        choose=True,
+        registry=registry,
+        correlation_id=correlation_id,
+        ffmpeg_path=ffmpeg_path,
+    )
     live = [scene for scene in scenes if scene.kind == LIVE_KIND]
     to_buy = {int(index) for index in plan["to_buy"]}
 
@@ -2000,7 +2886,13 @@ def run_stills_stage(
             )
     findings = lint_film(
         [
-            LintScene(scene=scene.index, kind=scene.kind, still_prompt=scene.words)
+            LintScene(
+                scene=scene.index,
+                kind=scene.kind,
+                still_prompt=scene.words,
+                contract={"still_model_id": model_id},
+                composition_issues=scene.prompt_issues if scene.index in to_buy else (),
+            )
             for scene in scenes
         ],
         bible=bible,
@@ -2128,10 +3020,11 @@ def run_stills_stage(
     per_image = per_request / STILL_CANDIDATES
     work_dir = (storage_root or DEFAULT_STORAGE_ROOT) / storyboard_id / "stills"
     work_dir.mkdir(parents=True, exist_ok=True)
-    ledger = _Ledger(cap=cap, meter=meter if meter is not None else SpendMeter())
+    ledger = _Ledger(cap=cap, meter=meter if meter is not None else SpendMeter(), hold=budget_hold)
     limit = max_paid_attempts_per_scene()
     figure_one: bytes | None = None
     first_live = live[0].index if live else None
+    figure_location = live[0].location if live else ""
     results: list[dict[str, Any]] = []
     stopped: str | None = None
     previous_kind: str | None = None
@@ -2177,7 +3070,7 @@ def run_stills_stage(
                 rules=_bible_rules(bible),
             )
             entry.update(settled)
-            if settled["status"] == "APPROVED" and scene.index == first_live:
+            if settled["status"] == "APPROVED" and scene.index == first_live and settled["path"]:
                 figure_one = Path(str(settled["path"])).read_bytes()
             entry.pop("path", None)
             continue
@@ -2199,7 +3092,11 @@ def run_stills_stage(
             # What each still of this scene is checked to have corrected (the register).
             entry["must_fix"] = [item["finding"] for item in scene.must_fix]
         references, with_character, with_figure = _references(
-            scene, figure_one, image_adapter, first=scene.index == first_live
+            scene,
+            figure_one,
+            image_adapter,
+            first=scene.index == first_live,
+            figure_location=figure_location,
         )
         entry["references_sent"] = references_sent(with_character, with_figure)
         instruction = ""
@@ -2221,14 +3118,40 @@ def run_stills_stage(
                 stopped = lowered
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
                 break
+            if _at_renders_cap(engine, storyboard_id, scene.index):
+                # The Owner's renders cap, counted again before every request (2026-10-16:
+                # «maxim încă o randare»): a charged vendor failure is a render too, so the
+                # technical retry after one is not bought past the cap. What the scene has
+                # stands under it (the still it has, or the one the Director chooses among its
+                # stills on disk), else nothing more is bought.
+                kept = _keep_under_renders_cap(
+                    engine,
+                    storyboard_id,
+                    scene.index,
+                    registry=registry,
+                    correlation_id=correlation_id,
+                    ffmpeg_path=ffmpeg_path,
+                )
+                if kept is None:
+                    with Session(engine) as session:
+                        his_no = _owner_rejected_still(session, storyboard_id, scene.index)
+                    outcome = {
+                        "status": "NOT_BOUGHT",
+                        "reason": capped_reason(scene.index, owner_rejected=his_no),
+                    }
+                    break
+                if scene.index == first_live and kept.path:
+                    figure_one = Path(kept.path).read_bytes()
+                outcome = _RoundEnd(take_id=kept.id, approved_by=CAP_APPROVER).approved()
+                break
             if requests >= limit:
                 outcome = {
                     "status": "NEEDS_OWNER",
                     "reason": attempts_reason(scene.index, requests, limit),
                 }
                 break
-            if ledger.committed + per_request > ledger.cap:
-                stopped = (
+            if per_request > ledger.room(per_request) + 1e-9:
+                stopped = ledger.budget_words(per_request) or (
                     f"STOPPED_AT_CAP: încă o cerere ({per_request} credite) ar depăși plafonul "
                     f"aprobat de {ledger.cap} credite (deja {ledger.committed:.0f})."
                 )
@@ -2289,7 +3212,13 @@ def run_stills_stage(
             try:
                 bind_scene(image_adapter, storyboard_id, scene.index, "image")
                 candidates, quoted = _buy(
-                    image_adapter, prompt, references, STILL_CANDIDATES, on_submitted=submitted
+                    image_adapter,
+                    prompt,
+                    references,
+                    STILL_CANDIDATES,
+                    on_submitted=submitted,
+                    exact_prompt=scene.prompt_format == "editor_final_v1",
+                    negative_prompt=scene.negative,
                 )
             except TaskStillOpen:
                 # Accepted (and charged) and not delivered: the takes stay SUBMITTED with
@@ -2357,6 +3286,7 @@ def run_stills_stage(
                 break
             previous_kind = None
             ledger.committed += max(float(per_request), float(quoted or 0))
+            ledger.hold_spent()
             unverified = unverified or (
                 bool(references)
                 and not bool(getattr(image_adapter, "REFERENCE_IMAGE_VERIFIED", False))
@@ -2436,9 +3366,10 @@ def run_stills_stage(
                 correlation_id,
                 rerolls=rerolls,
             )
-            if end.report is not None:
-                if scene.index == first_live:
-                    figure_one = Path(end.report.path).read_bytes()
+            if end.take_id is not None:
+                picture = end.picture()
+                if scene.index == first_live and picture is not None:
+                    figure_one = picture.read_bytes()
                 outcome = end.approved()
                 break
             if end.again:
@@ -2490,6 +3421,7 @@ def run_stills_stage(
             model_id=model_id,
             first_live=first_live,
             figure_one=figure_one,
+            figure_location=figure_location,
             per_image=per_image,
             overhead=float(prices.round_overhead("image", model_id)),
             credit_usd=float(prices.credit_usd),

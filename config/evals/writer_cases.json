@@ -1,0 +1,2377 @@
+{
+ "version": 1,
+ "made_by": "scripts/writer_eval.py --discover",
+ "made_at": "2026-10-16T09:33:40.936285+00:00",
+ "since": "2026-10-11",
+ "backups_scanned": [
+  "studio-20261011T003024Z.db",
+  "studio-20261012T003016Z.db",
+  "studio-20261013T003017Z.db",
+  "studio-20261014T003024Z.db",
+  "studio-20261015T003018Z.db",
+  "studio-20261016T015919Z.db"
+ ],
+ "note_ro": "Propunere de cazuri, de revizuit: o zi de serial închisă, un subiect factual cu afirmații SUSȚINUTE și o teză, perechile de aur. Textele «reference», «a» și «b» sunt înghețate aici: pe ele răspunde Necunoscutul și tot pe ele Proprietarul. «state» spune dacă scriitorul primește ziua din copia de dinainte de scriere (before_write) sau de după (after_write, cu memoria serialului readusă din continuity_before).",
+ "cases": [
+  {
+   "id": "serial-2026-10-11",
+   "kind": "serial",
+   "backup": "studio-20261012T003016Z.db",
+   "log_id": "d1a4b42b-ac2f-470d-98fe-9e18d297c9e5",
+   "business_date": "2026-10-11",
+   "state": "after_write",
+   "writer_model": "kimi-k3",
+   "language": "en",
+   "drafts_that_day": 3,
+   "reference": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "serial",
+    "id": "043317d3-591a-47e3-9a16-c9ff7017a711",
+    "text_key": "episode:043317d3-591a-47e3-9a16-c9ff7017a711",
+    "title": "The Zero Script Club",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": null,
+    "created_at": "2026-10-11T10:43:19.444602+00:00",
+    "view": {
+     "kind": "serial",
+     "title": "The Zero Script Club",
+     "beats": [
+      {
+       "scene": "Early morning, empty writers' room, Marcus alone at his desk, fingers hovering over keys, a blank screen glow on his face.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Zero scripts. That is my whole morning report."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Read it to me anyway, Marcus."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah at her desk, morning light, a neat stack of status notes; Marcus leaning in the doorway, hoodie zipped, defensive.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Zero written, zero approved, zero boards. Clean sweep."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "And the serial?"
+        }
+       ]
+      },
+      {
+       "scene": "Same office, tighter shot on Marcus, hands open, half a pitch already forming and dying.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Yesterday's episode got rejected. No finished day after it means nothing to tell."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "So the serial waits for a day worth telling."
+        }
+       ]
+      },
+      {
+       "scene": "Ground floor, quiet office, Nadia at her ledger desk, brass pen on its chain, two cups of tea cooling.",
+       "lines": [
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "My close went out twice today. Same figures, same period, two letters."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Within limit, both times?"
+        }
+       ]
+      },
+      {
+       "scene": "Nadia holds her pen still; Sarah stands opposite, reading nothing, listening.",
+       "lines": [
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "Within limit. Nothing posts twice, Sarah. That is the job."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Then I am asking you to look again, officially."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah at the doorway of the render bay, Kael's empty chair visible behind her; she speaks toward the room, Marcus trailing behind her.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Four subjects sit with failed renders. Kael gets a letter too."
+        },
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "So accounting gets audited and the edit bay gets audited."
+        }
+       ]
+      },
+      {
+       "scene": "Back in Sarah's office, the stack of morning notes squared on the desk; Marcus at the whiteboard, marker up, nothing written yet.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "One thing at a time. The day is five hours old and already investigated."
+        },
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Okay, hear me out. That is the episode."
+        }
+       ]
+      },
+      {
+       "scene": "Marcus back at his own desk, typing the first line; the blank screen finally has words on it, his grin barely held in.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Zero scripts this morning. One by lunch. This is the short one."
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "continuity_before": {
+    "from_backup": "studio-20261011T003024Z.db",
+    "replayed": [],
+    "row": {
+     "version": 1,
+     "canon_episode_number": 0,
+     "threads_json": [],
+     "recurring_json": [],
+     "summaries_json": []
+    },
+    "plan_episode": null
+   }
+  },
+  {
+   "id": "serial-2026-10-12",
+   "kind": "serial",
+   "backup": "studio-20261013T003017Z.db",
+   "log_id": "c7b29692-b2c8-49f4-a81d-404db1316c13",
+   "business_date": "2026-10-12",
+   "state": "after_write",
+   "writer_model": "kimi-k3",
+   "language": "en",
+   "drafts_that_day": 3,
+   "reference": null,
+   "continuity_before": {
+    "from_backup": "studio-20261012T003016Z.db",
+    "replayed": [],
+    "row": {
+     "version": 2,
+     "canon_episode_number": 1,
+     "threads_json": [
+      {
+       "id": "T1",
+       "text": "Will Nadia's second look at the twice-sent accounting close confirm the figures, and will Kael find why four subjects' renders failed QC?",
+       "opened_in": 1
+      }
+     ],
+     "recurring_json": [
+      "Marcus claims every draft is 'the short one'"
+     ],
+     "summaries_json": [
+      {
+       "episode_number": 1,
+       "episode_id": "043317d3-591a-47e3-9a16-c9ff7017a711",
+       "title": "The Zero Script Club",
+       "summary": "The morning status round lands on Sarah's desk, and Marcus has to report the emptiest one: zero scripts written, zero approved, zero storyboards, and the serial stuck because yesterday's episode was rejected and no finished day exists after it to tell. Meanwhile Nadia's accounting close went out twice with the same in-limit figures, and Sarah formally asks her to look again; four older subjects sit with failed renders, so Kael gets an investigation letter too. With half the studio under review before six in the morning, Marcus realises the day itself is the story and starts writing it.",
+       "business_date": "2026-10-11"
+      }
+     ]
+    },
+    "plan_episode": {
+     "id": "043317d3-591a-47e3-9a16-c9ff7017a711",
+     "log_id": "d1a4b42b-ac2f-470d-98fe-9e18d297c9e5",
+     "title": "The Zero Script Club",
+     "created_at": "2026-10-11T10:43:19.444602+00:00",
+     "next_episode": {
+      "premise": "The studio waits on two answers at once: Nadia's re-check of the double close and Kael's hunt for the failed renders, while Marcus drafts the episode about the wait.",
+      "cold_open_line": "Two letters out, zero answers back.",
+      "open_question": "What did Nadia and Kael find when they looked?",
+      "threads_to_pay_off": [],
+      "status": "PLANNED",
+      "planned_on": "2026-10-11"
+     }
+    }
+   }
+  },
+  {
+   "id": "serial-2026-10-13",
+   "kind": "serial",
+   "backup": "studio-20261014T003024Z.db",
+   "log_id": "1597acdb-ffa6-4d17-967f-52b256ac2035",
+   "business_date": "2026-10-13",
+   "state": "after_write",
+   "writer_model": "kimi-k3",
+   "language": "en",
+   "drafts_that_day": 3,
+   "reference": null,
+   "continuity_before": {
+    "from_backup": "studio-20261013T003017Z.db",
+    "replayed": [],
+    "row": {
+     "version": 2,
+     "canon_episode_number": 1,
+     "threads_json": [
+      {
+       "id": "T1",
+       "text": "Will Nadia's second look at the twice-sent accounting close confirm the figures, and will Kael find why four subjects' renders failed QC?",
+       "opened_in": 1
+      }
+     ],
+     "recurring_json": [
+      "Marcus claims every draft is 'the short one'"
+     ],
+     "summaries_json": [
+      {
+       "episode_number": 1,
+       "episode_id": "043317d3-591a-47e3-9a16-c9ff7017a711",
+       "title": "The Zero Script Club",
+       "summary": "The morning status round lands on Sarah's desk, and Marcus has to report the emptiest one: zero scripts written, zero approved, zero storyboards, and the serial stuck because yesterday's episode was rejected and no finished day exists after it to tell. Meanwhile Nadia's accounting close went out twice with the same in-limit figures, and Sarah formally asks her to look again; four older subjects sit with failed renders, so Kael gets an investigation letter too. With half the studio under review before six in the morning, Marcus realises the day itself is the story and starts writing it.",
+       "business_date": "2026-10-11"
+      }
+     ]
+    },
+    "plan_episode": {
+     "id": "043317d3-591a-47e3-9a16-c9ff7017a711",
+     "log_id": "d1a4b42b-ac2f-470d-98fe-9e18d297c9e5",
+     "title": "The Zero Script Club",
+     "created_at": "2026-10-11T10:43:19.444602+00:00",
+     "next_episode": {
+      "premise": "The studio waits on two answers at once: Nadia's re-check of the double close and Kael's hunt for the failed renders, while Marcus drafts the episode about the wait.",
+      "cold_open_line": "Two letters out, zero answers back.",
+      "open_question": "What did Nadia and Kael find when they looked?",
+      "threads_to_pay_off": [],
+      "status": "PLANNED",
+      "planned_on": "2026-10-11"
+     }
+    }
+   }
+  },
+  {
+   "id": "serial-2026-10-14",
+   "kind": "serial",
+   "backup": "studio-20261015T003018Z.db",
+   "log_id": "1dd80a71-de23-4124-aee1-f66ba0617ab1",
+   "business_date": "2026-10-14",
+   "state": "before_write",
+   "writer_model": "kimi-k3",
+   "language": "en",
+   "drafts_that_day": 2,
+   "reference": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "serial",
+    "id": "88c27e33-310d-4767-a5e1-c31b460b0235",
+    "text_key": "episode:88c27e33-310d-4767-a5e1-c31b460b0235",
+    "title": "Twenty-Eight Rewrites Before Breakfast",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": 38,
+    "created_at": "2026-10-15T05:02:13.868651+00:00",
+    "view": {
+     "kind": "serial",
+     "title": "Twenty-Eight Rewrites Before Breakfast",
+     "beats": [
+      {
+       "scene": "Static medium close-up single on Kael at his desk in the render bay, floor one; the camera does not move, zoom or reframe at any point, and Kael stays centered from the first frame to the last. Kael sits frozen mid-scroll with one hand hovering over the mouse and his eyes on a dark monitor, with sandy blonde spiky hair, a single-ear comms headset, an amber work shirt with rolled-up sleeves and dark cargo pants. Every monitor, paper and notebook in frame is completely blank, unruled and unmarked, with no lines, no writing, no letters. Dim night light, pale monitor glow on his face.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "If scene two fails tonight, the film dies."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Thirteen rewrite demands. Same scene. Same film."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Sarah at her executive desk in the penthouse, floor four; the camera does not move, zoom or reframe at any point, and Sarah stays centered from the first frame to the last. Sarah sits very upright with her hands folded on the desk, with a brunette professional bob with warm highlights, a navy two-piece executive blazer over a white collared shirt and a sky-blue tie. Every paper, folder and screen on the desk is completely blank, unruled and unmarked, with no lines, no writing, no letters. Cool night light, city glow through the window behind her.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Quality control failed the film again."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The editor rewrites scene two, or nothing ships. However many letters that takes."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Kael at his render-bay desk; the camera does not move, zoom or reframe at any point, and Kael stays centered from the first frame to the last. Kael leans back with his arms crossed and his headset pushed up off one ear, with sandy blonde spiky hair, a single-ear comms headset, an amber work shirt with rolled-up sleeves and dark cargo pants. Every screen and paper in frame is completely blank, unruled and unmarked, with no lines, no writing, no letters. Same dim night light.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Fifteen rewrite demands on scene four. The Zero Script Club."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "I reply, rewrite, re-render. The title is getting personal."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Sarah at her executive desk; the camera does not move, zoom or reframe at any point, and Sarah stays centered from the first frame to the last. Sarah holds a single sheet of paper up at arm's length and looks at it flatly, with a brunette professional bob with warm highlights, a navy two-piece executive blazer over a white collared shirt and a sky-blue tie. The sheet, and every paper and screen in frame, is completely blank, unruled and unmarked, with no lines, no writing, no letters. Cool night light, city glow at the window.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "A formal letter now. The film awaits the Director's decision."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Fifteen notes was the decision. The letter is late."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Dr. Aris at his research desk, floor three; the camera does not move, zoom or reframe at any point, and Dr. Aris stays centered from the first frame to the last. Dr. Aris leans forward with his palms flat on the desk and a small apologetic smile, with dark hair with silver temples, thin circular silver spectacles with white lens glare, and an immaculate white laboratory coat over a teal button-down shirt. Every notebook and screen in frame is completely blank, unruled and unmarked, with no lines, no writing, no letters. Soft even lab light.",
+       "lines": [
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "I found something interesting. One topic proposed, one refused."
+        },
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "The gravitational-wave film. Its ending never answered the question the opening asked."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Dr. Aris at his research desk; the camera does not move, zoom or reframe at any point, and Dr. Aris stays centered from the first frame to the last. Dr. Aris sits back and gives a small shrug with his hands open, with dark hair with silver temples, thin circular silver spectacles with white lens glare, and an immaculate white laboratory coat over a teal button-down shirt. Every notebook and screen in frame is completely blank, unruled and unmarked, with no lines, no writing, no letters. First grey morning light at the lab window.",
+       "lines": [
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "Four pages, four sources, twenty-four claims verified. Zero rejected."
+        },
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "Scripting reports zero scripts. Their next draft is the short one, apparently."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Sarah at her executive desk; the camera does not move, zoom or reframe at any point, and Sarah stays centered from the first frame to the last. Sarah stands behind her desk with one hand resting on a closed ledger, with a brunette professional bob with warm highlights, a navy two-piece executive blazer over a white collared shirt and a sky-blue tie. The ledger, every paper and the desk screen in frame are completely blank, unruled and unmarked, with no lines, no writing, no letters. Grey dawn light through the penthouse window.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Five films wait in quality control. The close is within limit."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Bring me the numbers tomorrow. All of them. Even the zeros."
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "continuity_before": {
+    "from_backup": "studio-20261015T003018Z.db",
+    "replayed": [],
+    "row": {
+     "version": 2,
+     "canon_episode_number": 1,
+     "threads_json": [
+      {
+       "id": "T1",
+       "text": "Will Nadia's second look at the twice-sent accounting close confirm the figures, and will Kael find why four subjects' renders failed QC?",
+       "opened_in": 1
+      }
+     ],
+     "recurring_json": [
+      "Marcus claims every draft is 'the short one'"
+     ],
+     "summaries_json": [
+      {
+       "episode_number": 1,
+       "episode_id": "043317d3-591a-47e3-9a16-c9ff7017a711",
+       "title": "The Zero Script Club",
+       "summary": "The morning status round lands on Sarah's desk, and Marcus has to report the emptiest one: zero scripts written, zero approved, zero storyboards, and the serial stuck because yesterday's episode was rejected and no finished day exists after it to tell. Meanwhile Nadia's accounting close went out twice with the same in-limit figures, and Sarah formally asks her to look again; four older subjects sit with failed renders, so Kael gets an investigation letter too. With half the studio under review before six in the morning, Marcus realises the day itself is the story and starts writing it.",
+       "business_date": "2026-10-11"
+      }
+     ]
+    },
+    "plan_episode": {
+     "id": "043317d3-591a-47e3-9a16-c9ff7017a711",
+     "log_id": "d1a4b42b-ac2f-470d-98fe-9e18d297c9e5",
+     "title": "The Zero Script Club",
+     "created_at": "2026-10-11T10:43:19.444602+00:00",
+     "next_episode": {
+      "premise": "The studio waits on two answers at once: Nadia's re-check of the double close and Kael's hunt for the failed renders, while Marcus drafts the episode about the wait.",
+      "cold_open_line": "Two letters out, zero answers back.",
+      "open_question": "What did Nadia and Kael find when they looked?",
+      "threads_to_pay_off": [],
+      "status": "PLANNED",
+      "planned_on": "2026-10-11"
+     }
+    }
+   }
+  },
+  {
+   "id": "serial-2026-10-15",
+   "kind": "serial",
+   "backup": "studio-20261015T003018Z.db",
+   "log_id": "73f3984c-6ec6-4f78-921e-b6c45f664bb8",
+   "business_date": "2026-10-15",
+   "state": "before_write",
+   "writer_model": "gpt-oss:120b",
+   "language": "en",
+   "drafts_that_day": 3,
+   "reference": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "serial",
+    "id": "e241f639-94a9-4e98-b9a6-12f8f3fc120a",
+    "text_key": "episode:e241f639-94a9-4e98-b9a6-12f8f3fc120a",
+    "title": "Zero Scripts, Stalled Queue",
+    "status": "APPROVED",
+    "verdict": "FAIL",
+    "editorial_total": null,
+    "created_at": "2026-10-15T14:19:18.098352+00:00",
+    "view": {
+     "kind": "serial",
+     "title": "Zero Scripts, Stalled Queue",
+     "beats": [
+      {
+       "scene": "Marcus stands at his desk, facing the viewer, hands spread, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Zero scripts, zero storyboards— nothing moved today, again, the desk stays silent."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah sits at her desk, facing the viewer, hands on a tablet, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "We logged five publications across two channels, but none have cleared quality control yet, leaving the pipeline idle."
+        }
+       ]
+      },
+      {
+       "scene": "Nadia leans over her ledger at her desk, facing the viewer, hands on the book, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "The books are within today’s limit, reference today, all figures reconcile perfectly, no anomalies spotted."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah sits at her desk, facing the viewer, hands on a notepad, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "We had zero new topics proposed, and one was rejected as a duplicate."
+        }
+       ]
+      },
+      {
+       "scene": "Marcus stands at his desk, facing the viewer, hands on a notepad, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Six subjects sit stuck in QC, and five older films remain locked, zero output today, the queue never moves."
+        }
+       ]
+      },
+      {
+       "scene": "Marcus stands at his desk, facing the viewer, hands on a notepad, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Kael reports the render bay has no new material, so nothing to edit today, the screen stays black."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah sits at her desk, facing the viewer, hands on a tablet, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "I'll brief the Owner now; we stay on hold until the decision arrives, and the schedule remains flat, no progress."
+        }
+       ]
+      },
+      {
+       "scene": "Marcus stands at his desk, facing the viewer, hands folded, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Zero again tomorrow, maybe we'll finally break the streak and actually get something moving forward."
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "continuity_before": {
+    "from_backup": "studio-20261015T003018Z.db",
+    "replayed": [
+     "88c27e33-310d-4767-a5e1-c31b460b0235"
+    ],
+    "row": {
+     "version": 3,
+     "canon_episode_number": 2,
+     "threads_json": [
+      {
+       "id": "T1",
+       "text": "Will Nadia's second look at the twice-sent accounting close confirm the figures, and will Kael find why four subjects' renders failed QC?",
+       "opened_in": 1
+      },
+      {
+       "id": "T2",
+       "text": "Will the Kelvin film's scene two ever pass quality control, or does it die in rewrite?",
+       "opened_in": 2
+      }
+     ],
+     "recurring_json": [
+      "Marcus claims every draft is 'the short one'"
+     ],
+     "summaries_json": [
+      {
+       "episode_number": 1,
+       "episode_id": "043317d3-591a-47e3-9a16-c9ff7017a711",
+       "title": "The Zero Script Club",
+       "summary": "The morning status round lands on Sarah's desk, and Marcus has to report the emptiest one: zero scripts written, zero approved, zero storyboards, and the serial stuck because yesterday's episode was rejected and no finished day exists after it to tell. Meanwhile Nadia's accounting close went out twice with the same in-limit figures, and Sarah formally asks her to look again; four older subjects sit with failed renders, so Kael gets an investigation letter too. With half the studio under review before six in the morning, Marcus realises the day itself is the story and starts writing it.",
+       "business_date": "2026-10-11"
+      },
+      {
+       "episode_number": 2,
+       "episode_id": "88c27e33-310d-4767-a5e1-c31b460b0235",
+       "title": "Twenty-Eight Rewrites Before Breakfast",
+       "summary": "Overnight, quality control fails a film again, and Sarah's answer is to keep sending rewrite demands — thirteen on one scene of the Kelvin film, fifteen on scene four of The Zero Script Club — while Kael answers every one from the render bay. A formal letter then arrives asking for the Director's decision on the film, which Sarah notes is late, since the fifteen demands were the decision. At dawn Dr. Aris reports his one proposed topic was turned down because its ending never answered the question the opening asked, though his verification round was the day's only clean sweep: four pages, four sources, twenty-four claims, zero rejections, while scripting reported zero scripts. Sarah closes the morning with five films still waiting in quality control, the accounting close within limit, and a request for all of tomorrow's numbers, including the zeros.",
+       "business_date": "2026-10-14"
+      }
+     ]
+    },
+    "plan_episode": {
+     "id": "88c27e33-310d-4767-a5e1-c31b460b0235",
+     "log_id": "1dd80a71-de23-4124-aee1-f66ba0617ab1",
+     "title": "Twenty-Eight Rewrites Before Breakfast",
+     "created_at": "2026-10-15T05:02:13.868651+00:00",
+     "next_episode": {
+      "premise": "The studio waits to hear whether the latest rewrite of scene two finally passed quality control, while five older films still sit on failed renders.",
+      "cold_open_line": "Scene two, twenty-ninth version, went in an hour ago.",
+      "open_question": "Did scene two pass, and do any of the five stalled films move?",
+      "threads_to_pay_off": [
+       "T1"
+      ],
+      "status": "PLANNED",
+      "planned_on": "2026-10-14"
+     }
+    }
+   }
+  },
+  {
+   "id": "serial-2026-10-16",
+   "kind": "serial",
+   "backup": "studio-20261016T015919Z.db",
+   "log_id": "9962d8f6-40cf-446b-ac8d-aa011954e086",
+   "business_date": "2026-10-16",
+   "state": "after_write",
+   "writer_model": "mistral-large-4",
+   "language": "en",
+   "drafts_that_day": 4,
+   "reference": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "serial",
+    "id": "b8684fc5-7086-4784-b26d-52db9d21c752",
+    "text_key": "episode:b8684fc5-7086-4784-b26d-52db9d21c752",
+    "title": "Zero Scripts, Blocked Log",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": null,
+    "created_at": "2026-10-15T23:07:02.513417+00:00",
+    "view": {
+     "kind": "serial",
+     "title": "Zero Scripts, Blocked Log",
+     "beats": [
+      {
+       "scene": "The Executive Penthouse on floor 4 in the small hours; dark walls, a long executive desk, and tall windows with the night sky behind them; Sarah sits at the desk facing the viewer, her right hand resting on a closed storyboard folder, her left hand flat on the desk surface; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; no jewellery is worn; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "I wanted a quiet night."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The day's log ended blocked."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Zero scripts. Zero approvals. Zero storyboards."
+        }
+       ]
+      },
+      {
+       "scene": "The Executive Penthouse on floor 4 in the small hours; dark walls, a long executive desk, and tall windows with the night sky behind them; Sarah sits at the desk facing the viewer, her hands resting flat on the desk surface with the closed storyboard folder beside her right hand; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; no jewellery is worn; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The serial has nothing new to tell."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The last day told was yesterday."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Six subjects sit with failed renders."
+        }
+       ]
+      },
+      {
+       "scene": "The Accounting & Treasury office on the ground floor; pale walls, a wooden desk, and a single shaded lamp over it; Nadia sits at the desk facing the viewer, her right hand holding a small brass pen above the desk, her left hand resting on a closed ledger; she wears a plum blouse under a dark violet cardigan; her chestnut hair is pulled into a low bun; she wears round tortoiseshell glasses, and a small brass pen on a chain is her only jewellery; the camera does not move, zoom or reframe at any point, and Nadia stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "Daily 0.84. Within limit."
+        },
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "Reported to the Director."
+        },
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "The books close. The day doesn't."
+        },
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "The totals are yours."
+        }
+       ]
+      },
+      {
+       "scene": "The Executive Penthouse on floor 4 in the small hours; dark walls, a long executive desk, and tall windows with the night sky behind them; Sarah stands beside the desk facing the viewer, her right hand resting on the closed storyboard folder on the desk, her left hand at her side; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; no jewellery is worn; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Media production skipped today."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "I take the remediation myself."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "I direct. I don't storyboard."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The speed of light storyboard. Scene one."
+        }
+       ]
+      },
+      {
+       "scene": "The Video & Render Bay on floor 1 in the small hours; dark walls, a long editing desk, rows of dark render racks with their small lights, and cable runs along the floor; Kael sits at the editing desk facing the viewer, his hands resting on the keyboard in front of him before a dark monitor; he wears an amber work shirt with the sleeves rolled up and dark cargo pants; his sandy blonde hair is spiky and short; a single-ear comms headset sits over his left ear; the camera does not move, zoom or reframe at any point, and Kael stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Two investigations. One empty bay."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "The Director took the storyboard."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "My round was empty anyway."
+        }
+       ]
+      },
+      {
+       "scene": "The Executive Penthouse on floor 4 in the small hours; dark walls, a long executive desk, and tall windows with the night sky behind them; Sarah sits at the desk facing the viewer, her right hand resting on the closed storyboard folder, her left hand flat on the desk surface; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; no jewellery is worn; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Scene one is mine by morning."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The work moved desks. The log didn't."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "My evening went with it."
+        }
+       ]
+      },
+      {
+       "scene": "The Video & Render Bay on floor 1 in the small hours; dark walls, a long editing desk, rows of dark render racks with their small lights, and cable runs along the floor; Kael sits at the editing desk facing the viewer, his hands resting on the keyboard in front of him before a dark monitor; he wears an amber work shirt with the sleeves rolled up and dark cargo pants; his sandy blonde hair is spiky and short; a single-ear comms headset sits over his left ear; the camera does not move, zoom or reframe at any point, and Kael stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Why did the renders fail? Mine now."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "No new material. Nothing to check."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Two questions. Zero material."
+        }
+       ]
+      },
+      {
+       "scene": "The Executive Penthouse on floor 4 in the small hours; dark walls, a long executive desk, and tall windows with the night sky behind them; Sarah sits at the desk facing the viewer, her hands resting flat on the desk surface with the closed storyboard folder beside her right hand; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; no jewellery is worn; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The log will not close. I will."
+        }
+       ]
+      }
+     ]
+    },
+    "owner_note": "The Owner, 2026-10-16, on the approved version: «Eu nu înțeleg nimic»."
+   },
+   "continuity_before": {
+    "from_backup": "studio-20261015T003018Z.db",
+    "replayed": [
+     "88c27e33-310d-4767-a5e1-c31b460b0235",
+     "e241f639-94a9-4e98-b9a6-12f8f3fc120a"
+    ],
+    "row": {
+     "version": 4,
+     "canon_episode_number": 3,
+     "threads_json": [
+      {
+       "id": "T1",
+       "text": "Will Nadia's second look at the twice-sent accounting close confirm the figures, and will Kael find why four subjects' renders failed QC?",
+       "opened_in": 1
+      },
+      {
+       "id": "T2",
+       "text": "Will the Kelvin film's scene two ever pass quality control, or does it die in rewrite?",
+       "opened_in": 2
+      }
+     ],
+     "recurring_json": [
+      "Marcus claims every draft is 'the short one'"
+     ],
+     "summaries_json": [
+      {
+       "episode_number": 1,
+       "episode_id": "043317d3-591a-47e3-9a16-c9ff7017a711",
+       "title": "The Zero Script Club",
+       "summary": "The morning status round lands on Sarah's desk, and Marcus has to report the emptiest one: zero scripts written, zero approved, zero storyboards, and the serial stuck because yesterday's episode was rejected and no finished day exists after it to tell. Meanwhile Nadia's accounting close went out twice with the same in-limit figures, and Sarah formally asks her to look again; four older subjects sit with failed renders, so Kael gets an investigation letter too. With half the studio under review before six in the morning, Marcus realises the day itself is the story and starts writing it.",
+       "business_date": "2026-10-11"
+      },
+      {
+       "episode_number": 2,
+       "episode_id": "88c27e33-310d-4767-a5e1-c31b460b0235",
+       "title": "Twenty-Eight Rewrites Before Breakfast",
+       "summary": "Overnight, quality control fails a film again, and Sarah's answer is to keep sending rewrite demands — thirteen on one scene of the Kelvin film, fifteen on scene four of The Zero Script Club — while Kael answers every one from the render bay. A formal letter then arrives asking for the Director's decision on the film, which Sarah notes is late, since the fifteen demands were the decision. At dawn Dr. Aris reports his one proposed topic was turned down because its ending never answered the question the opening asked, though his verification round was the day's only clean sweep: four pages, four sources, twenty-four claims, zero rejections, while scripting reported zero scripts. Sarah closes the morning with five films still waiting in quality control, the accounting close within limit, and a request for all of tomorrow's numbers, including the zeros.",
+       "business_date": "2026-10-14"
+      },
+      {
+       "episode_number": 3,
+       "episode_id": "e241f639-94a9-4e98-b9a6-12f8f3fc120a",
+       "title": "Zero Scripts, Stalled Queue",
+       "summary": "The day stalls: Marcus reports zero scripts, Sarah notes five publications but no QC passes, Nadia confirms the books are balanced, and Sarah adds no new topics were proposed. Marcus then reveals six subjects stuck in QC and five older films locked, while Kael confirms the render bay has no new material. Sarah promises to brief the Owner and keep the schedule flat, and Marcus ends with a hopeful yet resigned line about trying again tomorrow.",
+       "business_date": "2026-10-15"
+      }
+     ]
+    },
+    "plan_episode": {
+     "id": "e241f639-94a9-4e98-b9a6-12f8f3fc120a",
+     "log_id": "73f3984c-6ec6-4f78-921e-b6c45f664bb8",
+     "title": "Zero Scripts, Stalled Queue",
+     "created_at": "2026-10-15T14:19:18.098352+00:00",
+     "next_episode": {
+      "premise": "The team finally learns the Owner's decision on the pending rewrite and whether any stalled films move forward.",
+      "cold_open_line": "The Owner finally replied.",
+      "open_question": "Will the Owner prioritize the rewrite and clear the QC backlog?",
+      "threads_to_pay_off": [
+       "T1"
+      ],
+      "status": "PLANNED",
+      "planned_on": "2026-10-15"
+     }
+    }
+   }
+  },
+  {
+   "id": "factual-be6dfc6d",
+   "kind": "factual",
+   "backup": "studio-20261011T003024Z.db",
+   "topic_id": "be6dfc6d-942f-4776-bff8-089414c8d43b",
+   "topic_title": "How NASA Keeps a Space Telescope Alive With Frozen Fuel",
+   "state": "after_write",
+   "writer_model": "kimi-k3",
+   "language": "en",
+   "target_seconds": null,
+   "original_target_seconds": 30,
+   "drafts_of_topic": 13,
+   "reference": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "factual",
+    "id": "8de80ed1-23c4-42f3-8fb1-b7cf800886f9",
+    "text_key": "script:8de80ed1-23c4-42f3-8fb1-b7cf800886f9",
+    "title": "How NASA Keeps a Space Telescope Alive With Frozen Fuel",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": null,
+    "version": 13,
+    "created_at": "2026-10-10T10:47:06.910443+00:00",
+    "view": {
+     "kind": "factual",
+     "title": "How NASA Keeps a Space Telescope Alive With Frozen Fuel",
+     "scenes": [
+      {
+       "narration": "This telescope's fuel is frozen — and when it's gone, the mission is over.",
+       "visual_description": "Webb drifting alone in black space, a thin frost-like glow on its silver underside, Earth shrinking to a dot behind it.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "Webb orbits a million miles out, built to see the first galaxies.",
+       "visual_description": "A scale line stretching from tiny Earth to Webb at L2, then Webb's gold mirror turning toward a field of ancient, faint galaxies.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "A tennis-court sunshield blocks 90% of the Sun's heat on its first layer, passively cooling the mirror and instruments to minus 233 degrees.",
+       "visual_description": "The five-layer sunshield unfurling to full tennis-court size, sunlight slamming the top layer, heat visibly deflecting sideways off each silver sheet, the gold mirror waiting in shadow.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "The fuel is a finite count. A small trim flap balances the Sun's photon pressure, so the wheels burn less of it — every saved gram is time bought.",
+       "visual_description": "The small trim flap angling against streaming sunlight, the sunshield glowing at its edges, Webb holding steady without a thruster firing.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "Five layers, one flap, stretching a finite tank — until the fuel runs out. Follow for more.",
+       "visual_description": "Webb's gold mirror glowing against the deep dark, the sunshield catching the Sun's light, Earth a faint dot far behind.",
+       "scene_kind": "LIVE",
+       "card": null
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "factual-9274f345",
+   "kind": "factual",
+   "backup": "studio-20261011T003024Z.db",
+   "topic_id": "9274f345-5773-41a8-a082-6eeba77ca405",
+   "topic_title": "Why Nepal Is Being Handed a Climate Bill It Cannot Pay",
+   "state": "after_write",
+   "writer_model": "kimi-k3",
+   "language": "en",
+   "target_seconds": null,
+   "original_target_seconds": 30,
+   "drafts_of_topic": 5,
+   "reference": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "factual",
+    "id": "2270614e-9553-49a8-97c7-c7afffcb4a81",
+    "text_key": "script:2270614e-9553-49a8-97c7-c7afffcb4a81",
+    "title": "Why Nepal Is Being Handed a Climate Bill It Cannot Pay",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": null,
+    "version": 5,
+    "created_at": "2026-10-03T07:44:06.577096+00:00",
+    "view": {
+     "kind": "factual",
+     "title": "Why Nepal Is Being Handed a Climate Bill It Cannot Pay",
+     "scenes": [
+      {
+       "narration": "Nepal is paying for a crisis it did not create.",
+       "visual_description": "Aerial view of Himalayan mountains with dark storm clouds gathering over a remote village.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "It is the fourth most climate-vulnerable country on Earth, hit by floods and landslides.",
+       "visual_description": "Raging floodwaters carrying debris through a mountain valley, houses partially submerged.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "In one season, floods cost Nepal six hundred million dollars.",
+       "visual_description": "Mudslides covering terraced farmland, people seen from behind salvaging belongings from a collapsed home.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "Almost all of Nepal's emissions come from farms and forests, not industry. Yet it pays.",
+       "visual_description": "A farmer seen from behind working a small terraced field, smoke rising from a distant forest, no factories in sight.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "The world promised one hundred billion a year by 2020. It delivered eighty-three.",
+       "visual_description": "A two-bar chart comparing the promised amount with what was actually delivered; the chart holds, then fades.",
+       "scene_kind": "DATA_CARD",
+       "card": {
+        "title": "Climate finance: promised vs delivered",
+        "bars": [
+         {
+          "label": "Promised per year by 2020",
+          "value": 100,
+          "unit": "billion US$"
+         },
+         {
+          "label": "Delivered in 2020",
+          "value": 83.3,
+          "unit": "billion US$"
+         }
+        ],
+        "highlight": "Delivered in 2020"
+       }
+      },
+      {
+       "narration": "Which other country do you think is being asked to pay a bill it never ran up?",
+       "visual_description": "The Himalayan village from the opening shot, storm clouds still gathering overhead.",
+       "scene_kind": "LIVE",
+       "card": null
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "factual-d42d3135",
+   "kind": "factual",
+   "backup": "studio-20261011T003024Z.db",
+   "topic_id": "d42d3135-432e-443f-89dc-ab27a21721ba",
+   "topic_title": "How CERN's ATLAS Measured a Higgs Boson in Real Time",
+   "state": "after_write",
+   "writer_model": "kimi-k3",
+   "language": "en",
+   "target_seconds": null,
+   "original_target_seconds": 30,
+   "drafts_of_topic": 7,
+   "reference": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "factual",
+    "id": "37fc8ef6-7179-4e54-8ea2-1a9f949f510a",
+    "text_key": "script:37fc8ef6-7179-4e54-8ea2-1a9f949f510a",
+    "title": "How ATLAS Caught the Higgs Boson in Real Time",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": null,
+    "version": 7,
+    "created_at": "2026-09-12T20:50:24.537947+00:00",
+    "view": {
+     "kind": "factual",
+     "title": "How ATLAS Caught the Higgs Boson in Real Time",
+     "scenes": [
+      {
+       "narration": "For 48 years, the Higgs field was only an idea on paper.",
+       "visual_description": "A yellowed 1964 theory page dissolving into a glowing field filling a dark universe.",
+       "scene_kind": "",
+       "card": null
+      },
+      {
+       "narration": "The only way to prove it: catch one decaying, live, in a detector.",
+       "visual_description": "A particle collision bursting into a shower of tracks that vanish almost instantly.",
+       "scene_kind": "",
+       "card": null
+      },
+      {
+       "narration": "So CERN built ATLAS: 46 metres long, 7,000 tonnes.",
+       "visual_description": "A cavern opening beneath the Swiss countryside, revealing the massive layered cylinder of ATLAS.",
+       "scene_kind": "",
+       "card": null
+      },
+      {
+       "narration": "Its magnets bend every charged particle's path, and six layered subsystems record momentum.",
+       "visual_description": "Collision tracks curving through layered detector rings, each layer lighting up as particles pass.",
+       "scene_kind": "",
+       "card": null
+      },
+      {
+       "narration": "Then four leptons snapped into a single peak at 125 GeV. Theory became fact. Which should we reconstruct next: top quark or W boson?",
+       "visual_description": "Four glowing lepton tracks converging on a full-screen histogram, stacking into a sharp peak at 125 GeV; a text overlay appears: 'Top quark or W boson?'",
+       "scene_kind": "",
+       "card": null
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "factual-3452dc26",
+   "kind": "factual",
+   "backup": "studio-20261011T003024Z.db",
+   "topic_id": "3452dc26-0e08-4116-8455-6fa1148ce072",
+   "topic_title": "Why Ernest Lawrence's First Cyclotron Barely Fit on a Desk",
+   "state": "before_write",
+   "writer_model": "kimi-k3",
+   "language": "en",
+   "target_seconds": null,
+   "original_target_seconds": 30,
+   "drafts_of_topic": 3,
+   "reference": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "factual",
+    "id": "c697aab5-f0be-4ae0-b7f1-6d74382e015d",
+    "text_key": "script:c697aab5-f0be-4ae0-b7f1-6d74382e015d",
+    "title": "Why Ernest Lawrence's First Cyclotron Barely Fit on a Desk",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": null,
+    "version": 3,
+    "created_at": "2026-10-11T11:42:13.712623+00:00",
+    "view": {
+     "kind": "factual",
+     "title": "Why Ernest Lawrence's First Cyclotron Barely Fit on a Desk",
+     "scenes": [
+      {
+       "narration": "Every accelerator you've seen is huge. The first one sat on a desk — just a few centimetres across.",
+       "visual_description": "A tiny brass device with two round magnet poles sits alone on a wooden desk, dwarfed by the empty tabletop around it.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "Berkeley, 1929. Lawrence reads a journal article by Rolf Widerøe — and sketches his answer on a paper napkin.",
+       "visual_description": "A 1920s library reading room, tall windows, a man seen from behind at a long table, an open journal beside a napkin with a pencil spiral.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "His idea: make protons spiral in a magnetic field, kicked faster every half-turn — so a small chamber does a giant machine's job.",
+       "visual_description": "Extreme close-up of two D-shaped metal electrodes facing each other inside a small brass chamber between round electromagnet poles.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "That desk-sized spiral — just a few centimetres across — won the 1939 Nobel Prize in Physics.",
+       "visual_description": "The small desktop device beside a gleaming gold medal on dark cloth, both lit by a single warm lamp.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "And it didn't stop there: his accelerators built America's national laboratories. What would you sketch on a napkin? Tell us below.",
+       "visual_description": "The napkin's pencil spiral dissolving into a glowing spiral of particles, then a vast laboratory complex seen from above at dusk.",
+       "scene_kind": "LIVE",
+       "card": null
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "factual-53100784",
+   "kind": "factual",
+   "backup": "studio-20261013T003017Z.db",
+   "topic_id": "53100784-f3ba-4c4e-823b-dfd3b39f963a",
+   "topic_title": "Why the Kelvin Scale Has No 'Zero' to Begin From",
+   "state": "before_write",
+   "writer_model": "kimi-k3",
+   "language": "en",
+   "target_seconds": null,
+   "original_target_seconds": 30,
+   "drafts_of_topic": 5,
+   "reference": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "factual",
+    "id": "b203283e-4fba-4236-a980-67d449dfd2f9",
+    "text_key": "script:b203283e-4fba-4236-a980-67d449dfd2f9",
+    "title": "Why the Kelvin Scale Has No 'Zero' to Begin From",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": 36,
+    "version": 5,
+    "created_at": "2026-10-13T02:02:23.798009+00:00",
+    "view": {
+     "kind": "factual",
+     "title": "Why the Kelvin Scale Has No 'Zero' to Begin From",
+     "scenes": [
+      {
+       "narration": "Zero degrees Celsius is not zero. It is just where water happens to freeze.",
+       "visual_description": "Close-up of a glass thermometer in a block of melting ice, the red liquid level holding still, frost creeping on the glass.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "But cool a gas one degree, and it shrinks a sliver of its volume. Keep going, and at minus 273, the gas is gone.",
+       "visual_description": "A brass laboratory flask connected to glass tubing, a mercury column dropping steadily as frost forms along the metal, a researcher seen from behind adjusting a valve.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "In 1848, William Thomson took that floor and built a scale on it: zero at the bottom, the lowest temperature possible.",
+       "visual_description": "A hand-drawn curve on dark paper falling steadily toward a flat baseline, the line flattening as it approaches the bottom edge of the page.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "Kelvin's zero is the floor of the universe. Celsius just borrowed the ladder.",
+       "visual_description": "The same thermometer from the opening, now held up against a cold dawn sky, the red liquid low in the glass.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "So: if Celsius just adds 273 to the real floor, why do we still use it? Argue in the comments.",
+       "visual_description": "The thermometer slowly lowered out of frame, leaving only the pale dawn sky over a frozen field.",
+       "scene_kind": "LIVE",
+       "card": null
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "factual-73564ec5",
+   "kind": "factual",
+   "backup": "studio-20261013T003017Z.db",
+   "topic_id": "73564ec5-8fc7-46c4-956a-9949ac5c2a88",
+   "topic_title": "The Particle That Shouldn't Exist (And Briefly Didn't)",
+   "state": "after_write",
+   "writer_model": "kimi-k3",
+   "language": "en",
+   "target_seconds": null,
+   "original_target_seconds": 30,
+   "drafts_of_topic": 4,
+   "reference": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "factual",
+    "id": "1be2ca5f-b08d-4bbe-a10e-af2a4f7b0be0",
+    "text_key": "script:1be2ca5f-b08d-4bbe-a10e-af2a4f7b0be0",
+    "title": "The Particle That Shouldn't Exist (And Briefly Didn't)",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": 37,
+    "version": 4,
+    "created_at": "2026-10-12T02:03:03.455650+00:00",
+    "view": {
+     "kind": "factual",
+     "title": "The Particle That Shouldn't Exist (And Briefly Didn't)",
+     "scenes": [
+      {
+       "narration": "Some particles weigh eighty times more than a proton — and the math says they shouldn't weigh anything at all.",
+       "visual_description": "A slow drift through a dark particle-detector cavern, vast metallic rings receding into shadow, tiny points of light flickering along the structure.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "For decades the answer sat inside the Standard Model — an essential piece with no particle to show for it.",
+       "visual_description": "The curved tunnel of the Large Hadron Collider stretching away, magnets and cables repeating into darkness, seen from track level, empty and still.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "Until March 2013, when CERN announced results consistent with the Higgs particle.",
+       "visual_description": "A glowing collision point flaring inside a detector cross-section, concentric rings of sensors lighting up outward from the flash.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "Months later, the Nobel Prize went to Higgs and Englert for the discovery.",
+       "visual_description": "The same detector cavern now alive with light, sensor rings glowing in sequence, seen from a slow rising angle.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "So the particle that shouldn't exist explains why the others do. If one field gives mass to everything, what else is it hiding?",
+       "visual_description": "Return to the dark detector cavern from the opening shot, the same points of light flickering along the rings, camera slowly pulling back.",
+       "scene_kind": "LIVE",
+       "card": null
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "factual-d7d80450",
+   "kind": "factual",
+   "backup": "studio-20261015T003018Z.db",
+   "topic_id": "d7d80450-e420-47ca-b52d-1169bb1b3f6c",
+   "topic_title": "The Supernova Surprise: How Distant Explosions Revealed Dark Energy",
+   "state": "before_write",
+   "writer_model": "gpt-oss:120b",
+   "language": "en",
+   "target_seconds": null,
+   "original_target_seconds": 30,
+   "drafts_of_topic": 1,
+   "reference": null
+  },
+  {
+   "id": "factual-4f60d7ff",
+   "kind": "factual",
+   "backup": "studio-20261015T003018Z.db",
+   "topic_id": "4f60d7ff-deb6-4f09-be8f-2c92a4dc07ee",
+   "topic_title": "Why the Speed of Light Is Exactly 299,792,458 m/s",
+   "state": "before_write",
+   "writer_model": "gpt-oss:120b",
+   "language": "en",
+   "target_seconds": null,
+   "original_target_seconds": 30,
+   "drafts_of_topic": 4,
+   "reference": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "factual",
+    "id": "13f3a3f7-5e3b-420d-8cad-1dcf77b3f255",
+    "text_key": "script:13f3a3f7-5e3b-420d-8cad-1dcf77b3f255",
+    "title": "Why the Speed of Light Is Exactly 299,792,458 m/s",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": 34,
+    "version": 2,
+    "created_at": "2026-10-15T18:32:41.156869+00:00",
+    "view": {
+     "kind": "factual",
+     "title": "Why the Speed of Light Is Exactly 299,792,458 m/s",
+     "scenes": [
+      {
+       "narration": "What if light’s speed weren’t a speed, but a perfect ruler? For a century, this bar defined the metre.",
+       "visual_description": "A polished platinum‑iridium bar sits in a glass case, illuminated by a soft light.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "In 1983 the body redefined the metre as the distance light travels.",
+       "visual_description": "A scientist lifts the bar from its case and points to a thin laser line drawn on the lab floor.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "Now the metre derives from constants, fixing light’s speed at 299,792,458 m/s and ending the need for a physical artifact.",
+       "visual_description": "A digital table displays the seven exact defining constants, highlighting c = 299,792,458 m/s.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "That number isn’t a measurement. It’s a decision.",
+       "visual_description": "A bright laser pulse streaks across the dark laboratory, the camera following its path.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "A laser pulse defines the metre in 1⁄299,792,458 s. If you could redefine any unit with a constant, which would you choose?",
+       "visual_description": "The bar rests beside the traveling laser pulse, which continues across the room.",
+       "scene_kind": "LIVE",
+       "card": null
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "factual-89101f50",
+   "kind": "factual",
+   "backup": "studio-20261016T015919Z.db",
+   "topic_id": "89101f50-85c5-43a3-af60-aea96ef9e7d8",
+   "topic_title": "Glass Rain on a Distant Hot Jupiter",
+   "state": "no_draft_yet",
+   "writer_model": "mistral-large-4",
+   "language": "en",
+   "target_seconds": null,
+   "original_target_seconds": null,
+   "drafts_of_topic": 0,
+   "reference": null
+  },
+  {
+   "id": "golden-serial-2026-10-14-editorial",
+   "kind": "golden_pair",
+   "text_kind": "serial",
+   "backup": "studio-20261016T015919Z.db",
+   "a": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "serial",
+    "id": "27c6a77b-4aa1-4d53-bf41-ba582b1d875e",
+    "text_key": "episode:27c6a77b-4aa1-4d53-bf41-ba582b1d875e",
+    "title": "Twenty-Eight Notes Before Breakfast",
+    "status": "REJECTED",
+    "verdict": "PASS",
+    "editorial_total": 26,
+    "created_at": "2026-10-15T05:00:20.036676+00:00",
+    "view": {
+     "kind": "serial",
+     "title": "Twenty-Eight Notes Before Breakfast",
+     "beats": [
+      {
+       "scene": "Static medium close-up single on Kael at his desk in the render bay, floor one; the camera does not move, zoom or reframe at any point, and Kael stays centered from the first frame to the last. Kael sits frozen mid-scroll with one hand hovering over the mouse and his eyes on a dark monitor, with sandy blonde spiky hair, a single-ear comms headset, an amber work shirt with rolled-up sleeves and dark cargo pants. Every monitor, paper and notebook in frame is completely blank, unruled and unmarked, with no lines, no writing, no letters. Dim night light, pale monitor glow on his face.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Thirteen notes. Same scene. Same film."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "The Director wants scene two rewritten again. It is after midnight."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Sarah at her executive desk in the penthouse, floor four; the camera does not move, zoom or reframe at any point, and Sarah stays centered from the first frame to the last. Sarah sits very upright with her hands folded on the desk, with a brunette professional bob with warm highlights, a navy two-piece executive blazer over a white collared shirt and a sky-blue tie. Every paper, folder and screen on the desk is completely blank, unruled and unmarked, with no lines, no writing, no letters. Cool night light, city glow through the window behind her.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The verdict came back failed. Again."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The editor rewrites it, or nothing ships. However many notes that takes."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Kael at his render-bay desk; the camera does not move, zoom or reframe at any point, and Kael stays centered from the first frame to the last. Kael leans back with his arms crossed and his headset pushed up off one ear, with sandy blonde spiky hair, a single-ear comms headset, an amber work shirt with rolled-up sleeves and dark cargo pants. Every screen and paper in frame is completely blank, unruled and unmarked, with no lines, no writing, no letters. Same dim night light.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Fifteen notes on scene four. The Zero Script Club."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "I reply, rewrite, re-render. The title is getting personal."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Sarah at her executive desk; the camera does not move, zoom or reframe at any point, and Sarah stays centered from the first frame to the last. Sarah holds a single sheet of paper up at arm's length and looks at it flatly, with a brunette professional bob with warm highlights, a navy two-piece executive blazer over a white collared shirt and a sky-blue tie. The sheet, and every paper and screen in frame, is completely blank, unruled and unmarked, with no lines, no writing, no letters. Cool night light, city glow at the window.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "A formal letter now. The film awaits the Director's decision."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Fifteen notes was the decision. The letter is late."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Dr. Aris at his research desk, floor three; the camera does not move, zoom or reframe at any point, and Dr. Aris stays centered from the first frame to the last. Dr. Aris leans forward with his palms flat on the desk and a small apologetic smile, with dark hair with silver temples, thin circular silver spectacles with white lens glare, and an immaculate white laboratory coat over a teal button-down shirt. Every notebook and screen in frame is completely blank, unruled and unmarked, with no lines, no writing, no letters. Soft even lab light.",
+       "lines": [
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "I found something interesting. One topic proposed, one refused."
+        },
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "The gravitational-wave one. Its ending never answered the hook."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Dr. Aris at his research desk; the camera does not move, zoom or reframe at any point, and Dr. Aris stays centered from the first frame to the last. Dr. Aris sits back and gives a small shrug with his hands open, with dark hair with silver temples, thin circular silver spectacles with white lens glare, and an immaculate white laboratory coat over a teal button-down shirt. Every notebook and screen in frame is completely blank, unruled and unmarked, with no lines, no writing, no letters. First grey morning light at the lab window.",
+       "lines": [
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "Four pages, four sources, twenty-four claims verified. Zero rejected."
+        },
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "Scripting reports zero scripts. Their next draft is the short one, apparently."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Sarah at her executive desk; the camera does not move, zoom or reframe at any point, and Sarah stays centered from the first frame to the last. Sarah stands behind her desk with one hand resting on a closed ledger, with a brunette professional bob with warm highlights, a navy two-piece executive blazer over a white collared shirt and a sky-blue tie. The ledger, every paper and the desk screen in frame are completely blank, unruled and unmarked, with no lines, no writing, no letters. Grey dawn light through the penthouse window.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The accounting close is within limit. One topic sits in production."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Bring me the numbers tomorrow. All of them. Even the zeros."
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "b": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "serial",
+    "id": "88c27e33-310d-4767-a5e1-c31b460b0235",
+    "text_key": "episode:88c27e33-310d-4767-a5e1-c31b460b0235",
+    "title": "Twenty-Eight Rewrites Before Breakfast",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": 38,
+    "created_at": "2026-10-15T05:02:13.868651+00:00",
+    "view": {
+     "kind": "serial",
+     "title": "Twenty-Eight Rewrites Before Breakfast",
+     "beats": [
+      {
+       "scene": "Static medium close-up single on Kael at his desk in the render bay, floor one; the camera does not move, zoom or reframe at any point, and Kael stays centered from the first frame to the last. Kael sits frozen mid-scroll with one hand hovering over the mouse and his eyes on a dark monitor, with sandy blonde spiky hair, a single-ear comms headset, an amber work shirt with rolled-up sleeves and dark cargo pants. Every monitor, paper and notebook in frame is completely blank, unruled and unmarked, with no lines, no writing, no letters. Dim night light, pale monitor glow on his face.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "If scene two fails tonight, the film dies."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Thirteen rewrite demands. Same scene. Same film."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Sarah at her executive desk in the penthouse, floor four; the camera does not move, zoom or reframe at any point, and Sarah stays centered from the first frame to the last. Sarah sits very upright with her hands folded on the desk, with a brunette professional bob with warm highlights, a navy two-piece executive blazer over a white collared shirt and a sky-blue tie. Every paper, folder and screen on the desk is completely blank, unruled and unmarked, with no lines, no writing, no letters. Cool night light, city glow through the window behind her.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Quality control failed the film again."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The editor rewrites scene two, or nothing ships. However many letters that takes."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Kael at his render-bay desk; the camera does not move, zoom or reframe at any point, and Kael stays centered from the first frame to the last. Kael leans back with his arms crossed and his headset pushed up off one ear, with sandy blonde spiky hair, a single-ear comms headset, an amber work shirt with rolled-up sleeves and dark cargo pants. Every screen and paper in frame is completely blank, unruled and unmarked, with no lines, no writing, no letters. Same dim night light.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Fifteen rewrite demands on scene four. The Zero Script Club."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "I reply, rewrite, re-render. The title is getting personal."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Sarah at her executive desk; the camera does not move, zoom or reframe at any point, and Sarah stays centered from the first frame to the last. Sarah holds a single sheet of paper up at arm's length and looks at it flatly, with a brunette professional bob with warm highlights, a navy two-piece executive blazer over a white collared shirt and a sky-blue tie. The sheet, and every paper and screen in frame, is completely blank, unruled and unmarked, with no lines, no writing, no letters. Cool night light, city glow at the window.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "A formal letter now. The film awaits the Director's decision."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Fifteen notes was the decision. The letter is late."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Dr. Aris at his research desk, floor three; the camera does not move, zoom or reframe at any point, and Dr. Aris stays centered from the first frame to the last. Dr. Aris leans forward with his palms flat on the desk and a small apologetic smile, with dark hair with silver temples, thin circular silver spectacles with white lens glare, and an immaculate white laboratory coat over a teal button-down shirt. Every notebook and screen in frame is completely blank, unruled and unmarked, with no lines, no writing, no letters. Soft even lab light.",
+       "lines": [
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "I found something interesting. One topic proposed, one refused."
+        },
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "The gravitational-wave film. Its ending never answered the question the opening asked."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Dr. Aris at his research desk; the camera does not move, zoom or reframe at any point, and Dr. Aris stays centered from the first frame to the last. Dr. Aris sits back and gives a small shrug with his hands open, with dark hair with silver temples, thin circular silver spectacles with white lens glare, and an immaculate white laboratory coat over a teal button-down shirt. Every notebook and screen in frame is completely blank, unruled and unmarked, with no lines, no writing, no letters. First grey morning light at the lab window.",
+       "lines": [
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "Four pages, four sources, twenty-four claims verified. Zero rejected."
+        },
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "Scripting reports zero scripts. Their next draft is the short one, apparently."
+        }
+       ]
+      },
+      {
+       "scene": "Static medium close-up single on Sarah at her executive desk; the camera does not move, zoom or reframe at any point, and Sarah stays centered from the first frame to the last. Sarah stands behind her desk with one hand resting on a closed ledger, with a brunette professional bob with warm highlights, a navy two-piece executive blazer over a white collared shirt and a sky-blue tie. The ledger, every paper and the desk screen in frame are completely blank, unruled and unmarked, with no lines, no writing, no letters. Grey dawn light through the penthouse window.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Five films wait in quality control. The close is within limit."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Bring me the numbers tomorrow. All of them. Even the zeros."
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "expected": "b",
+   "expected_by": "director_editorial",
+   "note": "The Director's editorial judgement: 26/50 against 38/50."
+  },
+  {
+   "id": "golden-serial-2026-10-11-review",
+   "kind": "golden_pair",
+   "text_kind": "serial",
+   "backup": "studio-20261016T015919Z.db",
+   "a": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "serial",
+    "id": "b6b53c35-91d6-4b5b-8a88-4544251a98f8",
+    "text_key": "episode:b6b53c35-91d6-4b5b-8a88-4544251a98f8",
+    "title": "The Zero Script Club",
+    "status": "REJECTED",
+    "verdict": "FAIL",
+    "editorial_total": null,
+    "created_at": "2026-10-11T02:52:09.114392+00:00",
+    "view": {
+     "kind": "serial",
+     "title": "The Zero Script Club",
+     "beats": [
+      {
+       "scene": "Marcus sits at his desk, staring at a monitor with a blank document open, hands hovering over the keyboard but not typing.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Zero scripts. I wrote zero scripts today."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah stands behind her desk, tablet in hand, reading reports. Marcus enters, holding a printed sheet.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Right. Where are we?"
+        },
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "The script queue is empty. Zero exchanges. Zero approved."
+        }
+       ]
+      },
+      {
+       "scene": "Dr. Aris adjusts his spectacles, gesturing to a screen showing a checklist with twenty-four checkmarks.",
+       "lines": [
+        {
+         "speaker": "Dr. Aris (Researcher)",
+         "text": "I checked twenty-four claims against their sources. Zero rejected."
+        },
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "And I have zero scripts to show for it."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah turns the tablet toward Marcus, showing a list. She points to a line.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "One subject is already in production. Four earlier ones have failed renders at QC."
+        },
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "So the ideas are there. The words aren't."
+        }
+       ]
+      },
+      {
+       "scene": "Kael sits at his editing bay, hands behind his head, looking at a timeline with no new clips.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "No new material to check. My render queue is idle."
+        },
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "You're waiting on me."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "The timeline doesn't lie."
+        }
+       ]
+      },
+      {
+       "scene": "Vera stands at her desk, headset on, checking a status board.",
+       "lines": [
+        {
+         "speaker": "Vera (Publisher)",
+         "text": "Nothing approved by QC is waiting to publish."
+        },
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "So the whole pipeline is stalled."
+        }
+       ]
+      },
+      {
+       "scene": "Marcus sits back at his desk, opens a new document, and types one word. He stops.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Okay, hear me out. What if the next one is the short one?"
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "b": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "serial",
+    "id": "043317d3-591a-47e3-9a16-c9ff7017a711",
+    "text_key": "episode:043317d3-591a-47e3-9a16-c9ff7017a711",
+    "title": "The Zero Script Club",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": null,
+    "created_at": "2026-10-11T10:43:19.444602+00:00",
+    "view": {
+     "kind": "serial",
+     "title": "The Zero Script Club",
+     "beats": [
+      {
+       "scene": "Early morning, empty writers' room, Marcus alone at his desk, fingers hovering over keys, a blank screen glow on his face.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Zero scripts. That is my whole morning report."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Read it to me anyway, Marcus."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah at her desk, morning light, a neat stack of status notes; Marcus leaning in the doorway, hoodie zipped, defensive.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Zero written, zero approved, zero boards. Clean sweep."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "And the serial?"
+        }
+       ]
+      },
+      {
+       "scene": "Same office, tighter shot on Marcus, hands open, half a pitch already forming and dying.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Yesterday's episode got rejected. No finished day after it means nothing to tell."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "So the serial waits for a day worth telling."
+        }
+       ]
+      },
+      {
+       "scene": "Ground floor, quiet office, Nadia at her ledger desk, brass pen on its chain, two cups of tea cooling.",
+       "lines": [
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "My close went out twice today. Same figures, same period, two letters."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Within limit, both times?"
+        }
+       ]
+      },
+      {
+       "scene": "Nadia holds her pen still; Sarah stands opposite, reading nothing, listening.",
+       "lines": [
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "Within limit. Nothing posts twice, Sarah. That is the job."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Then I am asking you to look again, officially."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah at the doorway of the render bay, Kael's empty chair visible behind her; she speaks toward the room, Marcus trailing behind her.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Four subjects sit with failed renders. Kael gets a letter too."
+        },
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "So accounting gets audited and the edit bay gets audited."
+        }
+       ]
+      },
+      {
+       "scene": "Back in Sarah's office, the stack of morning notes squared on the desk; Marcus at the whiteboard, marker up, nothing written yet.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "One thing at a time. The day is five hours old and already investigated."
+        },
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Okay, hear me out. That is the episode."
+        }
+       ]
+      },
+      {
+       "scene": "Marcus back at his own desk, typing the first line; the blank screen finally has words on it, his grin barely held in.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Zero scripts this morning. One by lunch. This is the short one."
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "expected": "b",
+   "expected_by": "director_review",
+   "note": "A chain of 3 drafts: the first (FAIL) against the one shipped (APPROVED, PASS)."
+  },
+  {
+   "id": "golden-serial-2026-10-15-review",
+   "kind": "golden_pair",
+   "text_kind": "serial",
+   "backup": "studio-20261016T015919Z.db",
+   "a": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "serial",
+    "id": "cdce5504-41b2-46ab-98f4-a4eeb7e94a6a",
+    "text_key": "episode:cdce5504-41b2-46ab-98f4-a4eeb7e94a6a",
+    "title": "Waiting on the Rewrite",
+    "status": "REJECTED",
+    "verdict": "FAIL",
+    "editorial_total": null,
+    "created_at": "2026-10-15T14:04:43.998984+00:00",
+    "view": {
+     "kind": "serial",
+     "title": "Waiting on the Rewrite",
+     "beats": [
+      {
+       "scene": "Sarah sits at her desk, facing the viewer, hands clasped, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Scene two, twenty‑ninth version, still in limbo today."
+        }
+       ]
+      },
+      {
+       "scene": "Nadia leans over her ledger at her desk, facing the viewer, hands on the book, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "Today's ledger is within limit, but I sent it twice."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "We'll keep an eye on it today, closely."
+        }
+       ]
+      },
+      {
+       "scene": "Marcus stands at his desk, facing the viewer, hands spread, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Zero scripts, zero storyboards, no output from the pipeline."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The pipeline's dead, we need a push."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah sits at her desk, facing the viewer, hands on paperwork, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The QC still hasn't signed off on scene two yet."
+        },
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "No green light yet, frustrating indeed still for us."
+        }
+       ]
+      },
+      {
+       "scene": "Marcus stands at his desk, facing the viewer, hands on a notepad, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Meanwhile five publications were measured, yet none cleared for release."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Publications are measured, but nothing moves forward soon."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah sits at her desk, facing the viewer, hands folded, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "We'll need the QC green light before any release today."
+        },
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Until then, everything stays on hold."
+        }
+       ]
+      },
+      {
+       "scene": "Nadia sits at her ledger, facing the viewer, hands on the book, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "I'll resend the ledger tomorrow if needed."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Confirm when you have the final figures."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah sits at her desk, facing the viewer, hands folded, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Looks like tomorrow's rewrite will still be a mystery, indeed."
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "b": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "serial",
+    "id": "e241f639-94a9-4e98-b9a6-12f8f3fc120a",
+    "text_key": "episode:e241f639-94a9-4e98-b9a6-12f8f3fc120a",
+    "title": "Zero Scripts, Stalled Queue",
+    "status": "APPROVED",
+    "verdict": "FAIL",
+    "editorial_total": null,
+    "created_at": "2026-10-15T14:19:18.098352+00:00",
+    "view": {
+     "kind": "serial",
+     "title": "Zero Scripts, Stalled Queue",
+     "beats": [
+      {
+       "scene": "Marcus stands at his desk, facing the viewer, hands spread, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Zero scripts, zero storyboards— nothing moved today, again, the desk stays silent."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah sits at her desk, facing the viewer, hands on a tablet, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "We logged five publications across two channels, but none have cleared quality control yet, leaving the pipeline idle."
+        }
+       ]
+      },
+      {
+       "scene": "Nadia leans over her ledger at her desk, facing the viewer, hands on the book, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "The books are within today’s limit, reference today, all figures reconcile perfectly, no anomalies spotted."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah sits at her desk, facing the viewer, hands on a notepad, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "We had zero new topics proposed, and one was rejected as a duplicate."
+        }
+       ]
+      },
+      {
+       "scene": "Marcus stands at his desk, facing the viewer, hands on a notepad, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Six subjects sit stuck in QC, and five older films remain locked, zero output today, the queue never moves."
+        }
+       ]
+      },
+      {
+       "scene": "Marcus stands at his desk, facing the viewer, hands on a notepad, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Kael reports the render bay has no new material, so nothing to edit today, the screen stays black."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah sits at her desk, facing the viewer, hands on a tablet, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "I'll brief the Owner now; we stay on hold until the decision arrives, and the schedule remains flat, no progress."
+        }
+       ]
+      },
+      {
+       "scene": "Marcus stands at his desk, facing the viewer, hands folded, plain wooden desk surface, closed wooden pen tray, closed wooden box, potted plant, brass lamp.",
+       "lines": [
+        {
+         "speaker": "Marcus (Script Writer)",
+         "text": "Zero again tomorrow, maybe we'll finally break the streak and actually get something moving forward."
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "expected": null,
+   "expected_by": "director_review",
+   "note": "A chain of 3 drafts: the first (FAIL) against the one shipped (APPROVED, FAIL)."
+  },
+  {
+   "id": "golden-serial-2026-10-16-review",
+   "kind": "golden_pair",
+   "text_kind": "serial",
+   "backup": "studio-20261016T015919Z.db",
+   "a": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "serial",
+    "id": "0d495b2c-001e-4dc3-96ac-78450a53bd15",
+    "text_key": "episode:0d495b2c-001e-4dc3-96ac-78450a53bd15",
+    "title": "Zero Scripts, Blocked Log",
+    "status": "REJECTED",
+    "verdict": "FAIL",
+    "editorial_total": null,
+    "created_at": "2026-10-15T22:06:04.953157+00:00",
+    "view": {
+     "kind": "serial",
+     "title": "Zero Scripts, Blocked Log",
+     "beats": [
+      {
+       "scene": "Kael sits at his editing desk in the Video & Render Bay on floor 1, facing the viewer, his hands resting flat on the keyboard in front of a monitor that shows an empty timeline with no clips; he wears an amber work shirt with the sleeves rolled up and dark cargo pants; his sandy blonde hair is spiky and short, and a single-ear comms headset sits over his left ear; the camera does not move, zoom or reframe at any point, and Kael stays visible at center from the first frame to the last, with the dark render racks and cable runs behind him.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Nothing new to check."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Empty queue. Empty timeline. Same stall."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "The render bay is idle."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah sits at her desk in the Executive Penthouse on floor 4, facing the viewer, her hands flat on the desk; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last, with the night sky through the penthouse windows behind her.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Seven publications on two channels."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Zero scripts. Zero storyboards. Zero approvals."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Zero pages. Zero sources. One claim verified."
+        }
+       ]
+      },
+      {
+       "scene": "Nadia sits at her desk in Accounting & Treasury on the ground floor, facing the viewer, her right hand holding a pen over an open ledger on the desk; she wears a plum blouse under a dark violet cardigan with a small brass pen on a chain; her chestnut hair is pulled into a low bun and she wears round tortoiseshell glasses; the camera does not move, zoom or reframe at any point, and Nadia stays visible at center from the first frame to the last, with the quiet office behind her.",
+       "lines": [
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "The books are open."
+        },
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "Daily 0.84. Within limit."
+        },
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "The close is reported."
+        }
+       ]
+      },
+      {
+       "scene": "Sarah stands at her desk in the Executive Penthouse on floor 4, facing the viewer, a tablet in her left hand showing a single storyboard frame, her right hand resting on the desk edge; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last, with the night sky through the penthouse windows behind her.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Media production is skipped."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "I take the remediation."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The speed of light storyboard."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Scene one is mine now."
+        }
+       ]
+      },
+      {
+       "scene": "Kael sits at his editing desk in the Video & Render Bay on floor 1, facing the viewer, his hands on the keyboard before a dark monitor; he wears an amber work shirt with the sleeves rolled up and dark cargo pants; his sandy blonde hair is spiky and short, and a single-ear comms headset sits over his left ear; the camera does not move, zoom or reframe at any point, and Kael stays visible at center from the first frame to the last, with the dark render racks behind him.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Two investigations. One render bay."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Six topics. Failed renders."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "The storyboard is the Director's now."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Why did the renders fail?"
+        }
+       ]
+      },
+      {
+       "scene": "Sarah sits at her desk in the Executive Penthouse on floor 4, facing the viewer, her hands folded on the desk; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last, with the night sky through the penthouse windows behind her.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Six topics waiting. None proposed today."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "One topic in production."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Nothing approved waits to publish."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The serial has nothing new to tell."
+        }
+       ]
+      },
+      {
+       "scene": "Kael sits at his editing desk in the Video & Render Bay on floor 1, facing the viewer, his hands resting on the keyboard before a monitor that shows an empty timeline with no clips; he wears an amber work shirt with the sleeves rolled up and dark cargo pants; his sandy blonde hair is spiky and short, and a single-ear comms headset sits over his left ear; the camera does not move, zoom or reframe at any point, and Kael stays visible at center from the first frame to the last, with the dark render racks behind him.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "I have work now. No material."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "The renders failed. Nothing to check."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "The bay stays idle."
+        }
+       ]
+      },
+      {
+       "scene": "Kael sits alone at his editing desk in the Video & Render Bay on floor 1, facing the viewer, his hands resting on the keyboard before a dark monitor; he wears an amber work shirt with the sleeves rolled up and dark cargo pants; his sandy blonde hair is spiky and short, and a single-ear comms headset sits over his left ear; the camera does not move, zoom or reframe at any point, and Kael stays visible at center from the first frame to the last, with the dark render racks and the faint glow of idle machines behind him.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Nothing new to check. The day log is blocked. Same stall as yesterday."
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "b": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "serial",
+    "id": "b8684fc5-7086-4784-b26d-52db9d21c752",
+    "text_key": "episode:b8684fc5-7086-4784-b26d-52db9d21c752",
+    "title": "Zero Scripts, Blocked Log",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": null,
+    "created_at": "2026-10-15T23:07:02.513417+00:00",
+    "view": {
+     "kind": "serial",
+     "title": "Zero Scripts, Blocked Log",
+     "beats": [
+      {
+       "scene": "The Executive Penthouse on floor 4 in the small hours; dark walls, a long executive desk, and tall windows with the night sky behind them; Sarah sits at the desk facing the viewer, her right hand resting on a closed storyboard folder, her left hand flat on the desk surface; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; no jewellery is worn; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "I wanted a quiet night."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The day's log ended blocked."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Zero scripts. Zero approvals. Zero storyboards."
+        }
+       ]
+      },
+      {
+       "scene": "The Executive Penthouse on floor 4 in the small hours; dark walls, a long executive desk, and tall windows with the night sky behind them; Sarah sits at the desk facing the viewer, her hands resting flat on the desk surface with the closed storyboard folder beside her right hand; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; no jewellery is worn; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The serial has nothing new to tell."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The last day told was yesterday."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Six subjects sit with failed renders."
+        }
+       ]
+      },
+      {
+       "scene": "The Accounting & Treasury office on the ground floor; pale walls, a wooden desk, and a single shaded lamp over it; Nadia sits at the desk facing the viewer, her right hand holding a small brass pen above the desk, her left hand resting on a closed ledger; she wears a plum blouse under a dark violet cardigan; her chestnut hair is pulled into a low bun; she wears round tortoiseshell glasses, and a small brass pen on a chain is her only jewellery; the camera does not move, zoom or reframe at any point, and Nadia stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "Daily 0.84. Within limit."
+        },
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "Reported to the Director."
+        },
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "The books close. The day doesn't."
+        },
+        {
+         "speaker": "Nadia (Accountant)",
+         "text": "The totals are yours."
+        }
+       ]
+      },
+      {
+       "scene": "The Executive Penthouse on floor 4 in the small hours; dark walls, a long executive desk, and tall windows with the night sky behind them; Sarah stands beside the desk facing the viewer, her right hand resting on the closed storyboard folder on the desk, her left hand at her side; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; no jewellery is worn; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Media production skipped today."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "I take the remediation myself."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "I direct. I don't storyboard."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The speed of light storyboard. Scene one."
+        }
+       ]
+      },
+      {
+       "scene": "The Video & Render Bay on floor 1 in the small hours; dark walls, a long editing desk, rows of dark render racks with their small lights, and cable runs along the floor; Kael sits at the editing desk facing the viewer, his hands resting on the keyboard in front of him before a dark monitor; he wears an amber work shirt with the sleeves rolled up and dark cargo pants; his sandy blonde hair is spiky and short; a single-ear comms headset sits over his left ear; the camera does not move, zoom or reframe at any point, and Kael stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Two investigations. One empty bay."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "The Director took the storyboard."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "My round was empty anyway."
+        }
+       ]
+      },
+      {
+       "scene": "The Executive Penthouse on floor 4 in the small hours; dark walls, a long executive desk, and tall windows with the night sky behind them; Sarah sits at the desk facing the viewer, her right hand resting on the closed storyboard folder, her left hand flat on the desk surface; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; no jewellery is worn; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "Scene one is mine by morning."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The work moved desks. The log didn't."
+        },
+        {
+         "speaker": "Sarah (Director)",
+         "text": "My evening went with it."
+        }
+       ]
+      },
+      {
+       "scene": "The Video & Render Bay on floor 1 in the small hours; dark walls, a long editing desk, rows of dark render racks with their small lights, and cable runs along the floor; Kael sits at the editing desk facing the viewer, his hands resting on the keyboard in front of him before a dark monitor; he wears an amber work shirt with the sleeves rolled up and dark cargo pants; his sandy blonde hair is spiky and short; a single-ear comms headset sits over his left ear; the camera does not move, zoom or reframe at any point, and Kael stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Why did the renders fail? Mine now."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "No new material. Nothing to check."
+        },
+        {
+         "speaker": "Kael (Video Editor)",
+         "text": "Two questions. Zero material."
+        }
+       ]
+      },
+      {
+       "scene": "The Executive Penthouse on floor 4 in the small hours; dark walls, a long executive desk, and tall windows with the night sky behind them; Sarah sits at the desk facing the viewer, her hands resting flat on the desk surface with the closed storyboard folder beside her right hand; she wears a crisp navy two-piece executive blazer over a white collared shirt with a sky-blue tie; her brunette hair is a professional bob with warm highlights; no jewellery is worn; the camera does not move, zoom or reframe at any point, and Sarah stays visible at center from the first frame to the last.",
+       "lines": [
+        {
+         "speaker": "Sarah (Director)",
+         "text": "The log will not close. I will."
+        }
+       ]
+      }
+     ]
+    },
+    "owner_note": "The Owner, 2026-10-16, on the approved version: «Eu nu înțeleg nimic»."
+   },
+   "expected": "b",
+   "expected_by": "director_review",
+   "note": "A chain of 4 drafts: the first (FAIL) against the one shipped (APPROVED, PASS). The Owner, 2026-10-16, on the approved version: «Eu nu înțeleg nimic»."
+  },
+  {
+   "id": "golden-factual-be6dfc6d-review",
+   "kind": "golden_pair",
+   "text_kind": "factual",
+   "backup": "studio-20261016T015919Z.db",
+   "a": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "factual",
+    "id": "84ba2287-43c0-463f-861c-60408e115b28",
+    "text_key": "script:84ba2287-43c0-463f-861c-60408e115b28",
+    "title": "The Sunshield That Keeps Webb Alive",
+    "status": "VERIFIED_PASS",
+    "verdict": "REVISE",
+    "editorial_total": null,
+    "version": 1,
+    "created_at": "2026-09-12T19:00:29.670107+00:00",
+    "view": {
+     "kind": "factual",
+     "title": "The Sunshield That Keeps Webb Alive",
+     "scenes": [
+      {
+       "narration": "How do you keep a telescope alive a million miles from Earth, with no repairs possible?",
+       "visual_description": "The James Webb Space Telescope floating alone in deep space, Earth a tiny blue dot far behind it.",
+       "scene_kind": "",
+       "card": null
+      },
+      {
+       "narration": "Webb orbits the Sun at the second Lagrange point, 1.5 million kilometers away, and it needs to stay impossibly cold to see the first galaxies.",
+       "visual_description": "An animated diagram showing Webb's position at L2 relative to the Sun and Earth, with a thermometer graphic dropping rapidly.",
+       "scene_kind": "",
+       "card": null
+      },
+      {
+       "narration": "The answer is a sunshield the size of a tennis court, made of five layers of Kapton film thinner than a human hair.",
+       "visual_description": "A close-up of the sunshield's five silvery layers separating and expanding, with a tennis court outline fading in for scale.",
+       "scene_kind": "",
+       "card": null
+      },
+      {
+       "narration": "The first layer blocks 90% of the Sun's heat, and each layer after reflects more heat out the sides, dropping the temperature 318 degrees from front to back.",
+       "visual_description": "A cross-section animation of sunlight hitting the first layer and heat being deflected sideways, with a temperature gauge falling from hot to cold.",
+       "scene_kind": "",
+       "card": null
+      },
+      {
+       "narration": "That frozen shield lets Webb's mirror cool to 40 kelvins, cold enough to see 13.5 billion years into the past. What would you protect with a shield this cold?",
+       "visual_description": "The telescope's golden mirror glowing faintly as frost forms, then a slow zoom into a deep-field image of ancient galaxies.",
+       "scene_kind": "",
+       "card": null
+      }
+     ]
+    }
+   },
+   "b": {
+    "backup": "studio-20261016T015919Z.db",
+    "kind": "factual",
+    "id": "8de80ed1-23c4-42f3-8fb1-b7cf800886f9",
+    "text_key": "script:8de80ed1-23c4-42f3-8fb1-b7cf800886f9",
+    "title": "How NASA Keeps a Space Telescope Alive With Frozen Fuel",
+    "status": "APPROVED",
+    "verdict": "PASS",
+    "editorial_total": null,
+    "version": 13,
+    "created_at": "2026-10-10T10:47:06.910443+00:00",
+    "view": {
+     "kind": "factual",
+     "title": "How NASA Keeps a Space Telescope Alive With Frozen Fuel",
+     "scenes": [
+      {
+       "narration": "This telescope's fuel is frozen — and when it's gone, the mission is over.",
+       "visual_description": "Webb drifting alone in black space, a thin frost-like glow on its silver underside, Earth shrinking to a dot behind it.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "Webb orbits a million miles out, built to see the first galaxies.",
+       "visual_description": "A scale line stretching from tiny Earth to Webb at L2, then Webb's gold mirror turning toward a field of ancient, faint galaxies.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "A tennis-court sunshield blocks 90% of the Sun's heat on its first layer, passively cooling the mirror and instruments to minus 233 degrees.",
+       "visual_description": "The five-layer sunshield unfurling to full tennis-court size, sunlight slamming the top layer, heat visibly deflecting sideways off each silver sheet, the gold mirror waiting in shadow.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "The fuel is a finite count. A small trim flap balances the Sun's photon pressure, so the wheels burn less of it — every saved gram is time bought.",
+       "visual_description": "The small trim flap angling against streaming sunlight, the sunshield glowing at its edges, Webb holding steady without a thruster firing.",
+       "scene_kind": "LIVE",
+       "card": null
+      },
+      {
+       "narration": "Five layers, one flap, stretching a finite tank — until the fuel runs out. Follow for more.",
+       "visual_description": "Webb's gold mirror glowing against the deep dark, the sunshield catching the Sun's light, Earth a faint dot far behind.",
+       "scene_kind": "LIVE",
+       "card": null
+      }
+     ]
+    }
+   },
+   "expected": "b",
+   "expected_by": "director_review",
+   "note": "A chain of 13 drafts: the first (review REVISE) against the one shipped (APPROVED, review PASS)."
+  }
+ ]
+}

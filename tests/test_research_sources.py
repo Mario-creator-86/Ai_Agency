@@ -513,7 +513,7 @@ def test_a_result_off_the_allowlist_is_dropped_counted_and_never_fetched_or_stor
     recorder = Recorder(answer, answer, answer, answer)
     monkeypatch.setattr(search_module, "request", recorder)
     stub = StubRetriever(
-        {f"https://{WIKI}/wiki/Endangered_language": "An endangered language is one at risk."}
+        {f"https://{WIKI}/wiki/Endangered_language": "UNESCO tracks endangered languages. An endangered language is one at risk."}
     )
     import app.research.service as service
 
@@ -617,7 +617,7 @@ def test_the_researcher_does_not_guess_when_pages_were_found(engine, settings, s
     set_search_template(engine, WIKI, OWNER_TEMPLATE)
     found = f"https://{WIKI}/wiki/Endangered_language"
     stub = StubRetriever(
-        {found: "An endangered language is one at risk of disappearing."},
+        {found: "UNESCO tracks endangered languages. An endangered language is at risk of disappearing."},
         search_answer=json.dumps(["q", ["Endangered language"], [""], [found]]),
     )
     import app.research.service as service
@@ -631,8 +631,10 @@ def test_the_researcher_does_not_guess_when_pages_were_found(engine, settings, s
     result = gather_sources(engine, registry, settings, a_topic(engine), str(uuid4()))
     assert [f["url"] for f in result["fetched"]] == [found]
     assert result["failed"] == [{"url": guess, "why": result["failed"][0]["why"]}]
-    assert "ghicit" in result["failed"][0]["why"]
-    assert guess not in stub.asked, "a guess is not fetched when real pages exist"
+    # With fewer relevant pages than the Owner's limit, the Researcher may
+    # verify another proposed URL, but the failed URL must never be ingested.
+    assert "HTTP 404" in result["failed"][0]["why"]
+    assert guess in stub.asked, "a proposed URL must be tested before it can become a source"
     assert "prefer them" in model.calls[0] and "not fetched" in model.calls[0]
     with Session(engine) as session:
         assert session.scalar(select(AgentMessage).where(AgentMessage.intent == "ESCALATE")) is None
@@ -641,7 +643,7 @@ def test_the_researcher_does_not_guess_when_pages_were_found(engine, settings, s
 def test_with_nothing_found_the_researcher_still_names_pages_and_they_are_tried(
     engine, settings, studio, monkeypatch
 ):
-    stub = StubRetriever({"https://www.unesco.org/en/atlas": "The atlas of languages in danger."})
+    stub = StubRetriever({"https://www.unesco.org/en/atlas": "UNESCO tracks endangered languages in the atlas of languages in danger."})
     import app.research.service as service
 
     monkeypatch.setattr(service, "SourceRetriever", lambda policy: stub)
@@ -670,7 +672,7 @@ def test_the_page_limit_is_read_from_settings_when_not_passed(
     engine, settings, studio, monkeypatch
 ):
     stub = StubRetriever(
-        {f"https://www.unesco.org/en/p{i}": f"Page {i} text here." for i in range(6)}
+        {f"https://www.unesco.org/en/p{i}": f"Page {i}: UNESCO tracks endangered languages in the atlas." for i in range(6)}
     )
     import app.research.service as service
 

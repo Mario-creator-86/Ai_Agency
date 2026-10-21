@@ -42,6 +42,9 @@ const STATUS_LABEL = {
   OPEN: 'deschis',
   ANSWERED: 'răspuns',
   RESOLVED: 'rezolvat',
+  // Closed by the studio's sweep with nobody's answer (`expired` on the letter, 2026-10-16):
+  // stored ANSWERED so the sheet repair may still resolve it, never shown as «răspuns».
+  EXPIRED: 'închis fără răspuns',
 };
 
 /**
@@ -123,12 +126,17 @@ export function renderThread(thread, { escape, timezone }) {
         String(m.subject || '').trim().toLowerCase() === String(thread.subject || '').trim().toLowerCase();
       const footer =
         m.status && m.status !== 'OPEN'
-          ? `<div class="mail-footer">${escape(STATUS_LABEL[m.status] || m.status)}${m.resolved_by ? ` de ${escape(m.resolved_by)}` : ''}${m.resolution && m.resolution !== full ? ` — ${escape(m.resolution)}` : ''}</div>`
+          ? `<div class="mail-footer">${escape(STATUS_LABEL[m.expired ? 'EXPIRED' : m.status] || m.status)}${m.resolved_by ? ` de ${escape(m.resolved_by)}` : ''}${m.resolution && m.resolution !== full ? ` — ${escape(m.resolution)}` : ''}</div>`
           : '';
       const forOwner = Boolean(m.for_owner) || to === 'Owner';
+      const body = m.body_json || {};
+      const asksOwner = forOwner && m.status === 'OPEN' && (
+        typeof m.requires_owner_response === 'boolean' ? m.requires_owner_response :
+          ['REQUEST_INFO', 'REQUEST_REVIEW', 'CHALLENGE', 'ESCALATE'].includes(m.intent) || body.outcome === 'ASKED'
+      );
       return (
-        `<article class="mail-letter${index === 0 ? ' is-first' : ''}${forOwner ? ' is-owner' : ''}" data-message="${escape(m.id)}">` +
-        (forOwner && m.status === 'OPEN' ? '<div class="mail-owner-flag">Pentru tine — așteaptă răspunsul tău</div>' : '') +
+        `<article class="mail-letter${index === 0 ? ' is-first' : ''}${asksOwner ? ' is-owner' : ''}" data-message="${escape(m.id)}">` +
+        (asksOwner ? '<div class="mail-owner-flag">Pentru tine — așteaptă răspunsul tău</div>' : '') +
         `<div class="mail-meta"><span class="mail-route"><strong>${escape(from)}</strong> <span class="mail-arrow">→</span> <strong>${escape(to)}</strong></span>` +
         `<time>${escape(when(m.created_at, timezone))}</time></div>` +
         `<div class="mail-subject"><span class="policy-tag policy-locked">${escape(INTENT_LABEL[m.intent] || m.intent)}</span>${subjectEchoesTitle ? '' : ` ${escape(m.subject)}`}</div>` +

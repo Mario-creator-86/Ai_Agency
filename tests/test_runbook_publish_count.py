@@ -4,7 +4,7 @@ The runbook reads a stored run back (`app.runbook.services.stored_summary`). The
 publish stage has returned its films under a nested ``published`` list since Phase B/C; a run
 recorded before that carries the one publication flat, as ``publication_id`` and
 ``publication_status``. The 12.09 run of the Owner's studio is one of those: its publication
-0000010e is PUBLISHED on YouTube, yet the headline read «Niciun film publicat azi», because only
+86fe911d is PUBLISHED on YouTube, yet the headline read «Niciun film publicat azi», because only
 the nested key was counted. A legacy publish artefact is now read by the keys it has.
 """
 
@@ -20,7 +20,7 @@ def _publish(artefacts: dict[str, Any], status: str = "COMPLETED") -> dict[str, 
 
 
 LEGACY_PUBLISHED = {
-    "publication_id": "00000000-0000-4000-8000-00000000010e",
+    "publication_id": "86fe911d-11ce-4243-9cc2-70809577517e",
     "publication_status": "PUBLISHED",
     "title": "How ATLAS Caught the Higgs Boson in Real Time",
 }
@@ -70,7 +70,7 @@ def test_the_stored_12_09_run_now_reads_true() -> None:
     stages = [
         {"stage": "preflight", "status": "COMPLETED", "artefacts": {"status": "READY"}},
         {"stage": "idea_generation", "status": "COMPLETED", "artefacts": {"pool": 6}},
-        {"stage": "media", "status": "COMPLETED", "artefacts": {"assets": ["000001dd"]}},
+        {"stage": "media", "status": "COMPLETED", "artefacts": {"assets": ["ed53bac1"]}},
         _publish(LEGACY_PUBLISHED),
     ]
     told = stored_summary(stages)

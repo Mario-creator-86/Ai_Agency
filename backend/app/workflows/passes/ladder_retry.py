@@ -15,8 +15,8 @@ answer (`media.scene_rewrite.quality_refused`), whose newest brief attempt for t
 not rewrite the scene and is older than `RETRY_MINUTES`, with no continuation queued or at work
 and no walk of the film in those minutes, and queues one FILM_CONTINUE
 (`app.services.queue_film_continue`, cause `CAUSE`): the walk runs her ladder again — her brief,
-his rewrite, the clip bought on the new words under the Owner's rule. At most `MAX_PER_DAY` a
-day per film: a brief that fails every time is not asked forever, and the film's state says so.
+his rewrite, the clip bought on the new words under the Owner's rule. Editorial retries have
+no daily limit. The cooldown and one pending continuation prevent a busy retry loop.
 
 A brief attempt is her BRIEF_EVENT for the scene, written since 2026-10-11 whether the brief
 rewrote the scene or failed (`scene_rewrite._record_brief`). Before that day a failed brief left
@@ -36,10 +36,6 @@ from app.workflows.passes import WatchdogContext, watchdog_pass
 
 #: How long after her newest brief attempt (and the film's newest walk) the ladder is retried.
 RETRY_MINUTES = 20
-#: How many retries a film gets in one day (UTC).
-MAX_PER_DAY = 6
-#: How far back a stopped film is looked for.
-LOOKBACK_DAYS = 7
 #: The continuation's cause: the walk records it on `runbook.film_continued`.
 CAUSE = "director_ladder_retry"
 #: Where a walk left a film (`runbook.stages`): its status and refusal.
@@ -79,7 +75,6 @@ def queue_ladder_retries(context: WatchdogContext) -> dict[str, Any]:
     from app.workflows.models import TaskQueueItem  # noqa: PLC0415
 
     now = datetime.now(UTC)
-    since = (now - timedelta(days=LOOKBACK_DAYS)).isoformat()
     fresh = now - timedelta(minutes=RETRY_MINUTES)
     day = now.date().isoformat()
     owed: list[tuple[str, str]] = []
@@ -99,7 +94,7 @@ def queue_ladder_retries(context: WatchdogContext) -> dict[str, Any]:
         stood: dict[str, dict[str, Any]] = {}
         for event in session.scalars(
             select(DomainEvent)
-            .where(DomainEvent.event_type == FILM_STATE_EVENT, DomainEvent.timestamp >= since)
+            .where(DomainEvent.event_type == FILM_STATE_EVENT)
             .order_by(DomainEvent.sequence)
         ):
             stood[str(event.aggregate_id)] = dict(event.payload or {})
@@ -197,8 +192,6 @@ def queue_ladder_retries(context: WatchdogContext) -> dict[str, Any]:
                 )
                 or 0
             )
-            if made_today >= MAX_PER_DAY:
-                continue
             owed.append((storyboard_id, f"{prefix}{made_today + 1}"))
     if not owed:
         return {"queued": []}

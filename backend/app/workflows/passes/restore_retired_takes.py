@@ -1,6 +1,32 @@
-"""Restore retired takes: existing local-first media checks.
+"""Takes a redo retired and then delivered nothing for, given back once (2026-10-10).
 
-Private production traces omitted; implementation unchanged."""
+Film babcf272, «The Particle That Shouldn't Exist (But Does)»: the day's QC repair
+(`runbook.stages._apply_repairs`) redid scenes 1 and 2 unasked. In the transaction that spent
+the yes it retired the Owner's own approved takes (scene 1: still 76e59c5c REDO.OWNER and clip
+405e87d8 REDO.STILL_REPLACED; scene 2: still 50fe4807 and his test shot 3685dd5b; each
+``media.scene_take_retired`` event says ``previous_status`` APPROVED) and rewrote both
+scenes' words (``media.prompts_rewritten``); then the GPU was forced off, every new candidate
+ended REFUSED, and both scenes were left with nothing to assemble.
+
+A redo that delivers nothing now gives back what it retired itself (`redo_scene`, through
+`assembler.give_back_retired_takes`). This pass does the same for the redos that ended before
+that code ran, or that died before they could (a killed process): each redo's retirements of
+one scene (its correlation id) of the last days, not given back yet, are handed to
+`give_back_retired_takes`, which gives them back only when nothing was delivered for the scene
+since the retirement, never a take the Owner turned down himself, with the scene's words put
+back when the redo had rewritten them. Once given back a retirement is never looked at again
+(its ``media.scene_take_restored`` names it), so the pass is idempotent.
+
+"Delivered" is read from the takes' history, not from what they are now (review 2026-10-10):
+a take made since that came with its file counts whatever became of it. A redo that delivered
+a still the gate, the clip QC or the Owner later turned down did deliver, so the takes it
+retired (his own «Refă» included, ``owner_press`` on their events) never come back days later;
+only REFUSED, LOST or never-sent takes leave a redo with nothing.
+
+A film whose purchase lease is held is left alone (a redo may be retiring and buying right
+now and gives back itself), and so is a film that is closed. Nothing here buys, asks the Owner
+or decides in his name: it writes take statuses and a scene's words back, and their events.
+"""
 
 from __future__ import annotations
 

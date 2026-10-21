@@ -1,0 +1,1329 @@
+{
+  "method": "Frozen recorded examples and deterministic compilers; no providers, live database writes or approvals.",
+  "examples": [
+    {
+      "storyboard_id": "a4d0a91a-aa7d-4d37-904a-8d54b71dad17",
+      "title": "Storyboard: The Moon Turns. Why Do We See One Face?",
+      "board_status": "REJECTED",
+      "scene": 2,
+      "kind": "factual",
+      "model": "seedance2_5",
+      "status": "OFFLINE_DRAFT_NOT_DIRECTOR_APPROVED",
+      "auto_apply": false,
+      "historical_rejected_board": true,
+      "repair_owner": "Kael + Sarah",
+      "required_layer": "motion",
+      "source_package_sha256": "4c338d986192bf2f7f0542562dd0a3e725ee5c570240ae96bd78072effa12035",
+      "field_changes": {},
+      "before": {
+        "still": "Documentary photograph, natural and unposed, true-to-life colour. A pure black sky with a sparse scatter, airless vacuum, None, vacuum. A single hard directional sunlight from one consistent. Muted natural palette of Black space. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Medium shot, 50mm lens. The Moon's near face, same crater pattern as scene 1. The surface turns slowly on its axis. Same black starfield, sparse small cold-white stars, unchanged density, nothing else in space. Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered. Light Same hard sunlight from frame right as scene 1, crisp terminator. No text, no logo.",
+        "motion": "Slow orbit around the subject. Background details remain stable throughout the shot. Steady slow rotation of the surface. Continuous, seamless shot. No subtitles, no on-screen text."
+      },
+      "after": {
+        "still": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of Black space. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Medium shot, 50mm lens. The Moon's near face, crater pattern, now filling more of the frame so individual craters and their shadowed interiors are clearly readable. Same black starfield, sparse small cold-white stars, unchanged density, nothing else in space. Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered. Light hard sunlight from frame right, crisp terminator, lit grey surface with pale silver highlights, shadow side true black. No text, no logo.",
+        "motion": "Slow orbit around the subject, steady, a quarter turn from its left side to its front, the background wheeling behind it. Crater shadows visibly lengthening and shifting over three seconds. Steady slow rotation of the surface. Stars fixed. The surface turns slowly on its axis. Showing the spin as moving light and shade. The shot ends on the bright-rayed crater near centre frame, its shadow stretched leftward. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative": null
+      },
+      "compiled_motion_sha256": "e66ef0dd2eeac958dfce43f029e6492e22cb0eaf8a0a2c5f3351bfa383dac8dd",
+      "canonical_characters": [],
+      "composition_issues": [],
+      "blocks": [],
+      "warnings": [],
+      "prompt_units": {
+        "still": 694,
+        "motion": 472
+      },
+      "required_review": [
+        "Sarah must compare every current QC finding with these actual compiled words.",
+        "Check the current storyboard, canonical characters, claims and accepted source image; this snapshot can be stale.",
+        "A local lint pass is not a Director TREATS decision or visual acceptance.",
+        "Check scientific fidelity and whether any time compression/conceptual effects require disclosure; this tool tests transport, not scientific accuracy."
+      ],
+      "proposed_package": {
+        "story_purpose": "SETUP",
+        "narration": "Because its spin matches its orbit.",
+        "writer_visual": "Conceptual AI illustration: the Moon rotating on its axis, a subtle shift in shadow showing the spin, realistic craters, steady framing.",
+        "seconds": 3.0,
+        "subject": "The Moon's near face, same crater pattern as scene 1, now filling more of the frame so individual craters and their shadowed interiors are clearly readable",
+        "action": "The surface turns slowly on its axis, a bright-rayed crater drifting from the right limb toward centre frame while its inner shadow shifts shape, showing the spin as moving light and shade",
+        "environment": "Same black starfield, sparse small cold-white stars, unchanged density, nothing else in space",
+        "camera": "Medium shot, 50mm lens, the Moon filling roughly half the frame height, centred",
+        "lighting": "Same hard sunlight from frame right as scene 1, crisp terminator, lit grey surface with pale silver highlights, shadow side true black",
+        "composition": "Moon centred in the vertical frame, terminator running vertically through the middle third, black space balanced on both sides",
+        "motion": "Steady slow rotation of the surface, crater shadows visibly lengthening and shifting over three seconds; stars fixed",
+        "emotion": "Dawning understanding, calm and measured",
+        "background": "Sparse static stars, dim, non-competing",
+        "continuity": "Same near-side face and crater markings as scene 1, same sunlight direction from frame right, same starfield density; the Moon appears larger only because the shot is tighter",
+        "ending_frame": "The bright-rayed crater near centre frame, its shadow stretched leftward, terminator advanced slightly past where scene 1 ended",
+        "audio_intent": "Ambient tone continues, a slow rhythmic pulse begins, suggesting a steady beat like the spin itself",
+        "transition": "Hard cut to the locked, unchanging view of the same face",
+        "avoid": [
+          "on-screen text or captions",
+          "warped or extra hands and fingers",
+          "plastic or waxy skin",
+          "cartoon or 3D-render look when realism is asked for",
+          "unmotivated camera movement",
+          "clothing, hair or weather changing without reason",
+          "faces or bodies morphing mid-shot",
+          "watermarks or logos",
+          "any text or diagram arrows",
+          "Earth in frame",
+          "lens flare",
+          "fast or jerky rotation",
+          "changed crater pattern",
+          "atmosphere or glow around the limb"
+        ],
+        "characters": [],
+        "camera_move": "slow orbit",
+        "source": "model",
+        "second_framing": {
+          "subject": "The bright-rayed crater and its shifting inner shadow",
+          "centre_x": 0.5,
+          "centre_y": 0.5
+        },
+        "scene_kind": "LIVE",
+        "shot_type": "MEDIUM",
+        "still_prompt": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of Black space. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Medium shot, 50mm lens. The Moon's near face, crater pattern, now filling more of the frame so individual craters and their shadowed interiors are clearly readable. Same black starfield, sparse small cold-white stars, unchanged density, nothing else in space. Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered. Light hard sunlight from frame right, crisp terminator, lit grey surface with pale silver highlights, shadow side true black. No text, no logo.",
+        "motion_prompt": "Slow orbit around the subject, steady, a quarter turn from its left side to its front, the background wheeling behind it. Crater shadows visibly lengthening and shifting over three seconds. Steady slow rotation of the surface. Stars fixed. The surface turns slowly on its axis. Showing the spin as moving light and shade. The shot ends on the bright-rayed crater near centre frame, its shadow stretched leftward. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative_prompt": null,
+        "look_block": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of Black space. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail.",
+        "shot_size": "medium",
+        "motion_family": "seedance",
+        "motion_intent": {
+          "camera_move": "slow orbit",
+          "world": "Crater shadows visibly lengthening and shifting over three seconds.",
+          "subject": "Steady slow rotation of the surface, stars fixed.",
+          "subject_clauses": [
+            "Steady slow rotation of the surface.",
+            "Stars fixed."
+          ],
+          "action_clauses": [
+            "The surface turns slowly on its axis.",
+            "Showing the spin as moving light and shade."
+          ],
+          "seconds": 3.0,
+          "amplitude": "ample",
+          "constraints": [
+            "Clouds, haze, atmosphere, fog, or weather of any kind around the Moon",
+            "A purple, blue, or nebula-colored sky; space stays black",
+            "Text, letters, labels, arrows, or diagrams drawn into the image",
+            "People, faces in the Moon, or cartoon styling",
+            "any text or diagram arrows",
+            "fast or jerky rotation",
+            "changed crater pattern",
+            "atmosphere or glow around the limb"
+          ],
+          "faces_banned": false,
+          "people": true,
+          "ending_frame": "The bright-rayed crater near centre frame, its shadow stretched leftward, terminator advanced slightly past where scene 1 ended"
+        },
+        "composition_issues": []
+      }
+    },
+    {
+      "storyboard_id": "babcf272-0667-41b9-ae70-27304eef92ca",
+      "title": "Storyboard: The Particle That Shouldn't Exist (But Does)",
+      "board_status": "RENDERED",
+      "scene": 5,
+      "kind": "factual",
+      "model": "LTX-2.5",
+      "status": "OFFLINE_DRAFT_NOT_DIRECTOR_APPROVED",
+      "auto_apply": false,
+      "historical_rejected_board": false,
+      "repair_owner": "Marcus + Sarah, then Kael",
+      "required_layer": "story/shot plan",
+      "source_package_sha256": "1285689387c0be7b11b2991af0b52fcc0474b8e05f02889b65732547d72c23c6",
+      "field_changes": {
+        "subject": {
+          "before": "Glowing white spheres clustered and holding together as atoms, then the empty accelerator tunnel from scene 1",
+          "after": "A stable cluster of glowing white spheres representing an atom in a near-black abstract space."
+        },
+        "action": {
+          "before": "White spheres drawing close and locking into a stable cluster, their orbits settling into a steady hold; the cluster's glow softens and dissolves into the tunnel view, which sits empty and still",
+          "after": "The white spheres draw close into a stable cluster, their orbits settling into a steady hold."
+        },
+        "environment": {
+          "before": "First the near-black void of scenes 2 and 3; then the identical tunnel from scene 1 — same curved ceiling, same fluorescent pools, same vanishing point — now without the figure",
+          "after": "A near-black abstract space around the white cluster."
+        },
+        "camera": {
+          "before": "Medium shot on the atom cluster, 85mm compression, then the same wide 24mm framing as scene 1 for the tunnel",
+          "after": "Medium shot on the atom cluster, 85mm lens."
+        },
+        "lighting": {
+          "before": "The atoms glow pure white with faint blue binding fields between them; the tunnel returns to practical fluorescent pools, cool white with slate-blue shadow, exactly as scene 1",
+          "after": "White glow from the spheres with faint blue binding fields between them."
+        },
+        "composition": {
+          "before": "Vertical frame: the atom cluster centred, spheres packed in a tight stable group; the tunnel shot mirrors scene 1's composition exactly, minus the figure — the empty space at lower centre where the figure stood",
+          "after": "The single white cluster centred in the vertical frame."
+        },
+        "motion": {
+          "before": "The spheres settle from drift into a held, gentle oscillation — holding together is the motion; in the tunnel, nothing moves but the faint shimmer above a light pool, as in scene 1",
+          "after": "The spheres settle into gentle oscillation and hold together."
+        },
+        "background": {
+          "before": "The void, then the empty tunnel; nothing added, nothing competing",
+          "after": "Near-black space around the white cluster."
+        },
+        "continuity": {
+          "before": "The tunnel must be visually identical to scene 1 — same lighting, perspective and palette — creating the bookend; the figure does not reappear; white spheres match the heavy particles of scene 2",
+          "after": "White spheres and blue binding fields retain their shape and colour."
+        },
+        "ending_frame": {
+          "before": "The empty tunnel holding still, the nearest pool of light steady, the far end dark — the frame scene 1 ended on, now without the figure",
+          "after": "The white spheres held in one stable cluster, thin blue fields between them."
+        },
+        "transition": {
+          "before": "Final shot; hold on the empty tunnel, then fade to black",
+          "after": "Hold on the cluster; fade to black during assembly."
+        }
+      },
+      "before": {
+        "still": "Documentary photograph, natural and unposed, true-to-life colour. A real location as it is today. For abstract scenes. Muted natural palette of slate blue, muted moss green, wet earth brown and stone grey. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Wide establishing shot, 85mm lens. Glowing white spheres clustered and holding together as atoms. White spheres drawing close and locking into a stable cluster. The near-black void. Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered. Lit by the atoms glow pure white with faint blue binding fields between them. No text, no logo.",
+        "motion": "Slow pull-back that widens the view. The spheres settle from drift into a held. Gentle oscillation, holding together is the motion, in the tunnel. Continuous, seamless shot. No subtitles, no on-screen text."
+      },
+      "after": {
+        "still": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of slate blue, muted moss green, wet earth brown and stone grey. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Medium shot, 85mm lens. A stable cluster of glowing white spheres representing an atom in a near-black abstract space. The white spheres draw close into a stable cluster, their orbits settling into a steady hold. A near-black abstract space around the white cluster. Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered. Light White glow from the spheres with faint blue binding fields between them. No text, no logo.",
+        "motion": "Slow pull-back from close on the subject to the wide view, steady all the way, the space opening around it. Shadows drift and the light shifts across the scene, its smallest details stirring. The spheres settle into gentle oscillation and hold together. The white spheres draw close into a stable cluster. The shot ends on the white spheres held in one stable cluster, thin blue fields between them. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative": null
+      },
+      "compiled_motion_sha256": "b482f1da65ee1155f6bf6cc16b4bb02a5163f72772fd1c361b4b94f0f36ef9e1",
+      "canonical_characters": [],
+      "composition_issues": [],
+      "blocks": [],
+      "warnings": [
+        {
+          "code": "STILL_MOTION",
+          "severity": "WARN",
+          "scene": 5,
+          "evidence": "orbits",
+          "message_ro": "Promptul imaginii cere mișcare („orbits”). O imagine este un singur moment nemișcat: mișcarea camerei, tempoul și durata clipului se spun doar în promptul de mișcare. Descrieți ce se vede în acel moment."
+        }
+      ],
+      "prompt_units": {
+        "still": 703,
+        "motion": 459
+      },
+      "required_review": [
+        "Sarah must compare every current QC finding with these actual compiled words.",
+        "Check the current storyboard, canonical characters, claims and accepted source image; this snapshot can be stale.",
+        "A local lint pass is not a Director TREATS decision or visual acceptance.",
+        "Marcus/Sarah must approve removing the atom-to-tunnel dissolve: this draft remains in one conceptual shot. Verify the Higgs/mass/binding explanation against the original verified claims; no new factual approval is supplied here.",
+        "Check scientific fidelity and whether any time compression/conceptual effects require disclosure; this tool tests transport, not scientific accuracy."
+      ],
+      "proposed_package": {
+        "story_purpose": "ENDING",
+        "narration": "Without this particle, atoms couldn't hold together and you wouldn't exist. It took the biggest machine ever built to prove why anything has mass.",
+        "writer_visual": "Abstract visualization of atoms holding together as glowing spheres, then transitioning back to the empty accelerator tunnel from the opening shot.",
+        "seconds": 9.0,
+        "subject": "A stable cluster of glowing white spheres representing an atom in a near-black abstract space.",
+        "action": "The white spheres draw close into a stable cluster, their orbits settling into a steady hold.",
+        "environment": "A near-black abstract space around the white cluster.",
+        "camera": "Medium shot on the atom cluster, 85mm lens.",
+        "lighting": "White glow from the spheres with faint blue binding fields between them.",
+        "composition": "The single white cluster centred in the vertical frame.",
+        "motion": "The spheres settle into gentle oscillation and hold together.",
+        "emotion": "Quiet finality; the wonder of existing at all, then stillness",
+        "background": "Near-black space around the white cluster.",
+        "continuity": "White spheres and blue binding fields retain their shape and colour.",
+        "ending_frame": "The white spheres held in one stable cluster, thin blue fields between them.",
+        "audio_intent": "A warm sustained chord under the atoms, thinning to the tunnel's low room tone and electrical hum, ending near silence",
+        "transition": "Hold on the cluster; fade to black during assembly.",
+        "avoid": [
+          "on-screen text or captions",
+          "warped or extra hands and fingers",
+          "plastic or waxy skin",
+          "cartoon or 3D-render look when realism is asked for",
+          "unmotivated camera movement",
+          "clothing, hair or weather changing without reason",
+          "faces or bodies morphing mid-shot",
+          "watermarks or logos",
+          "the figure reappearing",
+          "any change to the tunnel's look from scene 1",
+          "weather effects",
+          "lens dirt",
+          "cartoonish graphics"
+        ],
+        "characters": [],
+        "camera_move": "slow pull-back",
+        "source": "model",
+        "second_framing": {
+          "subject": "The heart of the atom cluster, white spheres locked together with thin blue fields between them",
+          "centre_x": 0.5,
+          "centre_y": 0.5
+        },
+        "scene_kind": "LIVE",
+        "shot_type": "MEDIUM",
+        "still_prompt": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of slate blue, muted moss green, wet earth brown and stone grey. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Medium shot, 85mm lens. A stable cluster of glowing white spheres representing an atom in a near-black abstract space. The white spheres draw close into a stable cluster, their orbits settling into a steady hold. A near-black abstract space around the white cluster. Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered. Light White glow from the spheres with faint blue binding fields between them. No text, no logo.",
+        "motion_prompt": "Slow pull-back from close on the subject to the wide view, steady all the way, the space opening around it. Shadows drift and the light shifts across the scene, its smallest details stirring. The spheres settle into gentle oscillation and hold together. The white spheres draw close into a stable cluster. The shot ends on the white spheres held in one stable cluster, thin blue fields between them. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative_prompt": null,
+        "look_block": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of slate blue, muted moss green, wet earth brown and stone grey. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail.",
+        "shot_size": "medium",
+        "motion_family": "generic",
+        "motion_intent": {
+          "camera_move": "slow pull-back",
+          "world": "Shadows drift and the light shifts across the scene, its smallest details stirring.",
+          "subject": "The spheres settle into gentle oscillation and hold together.",
+          "subject_clauses": [
+            "The spheres settle into gentle oscillation and hold together."
+          ],
+          "action_clauses": [
+            "The white spheres draw close into a stable cluster."
+          ],
+          "seconds": 9.0,
+          "amplitude": "ample",
+          "constraints": [
+            "Any text, letters, or numbers",
+            "Cartoonish or overly stylized graphics",
+            "People's faces. The figure in scene 1 is seen only from behind",
+            "Terrestrial weather effects like rain, fog, or wind",
+            "the figure reappearing",
+            "any change to the tunnel's look from scene 1",
+            "weather effects",
+            "cartoonish graphics"
+          ],
+          "faces_banned": false,
+          "people": false,
+          "ending_frame": "The white spheres held in one stable cluster, thin blue fields between them."
+        },
+        "composition_issues": []
+      }
+    },
+    {
+      "storyboard_id": "6fe6a577-7a12-4e87-9179-5970697f2c2d",
+      "title": "Storyboard: How NASA Keeps a Space Telescope Alive With Frozen Fuel",
+      "board_status": "RENDERED",
+      "scene": 3,
+      "kind": "factual",
+      "model": "LTX-2.5",
+      "status": "OFFLINE_DRAFT_NOT_DIRECTOR_APPROVED",
+      "auto_apply": false,
+      "historical_rejected_board": false,
+      "repair_owner": "Kael + Sarah",
+      "required_layer": "motion",
+      "source_package_sha256": "d94c8cb37b480f02fecc17dd0f4b6357f121d8451f29f01428bc2ae16095e649",
+      "field_changes": {},
+      "before": {
+        "still": "Documentary photograph, natural and unposed, true-to-life colour. Deep space at the second Lagrange point, vacuum. Soft diffuse daylight from high to one side. Muted natural palette of Deep black space. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Detail shot, 85mm lens. The five-layer silver sunshield seen edge-on from the side, each membrane a thin pale grey sheet separated by dark gaps. Black vacuum, the Sun a hard white point off frame left and slightly high. Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered. Lit by one brutal hard sun raking across the top layer from frame left. No text, no logo.",
+        "motion": "Slow pan right across the scene. Background details remain stable throughout the shot. Nothing in the world moves. Continuous, seamless shot. No subtitles, no on-screen text."
+      },
+      "after": {
+        "still": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of Deep black space. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Detail shot, 85mm lens. The five-layer silver sunshield seen edge-on from the side, each membrane a thin pale grey sheet separated by dark gaps, sunlight striking the top layer while the gold mirror waits in shadow beneath. Black vacuum, the Sun a hard white point off frame left and slightly high, nothing diffusing the light, the stacked membranes reading as five separated silver planes. Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered. No text, no logo.",
+        "motion": "Slow pan right, smooth and with a clear start and end, sweeping from the left side of the scene across to the subject. Nothing in the world moves. Revealing each membrane's edge and the dark gaps between them. Ending at the far end of the shield. Down to the mirror sitting cold and dark below. The shot ends on the far end of the sunshield with its thin bright edge line, the small trim flap just visible at the end of the stack. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative": null
+      },
+      "compiled_motion_sha256": "f01dd45216ef49ac7ad222867603464bd18c85916486680e8ef62b3430e9ef27",
+      "canonical_characters": [],
+      "composition_issues": [],
+      "blocks": [],
+      "warnings": [
+        {
+          "code": "MOTION_ENVIRONMENT",
+          "severity": "WARN",
+          "scene": 3,
+          "evidence": "Slow pan right, smooth and with a clear start and end, sweeping from the left side of the scene across to the subject.",
+          "message_ro": "Promptul de mișcare nu are nicio mișcare a mediului („Slow pan right, smooth and with a clear start and end,”): nori care trec, vânt în iarbă, apă care curge, praf."
+        }
+      ],
+      "prompt_units": {
+        "still": 704,
+        "motion": 490
+      },
+      "required_review": [
+        "Sarah must compare every current QC finding with these actual compiled words.",
+        "Check the current storyboard, canonical characters, claims and accepted source image; this snapshot can be stale.",
+        "A local lint pass is not a Director TREATS decision or visual acceptance.",
+        "Check scientific fidelity and whether any time compression/conceptual effects require disclosure; this tool tests transport, not scientific accuracy."
+      ],
+      "proposed_package": {
+        "story_purpose": "DEVELOPMENT",
+        "narration": "A tennis-court sunshield blocks 90% of the Sun's heat on its first layer, passively cooling the mirror and instruments to minus 233 degrees.",
+        "writer_visual": "The five-layer sunshield unfurling to full tennis-court size, sunlight slamming the top layer, heat visibly deflecting sideways off each silver sheet, the gold mirror waiting in shadow.",
+        "seconds": 9.0,
+        "subject": "The five-layer silver sunshield seen edge-on from the side, each membrane a thin pale grey sheet separated by dark gaps, sunlight striking the top layer while the gold mirror waits in shadow beneath",
+        "action": "Hard sunlight hits the top silver layer and stops there; along the edges of each sheet a faint bright rim shows where the light is thrown back out sideways, layer after layer, down to the mirror sitting cold and dark below",
+        "environment": "Black vacuum, the Sun a hard white point off frame left and slightly high, no atmosphere, nothing diffusing the light, the stacked membranes reading as five separated silver planes",
+        "camera": "Detail shot of the sunshield layers and their edges, side angle, 85mm compression stacking the five membranes visually",
+        "lighting": "One brutal hard sun raking across the top layer from frame left, the lit face burning bright silver, each lower layer catching only thin edge light, the underside falling to near black with a faint cold blue sheen",
+        "composition": "Vertical 9:16, the stacked shield layers running horizontally across the middle third, the Sun's hard point high left, the gold mirror a warm sliver low in frame in shadow",
+        "motion": "Nothing in the world moves; the slow rightward pan travels along the shield's length, revealing each membrane's edge and the dark gaps between them, ending at the far end of the shield",
+        "emotion": "Quiet engineering power, heat stopped by geometry alone, matter-of-fact and steady",
+        "background": "Pure black behind the shield edges, no stars dense enough to distract, no Earth in this frame",
+        "continuity": "Same telescope, Sun still at frame left so shadows fall the same way as scenes 1 and 2, silver cool, gold warm, black true black; the mirror stays on the shaded side",
+        "ending_frame": "The far end of the sunshield with its thin bright edge line, the small trim flap just visible at the end of the stack, setting up scene 4",
+        "audio_intent": "A low warm hum under the drone, a subtle bright shimmer as the pan crosses each lit edge, narration carrying the numbers",
+        "transition": "Cut from the shield's far end straight to the trim flap detail of scene 4",
+        "avoid": [
+          "on-screen text or captions",
+          "warped or extra hands and fingers",
+          "plastic or waxy skin",
+          "cartoon or 3D-render look when realism is asked for",
+          "unmotivated camera movement",
+          "clothing, hair or weather changing without reason",
+          "faces or bodies morphing mid-shot",
+          "watermarks or logos",
+          "on-screen text, numbers or charts in the picture",
+          "visible heat ripples or atmospheric distortion",
+          "haze, god rays, dust",
+          "the shield glowing warm on its shaded side",
+          "people or hands",
+          "lens flare"
+        ],
+        "characters": [],
+        "camera_move": "slow pan right",
+        "source": "model",
+        "second_framing": {
+          "subject": "The dark gaps between two silver membranes, hard light on the upper sheet, cold shadow below",
+          "centre_x": 0.45,
+          "centre_y": 0.5
+        },
+        "scene_kind": "LIVE",
+        "shot_type": "MEDIUM",
+        "still_prompt": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of Deep black space. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Detail shot, 85mm lens. The five-layer silver sunshield seen edge-on from the side, each membrane a thin pale grey sheet separated by dark gaps, sunlight striking the top layer while the gold mirror waits in shadow beneath. Black vacuum, the Sun a hard white point off frame left and slightly high, nothing diffusing the light, the stacked membranes reading as five separated silver planes. Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered. No text, no logo.",
+        "motion_prompt": "Slow pan right, smooth and with a clear start and end, sweeping from the left side of the scene across to the subject. Nothing in the world moves. Revealing each membrane's edge and the dark gaps between them. Ending at the far end of the shield. Down to the mirror sitting cold and dark below. The shot ends on the far end of the sunshield with its thin bright edge line, the small trim flap just visible at the end of the stack. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative_prompt": null,
+        "look_block": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of Deep black space. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail.",
+        "shot_size": "detail",
+        "motion_family": "generic",
+        "motion_intent": {
+          "camera_move": "slow pan right",
+          "world": "Nothing in the world moves.",
+          "subject": "Revealing each membrane's edge and the dark gaps between them, ending at the far end of the shield.",
+          "subject_clauses": [
+            "Revealing each membrane's edge and the dark gaps between them.",
+            "Ending at the far end of the shield."
+          ],
+          "action_clauses": [
+            "Down to the mirror sitting cold and dark below."
+          ],
+          "seconds": 9.0,
+          "amplitude": "ample",
+          "constraints": [
+            "Nebulae, colorful galaxies, or dense starfields filling the background",
+            "Atmospheric effects: haze, clouds, wind, fog, god rays, dust",
+            "Blue sky, horizons, ground, or any terrestrial reference",
+            "Thruster flames or engine glow; the story says the ship saves fuel, so nothing fires",
+            "Astronauts, people, hands, or faces",
+            "Science-fiction details the real telescope does not have: extra antennas, glowing engines, spinning parts",
+            "Text, numbers, or charts rendered by the image model inside the picture",
+            "Warm light on the shaded side of the telescope; the cold side stays cold-looking",
+            "on-screen text, numbers or charts in the picture",
+            "visible heat ripples or atmospheric distortion",
+            "haze, god rays, dust",
+            "the shield glowing warm on its shaded side",
+            "people or hands"
+          ],
+          "faces_banned": false,
+          "people": false,
+          "ending_frame": "The far end of the sunshield with its thin bright edge line, the small trim flap just visible at the end of the stack, setting up scene 4"
+        },
+        "composition_issues": []
+      }
+    },
+    {
+      "storyboard_id": "aa170155-56c7-4e29-9616-e1e917fb243e",
+      "title": "Storyboard: Why Ernest Lawrence's First Cyclotron Barely Fit on a Desk",
+      "board_status": "RENDERED",
+      "scene": 3,
+      "kind": "factual",
+      "model": "LTX-2.5",
+      "status": "OFFLINE_DRAFT_NOT_DIRECTOR_APPROVED",
+      "auto_apply": false,
+      "historical_rejected_board": false,
+      "repair_owner": "Kael + Sarah",
+      "required_layer": "still",
+      "source_package_sha256": "0247dd16bcf839fd3e5f27b36adc897364bb3ccc1f65cf1b5b60cf4c87a6a5ed",
+      "field_changes": {
+        "subject": {
+          "before": "Two flat D-shaped brass electrodes, each like a hollow letter D the size of a small coin, flat straight edges facing each other across a narrow gap of a few millimetres, curved backs outward, seated inside a small round brass vacuum chamber about ten centimetres across, with two larger round flat iron magnet poles, one above and one below the chamber, cropping the top and bottom edges of the",
+          "after": "Two hollow D-shaped brass electrodes in a round chamber about ten centimetres across, straight edges facing across a narrow millimetre-scale gap, between two round flat iron magnet poles."
+        },
+        "ending_frame": {
+          "before": "The push-in at its closest on the electrode gap, the pulse at its brightest, the two flat brass edges sharp and glowing warm, the curved backs of the D-shapes framing the light on both sides, the brass surfaces warm and aged, the narrow gap glowing softly, the walnut desk calm and uncluttered in the",
+          "after": "The narrow gap between two straight brass electrode edges, softly glowing, the curved D-shaped backs visible on both sides."
+        }
+      },
+      "before": {
+        "still": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of Warm amber lamplight, aged brass, dark walnut wood. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Detail shot, 85mm lens. Two flat D-shaped brass electrodes, each like a hollow letter D the size of a small coin, flat straight edges facing each other across a narrow gap of a few millimetres, curved backs outward, seated inside a small round brass vacuum chamber about ten centimetres across, with two larger round flat iron magnet poles, one above and one below the chamber. The frame holds only the place and the things named. No text, no logo.",
+        "motion": "Slow push-in from the wide view toward the subject, steady all the way, ending close on it. A hairline of dust on the brass stays still. The pulse brightens and fades in a steady slow rhythm. Nothing else moves. A soft warm glow pulses gently in the narrow gap between the two flat electrode edges. Brightening and dimming in a slow steady rhythm. In the final seconds the camera eases to a steady hold on the subject, and everything in the frame keeps moving. Continuous, seamless shot. No subtitles, no on-screen text."
+      },
+      "after": {
+        "still": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of Warm amber lamplight, aged brass, dark walnut wood. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Detail shot, 85mm lens. Two hollow D-shaped brass electrodes in a round chamber about ten centimetres across, straight edges facing across a narrow millimetre-scale gap, between two round flat iron magnet poles. The frame holds only the place and the things named. Light Soft diffuse warm amber lamplight from frame left across the aged brass surfaces, a gentle warm glint inside the electrode gap where the pulse glows, soft shadows falling to the right into darkness. No text, no logo.",
+        "motion": "Slow push-in from the wide view toward the subject, steady all the way, ending close on it. A hairline of dust on the brass stays still. The pulse brightens and fades in a steady slow rhythm. Nothing else moves. A soft warm glow pulses gently in the narrow gap between the two flat electrode edges. Brightening and dimming in a slow steady rhythm. The shot ends on the narrow gap between two straight brass electrode edges, softly glowing, the curved D-shaped backs visible on both sides. The frame holds only the place and the things named. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative": null
+      },
+      "compiled_motion_sha256": "758ccafb7f42883d4c0416c4b2b81cce97b217d6abb9969f2883b975f51459a8",
+      "canonical_characters": [],
+      "composition_issues": [],
+      "blocks": [],
+      "warnings": [
+        {
+          "code": "MOTION_STILLNESS",
+          "severity": "WARN",
+          "scene": 3,
+          "evidence": "stays still",
+          "message_ro": "Promptul de mișcare cere nemișcare („stays still”). Modelul face exact ce i se cere: un clip aproape static. Spuneți ce se mișcă, cu drum și ritm."
+        },
+        {
+          "code": "MOTION_LENGTH",
+          "severity": "WARN",
+          "scene": 3,
+          "evidence": "Slow push-in from the wide view toward the subject, steady all the way, ending close on it.",
+          "message_ro": "Promptul de mișcare are 104 cuvinte („Slow push-in from the wide view toward the subject, steady”); lungimea potrivită este 25–95."
+        }
+      ],
+      "prompt_units": {
+        "still": 722,
+        "motion": 601
+      },
+      "required_review": [
+        "Sarah must compare every current QC finding with these actual compiled words.",
+        "Check the current storyboard, canonical characters, claims and accepted source image; this snapshot can be stale.",
+        "A local lint pass is not a Director TREATS decision or visual acceptance.",
+        "Check scientific fidelity and whether any time compression/conceptual effects require disclosure; this tool tests transport, not scientific accuracy."
+      ],
+      "proposed_package": {
+        "story_purpose": "DEVELOPMENT",
+        "narration": "His idea: make protons spiral in a magnetic field, kicked faster every half-turn — so a small chamber does a giant machine's job.",
+        "writer_visual": "Extreme close-up of two D-shaped metal electrodes facing each other inside a small brass chamber between round electromagnet poles.",
+        "seconds": 9.0,
+        "subject": "Two hollow D-shaped brass electrodes in a round chamber about ten centimetres across, straight edges facing across a narrow millimetre-scale gap, between two round flat iron magnet poles.",
+        "action": "A soft warm glow pulses gently in the narrow gap between the two flat electrode edges, brightening and dimming in a slow steady rhythm, as if something invisible is being kicked faster with each beat.",
+        "environment": "The interior of the small desktop device resting on the dark walnut desk; the two round flat iron magnet poles sit one above and one below the chamber, cropping the top and bottom edges of the frame; the whole device is small enough to sit beside the green desk lamp.",
+        "camera": "Extreme close-up at chamber level, 85mm detail-shot lens perspective, straight-on, gentle depth of field, fine film grain and crisp detail.",
+        "lighting": "Soft diffuse warm amber lamplight from frame left across the aged brass surfaces, a gentle warm glint inside the electrode gap where the pulse glows, soft shadows falling to the right into darkness.",
+        "composition": "Vertical 9:16 frame: the two D-shaped electrodes centred in the upper two thirds, the narrow gap between them on the vertical centre line, the round magnet poles cropping the top and bottom edges, the lower quarter calm and uncluttered walnut desk.",
+        "motion": "The push-in starts on the full chamber with both D-electrodes and the magnet poles visible, and over the clip's nine seconds glides slowly and steadily closer until the narrow gap and its pulsing glow fill the centre of the frame; the pulse brightens and fades in a steady slow rhythm; a hairline of dust on the brass stays still; nothing else moves.",
+        "emotion": "Contained energy — the feeling of a large idea working inside a very small space.",
+        "background": "Pure warm darkness beyond the brass edges, the laboratory lost in soft shadow.",
+        "continuity": "Same device, same walnut desk, same green lamp and same warm amber light from the left as scene one; the device is identical in size and shape: a small brass chamber about ten centimetres across with two round flat magnet poles top and bottom.",
+        "ending_frame": "The narrow gap between two straight brass electrode edges, softly glowing, the curved D-shaped backs visible on both sides.",
+        "audio_intent": "A low, soft rhythmic hum rising gently under the narration, like a slow heartbeat.",
+        "transition": "Straight cut to the device beside the medal.",
+        "avoid": [
+          "on-screen text or captions",
+          "warped or extra hands and fingers",
+          "plastic or waxy skin",
+          "cartoon or 3D-render look when realism is asked for",
+          "unmotivated camera movement",
+          "clothing, hair or weather changing without reason",
+          "faces or bodies morphing mid-shot",
+          "watermarks or logos",
+          "Any sentence naming what must not appear — no 'no people', 'no text', 'no logo', 'no display case' anywhere in the",
+          "The phrase 'Documentary photograph, natural and unposed' and any genre framing that invites a museum-vitrine reading of",
+          "Vague references to 'the small chamber' or 'the device' without physical dimensions and shape detail",
+          "Any word like 'loop', 'ring', 'oval', 'wishbone' or 'display' that resembles the wrong object the model already produced",
+          "Burying the electrode description after genre framing, palette or lens specifications"
+        ],
+        "characters": [],
+        "camera_move": "slow push-in",
+        "source": "model",
+        "second_framing": {
+          "subject": "The electrode gap alone, the pulse centred, brass curves framing it on both sides.",
+          "centre_x": 0.5,
+          "centre_y": 0.5
+        },
+        "scene_kind": "LIVE",
+        "shot_type": "MEDIUM",
+        "still_prompt": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of Warm amber lamplight, aged brass, dark walnut wood. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Detail shot, 85mm lens. Two hollow D-shaped brass electrodes in a round chamber about ten centimetres across, straight edges facing across a narrow millimetre-scale gap, between two round flat iron magnet poles. The frame holds only the place and the things named. Light Soft diffuse warm amber lamplight from frame left across the aged brass surfaces, a gentle warm glint inside the electrode gap where the pulse glows, soft shadows falling to the right into darkness. No text, no logo.",
+        "motion_prompt": "Slow push-in from the wide view toward the subject, steady all the way, ending close on it. A hairline of dust on the brass stays still. The pulse brightens and fades in a steady slow rhythm. Nothing else moves. A soft warm glow pulses gently in the narrow gap between the two flat electrode edges. Brightening and dimming in a slow steady rhythm. The shot ends on the narrow gap between two straight brass electrode edges, softly glowing, the curved D-shaped backs visible on both sides. The frame holds only the place and the things named. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative_prompt": null,
+        "look_block": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of Warm amber lamplight, aged brass, dark walnut wood. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail.",
+        "shot_size": "detail",
+        "motion_family": "generic",
+        "motion_intent": {
+          "camera_move": "slow push-in",
+          "world": "A hairline of dust on the brass stays still.",
+          "subject": "The pulse brightens and fades in a steady slow rhythm, nothing else moves.",
+          "subject_clauses": [
+            "The pulse brightens and fades in a steady slow rhythm.",
+            "Nothing else moves."
+          ],
+          "action_clauses": [
+            "A soft warm glow pulses gently in the narrow gap between the two flat electrode edges.",
+            "Brightening and dimming in a slow steady rhythm."
+          ],
+          "seconds": 9.0,
+          "amplitude": "ample",
+          "constraints": [
+            "Modern objects: computers, plastic, fluorescent light, contemporary clothing or cars",
+            "Pie charts, diagrams or infographics rendered by the image model",
+            "Rain, fog, wind, haze or any weather effects",
+            "A visible face for Lawrence or anyone else",
+            "Split frames, panels, collages or blank bands",
+            "Cold blue or white light in the interior scenes",
+            "Any sentence naming what must not appear — no 'no people', 'no text', 'no logo', 'no display case' anywhere in the",
+            "Vague references to 'the small chamber' or 'the device' without physical dimensions and shape detail",
+            "Any word like 'loop', 'ring', 'oval', 'wishbone' or 'display' that resembles the wrong object the model already produced"
+          ],
+          "faces_banned": true,
+          "people": false,
+          "ending_frame": "The narrow gap between two straight brass electrode edges, softly glowing, the curved D-shaped backs visible on both sides."
+        },
+        "composition_issues": []
+      }
+    },
+    {
+      "storyboard_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
+      "title": "Storyboard: The Zero Script Club",
+      "board_status": "RENDERED",
+      "scene": 1,
+      "kind": "serial",
+      "model": "LTX-2.5",
+      "status": "OFFLINE_DRAFT_NOT_DIRECTOR_APPROVED",
+      "auto_apply": false,
+      "historical_rejected_board": false,
+      "repair_owner": "Kael + Sarah",
+      "required_layer": "still",
+      "source_package_sha256": "8db47591db1b99d3a9504681cf43cfe75bcac8993d53d4f50f9aa371c15bd1e2",
+      "field_changes": {
+        "subject": {
+          "before": "Marcus Scriptwriter alone in the writers' room, seated at his wooden desk, facing the viewer across the desk; Sarah Executive is not yet in frame.",
+          "after": "Marcus at his desk, Sarah's shoulder at the doorway edge."
+        },
+        "action": {
+          "before": "Marcus: Tousled wavy dark hair, wearing comfortable royal purple fleece hoodie over grey crew tee, holds his fingers hovering just above the mechanical keyboard without typing, shoulders sagging as he exhales; Sarah: Brunette professional bob with warm highlights, wearing crisp navy two-piece executive blazer with sky-blue tie, stays at the frame's edge by the doorway, mostly out of frame.",
+          "after": "Marcus holds his hands above the keyboard; Sarah's shoulder stays at the doorway edge."
+        },
+        "camera_move": {
+          "before": "slow push-in",
+          "after": "static"
+        },
+        "ending_frame": {
+          "before": "Marcus mid-turn toward the doorway, hands still above the keys, screen glow on his face, Sarah Executive at the frame's edge by the doorway, mostly out of frame.",
+          "after": "Marcus turned toward the doorway, hands above the keys, Sarah's shoulder still at the edge."
+        }
+      },
+      "before": {
+        "still": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Content, floor 2. Establishing wide shot at eye level, the whole room in view. One continuous picture fills the whole tall frame, the people in its upper two thirds. In frame, facing the viewer: Marcus: Tousled wavy dark hair; Sarah: Brunette professional bob. Marcus: Tousled wavy dark hair, wearing comfortable royal purple fleece hoodie over grey crew tee; Sarah: Brunette professional bob with warm highlights, wearing crisp navy two-piece executive blazer with sky-blue tie, stays at the frame's edge by the doorway.",
+        "motion": "Slow push-in from the wide view toward the subject, steady all the way, ending close on it. Marcus: Tousled wavy dark hair, wearing comfortable royal purple fleece hoodie over grey crew tee; Sarah: Brunette professional bob with warm highlights, wearing crisp navy two-piece executive blazer with sky-blue tie, stays at the frame's edge by. The shot ends on Marcus mid-turn toward the doorway, hands still above the keys, screen glow on his face, Sarah Executive at the frame's edge by the doorway, mostly out of frame. Continuous, seamless shot. No subtitles, no on-screen text."
+      },
+      "after": {
+        "still": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Content, floor 2. Establishing wide shot at eye level, the whole room in view. One continuous picture fills the whole tall frame, the people in its upper two thirds. In frame, facing the viewer: Marcus: Tousled wavy dark hair, wearing comfortable royal purple fleece hoodie over grey crew tee; Sarah: Brunette professional bob with warm highlights, wearing crisp navy two-piece executive blazer. Marcus holds his hands above the keyboard; Sarah's shoulder stays at the doorway edge.",
+        "motion": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame. Marcus holds his hands above the keyboard; Sarah's shoulder stays at the doorway edge. The shot ends on Marcus turned toward the doorway, hands above the keys, Sarah's shoulder still at the edge. Their faces stay expressive and the same people throughout. As they speak their hands gesture, heads turn and shoulders shift, and behind them the lamp light flickers softly and the plants stir. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative": null
+      },
+      "compiled_motion_sha256": "94002c49b7b2d0427ff2e1b4342d75dab27a709d2a702f2a074bd60e11ed78b0",
+      "canonical_characters": [
+        {
+          "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+          "name": "Marcus Scriptwriter",
+          "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+          "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+          "props": "Mechanical keyboard laptop, cork storyboard wall pinned with colorful index cards and red yarn.",
+          "never": "Do not depict wearing formal suits; maintain creative storyteller persona."
+        },
+        {
+          "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+          "name": "Sarah Executive",
+          "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+          "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+          "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+          "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+        }
+      ],
+      "composition_issues": [],
+      "blocks": [],
+      "warnings": [
+        {
+          "code": "STILL_LENGTH",
+          "severity": "WARN",
+          "scene": 1,
+          "evidence": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural",
+          "message_ro": "Promptul imaginii are 141 de cuvinte („Warm hand-drawn 2D animation like the studio's own office”); lungimea potrivită este 60–120."
+        }
+      ],
+      "prompt_units": {
+        "still": 938,
+        "motion": 544
+      },
+      "required_review": [
+        "Sarah must compare every current QC finding with these actual compiled words.",
+        "Check the current storyboard, canonical characters, claims and accepted source image; this snapshot can be stale.",
+        "A local lint pass is not a Director TREATS decision or visual acceptance.",
+        "Compare all visible clothing, props and framing with the complete character bible and references, not only the minimum compiler identity clauses.",
+        "Marcus/Sarah: the stored subject says Sarah is absent but the action/cast includes her at the doorway. This draft keeps her shoulder visible; Sarah/showrunner must settle that narrative conflict."
+      ],
+      "proposed_package": {
+        "story_purpose": "HOOK",
+        "narration": "Zero scripts. That is my whole morning report.\nRead it to me anyway, Marcus.",
+        "writer_visual": "Early morning, empty writers' room, Marcus alone at his desk, fingers hovering over keys, a blank screen glow on his face.",
+        "seconds": 5.6,
+        "subject": "Marcus at his desk, Sarah's shoulder at the doorway edge.",
+        "action": "Marcus holds his hands above the keyboard; Sarah's shoulder stays at the doorway edge.",
+        "environment": "the AMN-AI headquarters, the studio's own building",
+        "camera": "Establishing wide shot at eye level, slow push-in from the doorway side of the room toward Marcus's desk, settling as he looks up.",
+        "lighting": "the series look",
+        "composition": "subject centred in a vertical frame, readable on a phone",
+        "motion": "slow, natural movement within the frame",
+        "emotion": "Flat, resigned self-talk giving way to wary attention.",
+        "background": "The cork storyboard wall pinned with colorful index cards and red yarn behind him, hanging brass lamps glowing amber, potted vines, big windows on the lantern-lit street; the room is otherwise empty and still.",
+        "continuity": "First shot of the episode; establishes the Content floor 2 room, Marcus's purple hoodie, tousled dark hair and the blank glowing screen that scene 8 will answer.",
+        "ending_frame": "Marcus turned toward the doorway, hands above the keys, Sarah's shoulder still at the edge.",
+        "audio_intent": "Marcus's flat muttered line, then Sarah's calm voice from off-frame at the doorway.",
+        "transition": "Hard cut on Sarah's reply.",
+        "avoid": [
+          "photorealistic live-action footage",
+          "glossy 3D CGI render look",
+          "chibi or toy proportions",
+          "warped or extra hands and fingers",
+          "faces or clothes changing between shots",
+          "writing on walls, boards or screens",
+          "watermarks or logos"
+        ],
+        "characters": [
+          {
+            "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+            "name": "Marcus Scriptwriter",
+            "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+            "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+            "props": "Mechanical keyboard laptop, cork storyboard wall pinned with colorful index cards and red yarn.",
+            "never": "Do not depict wearing formal suits; maintain creative storyteller persona."
+          },
+          {
+            "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+            "name": "Sarah Executive",
+            "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+            "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+            "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+            "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+          }
+        ],
+        "camera_move": "static",
+        "source": "model",
+        "location": "Content, floor 2",
+        "shot_size": "establishing",
+        "in_frame": [
+          {
+            "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+            "name": "Marcus Scriptwriter",
+            "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+            "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+            "props": "Mechanical keyboard laptop, cork storyboard wall pinned with colorful index cards and red yarn.",
+            "never": "Do not depict wearing formal suits; maintain creative storyteller persona."
+          },
+          {
+            "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+            "name": "Sarah Executive",
+            "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+            "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+            "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+            "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+          }
+        ],
+        "series_look_version": 2,
+        "from_model": true,
+        "motion_prompt": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame. Marcus holds his hands above the keyboard; Sarah's shoulder stays at the doorway edge. The shot ends on Marcus turned toward the doorway, hands above the keys, Sarah's shoulder still at the edge. Their faces stay expressive and the same people throughout. As they speak their hands gesture, heads turn and shoulders shift, and behind them the lamp light flickers softly and the plants stir. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "still_prompt": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Content, floor 2. Establishing wide shot at eye level, the whole room in view. One continuous picture fills the whole tall frame, the people in its upper two thirds. In frame, facing the viewer: Marcus: Tousled wavy dark hair, wearing comfortable royal purple fleece hoodie over grey crew tee; Sarah: Brunette professional bob with warm highlights, wearing crisp navy two-piece executive blazer. Marcus holds his hands above the keyboard; Sarah's shoulder stays at the doorway edge."
+      }
+    },
+    {
+      "storyboard_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
+      "title": "Storyboard: The Zero Script Club",
+      "board_status": "RENDERED",
+      "scene": 2,
+      "kind": "serial",
+      "model": "LTX-2.5",
+      "status": "OFFLINE_DRAFT_NOT_DIRECTOR_APPROVED",
+      "auto_apply": false,
+      "historical_rejected_board": false,
+      "repair_owner": "Kael + Sarah",
+      "required_layer": "still",
+      "source_package_sha256": "2b9970680900656a0fbdffbac04d614490f3c1f70779d3dc8d189fa8f2d3b650",
+      "field_changes": {
+        "action": {
+          "before": "Marcus, tousled wavy dark hair, wearing his royal purple fleece hoodie over a grey crew tee, counts on his fingers one by one, folding each finger down as he lists the zeros; Sarah, brunette professional bob with warm highlights, in her crisp navy two-piece executive blazer, white shirt and sky-blue tie, sets her espresso cup down on the mahogany desk and lifts her chin to ask her question.",
+          "after": "Marcus counts on his fingers; Sarah sets down her cup, then raises her chin."
+        },
+        "ending_frame": {
+          "before": "The shot ends on the same eye-level two-shot, both speakers still facing the viewer: Sarah's chin raised mid-question, Marcus's open hand still in the air between them.",
+          "after": "Sarah's chin raised, Marcus's open hand between them, both facing the viewer."
+        }
+      },
+      "before": {
+        "still": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Executive Penthouse (Director / CEO), floor 4. Medium two-shot at eye level, both speakers facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Marcus: Tousled wavy dark hair; Sarah: Brunette professional bob. Marcus, tousled wavy dark hair, wearing his royal purple fleece hoodie over a grey crew tee; Sarah, brunette professional bob with warm highlights, in her crisp navy two-piece executive blazer, white.",
+        "motion": "Slow pan left, smooth and with a clear start and end, sweeping from the right side of the scene across to the subject. Marcus, tousled wavy dark hair, wearing his royal purple fleece hoodie over a grey crew tee; Sarah, brunette professional bob with warm highlights, in her crisp navy two-piece executive blazer, white shirt and sky-blue tie. The shot ends on the same eye-level two-shot, both speakers still facing the viewer: Sarah's chin raised mid-question, Marcus's open hand still in the air between them. Continuous, seamless shot. No subtitles, no on-screen text."
+      },
+      "after": {
+        "still": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Executive Penthouse (Director / CEO), floor 4. Medium two-shot at eye level, both speakers facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Marcus: Tousled wavy dark hair, wearing comfortable royal purple fleece hoodie over grey crew tee; Sarah: Brunette professional bob with warm highlights, wearing crisp navy two-piece executive blazer. Marcus counts on his fingers; Sarah sets down her cup.",
+        "motion": "Slow pan left, smooth and with a clear start and end, sweeping from the right side of the scene across to the subject. Marcus counts on his fingers; Sarah sets down her cup, then raises her chin. The shot ends on Sarah's chin raised, Marcus's open hand between them, both facing the viewer. Their faces stay expressive and the same people throughout. As they speak their hands gesture, heads turn and shoulders shift, and behind them the lamp light flickers softly and the plants stir. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative": null
+      },
+      "compiled_motion_sha256": "94384058ba6708a4f572973fa740e1092310e6bd28b5b093d571cf1178eb8086",
+      "canonical_characters": [
+        {
+          "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+          "name": "Marcus Scriptwriter",
+          "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+          "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+          "props": "Mechanical keyboard laptop, cork storyboard wall pinned with colorful index cards and red yarn.",
+          "never": "Do not depict wearing formal suits; maintain creative storyteller persona."
+        },
+        {
+          "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+          "name": "Sarah Executive",
+          "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+          "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+          "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+          "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+        }
+      ],
+      "composition_issues": [],
+      "blocks": [],
+      "warnings": [
+        {
+          "code": "STILL_LENGTH",
+          "severity": "WARN",
+          "scene": 2,
+          "evidence": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural",
+          "message_ro": "Promptul imaginii are 145 de cuvinte („Warm hand-drawn 2D animation like the studio's own office”); lungimea potrivită este 60–120."
+        },
+        {
+          "code": "THEN_CHAIN",
+          "severity": "WARN",
+          "scene": 2,
+          "evidence": "then",
+          "message_ro": "Promptul de mișcare înșiră acțiuni cu „then”. Pe LTX-2.5 un clip trebuie să fie o singură mișcare continuă."
+        }
+      ],
+      "prompt_units": {
+        "still": 966,
+        "motion": 545
+      },
+      "required_review": [
+        "Sarah must compare every current QC finding with these actual compiled words.",
+        "Check the current storyboard, canonical characters, claims and accepted source image; this snapshot can be stale.",
+        "A local lint pass is not a Director TREATS decision or visual acceptance.",
+        "Compare all visible clothing, props and framing with the complete character bible and references, not only the minimum compiler identity clauses."
+      ],
+      "proposed_package": {
+        "story_purpose": "SETUP",
+        "narration": "Zero written, zero approved, zero boards. Clean sweep.\nAnd the serial?",
+        "writer_visual": "Sarah at her desk, morning light, a neat stack of status notes; Marcus leaning in the doorway, hoodie zipped, defensive.",
+        "seconds": 4.4,
+        "subject": "Sarah Executive seated at her mahogany desk facing the viewer, with Marcus standing in the doorway at frame edge, turned toward her and the camera.",
+        "action": "Marcus counts on his fingers; Sarah sets down her cup, then raises her chin.",
+        "environment": "the AMN-AI headquarters, the studio's own building",
+        "camera": "Medium two-shot at eye level, a slow lateral dolly from Sarah's desk toward the doorway so both speakers share the frame by the end of the move.",
+        "lighting": "the series look",
+        "composition": "subject centred in a vertical frame, readable on a phone",
+        "motion": "slow, natural movement within the frame",
+        "emotion": "Marcus defensive and brisk; Sarah measured, unreadable.",
+        "background": "Post-it note array and steaming espresso on the mahogany desk, bookshelves and a climbing plant soft behind them, morning light through the big window; nothing moves behind the speakers.",
+        "continuity": "Marcus wears the same royal purple fleece hoodie over grey crew tee and tousled wavy dark hair from scene 1; Sarah's crisp navy two-piece executive blazer, white shirt and sky-blue tie appear for the first time and stay fixed for the episode.",
+        "ending_frame": "Sarah's chin raised, Marcus's open hand between them, both facing the viewer.",
+        "audio_intent": "Marcus counting off the zeros, Sarah's single measured question over his last word.",
+        "transition": "Cut tighter on the answer.",
+        "avoid": [
+          "photorealistic live-action footage",
+          "glossy 3D CGI render look",
+          "chibi or toy proportions",
+          "warped or extra hands and fingers",
+          "faces or clothes changing between shots",
+          "writing on walls, boards or screens",
+          "watermarks or logos"
+        ],
+        "characters": [
+          {
+            "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+            "name": "Marcus Scriptwriter",
+            "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+            "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+            "props": "Mechanical keyboard laptop, cork storyboard wall pinned with colorful index cards and red yarn.",
+            "never": "Do not depict wearing formal suits; maintain creative storyteller persona."
+          },
+          {
+            "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+            "name": "Sarah Executive",
+            "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+            "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+            "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+            "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+          }
+        ],
+        "camera_move": "slow pan left",
+        "source": "model",
+        "location": "Executive Penthouse (Director / CEO), floor 4",
+        "shot_size": "two_shot",
+        "in_frame": [
+          {
+            "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+            "name": "Marcus Scriptwriter",
+            "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+            "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+            "props": "Mechanical keyboard laptop, cork storyboard wall pinned with colorful index cards and red yarn.",
+            "never": "Do not depict wearing formal suits; maintain creative storyteller persona."
+          },
+          {
+            "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+            "name": "Sarah Executive",
+            "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+            "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+            "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+            "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+          }
+        ],
+        "series_look_version": 2,
+        "from_model": true,
+        "motion_prompt": "Slow pan left, smooth and with a clear start and end, sweeping from the right side of the scene across to the subject. Marcus counts on his fingers; Sarah sets down her cup, then raises her chin. The shot ends on Sarah's chin raised, Marcus's open hand between them, both facing the viewer. Their faces stay expressive and the same people throughout. As they speak their hands gesture, heads turn and shoulders shift, and behind them the lamp light flickers softly and the plants stir. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "still_prompt": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Executive Penthouse (Director / CEO), floor 4. Medium two-shot at eye level, both speakers facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Marcus: Tousled wavy dark hair, wearing comfortable royal purple fleece hoodie over grey crew tee; Sarah: Brunette professional bob with warm highlights, wearing crisp navy two-piece executive blazer. Marcus counts on his fingers; Sarah sets down her cup."
+      }
+    },
+    {
+      "storyboard_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
+      "title": "Storyboard: The Zero Script Club",
+      "board_status": "RENDERED",
+      "scene": 4,
+      "kind": "serial",
+      "model": "LTX-2.5",
+      "status": "OFFLINE_DRAFT_NOT_DIRECTOR_APPROVED",
+      "auto_apply": false,
+      "historical_rejected_board": false,
+      "repair_owner": "Kael + Sarah",
+      "required_layer": "still",
+      "source_package_sha256": "b6d154677354d94c88f1e0c35a875d11f35773be65abf09026898bdb4f47f5ec",
+      "field_changes": {
+        "action": {
+          "before": "Nadia taps the brass pen once against the green ledger, pauses before the number, then lays the pen flat; Sarah's shoulder and arm only at the frame's right edge. The green ledger is completely blank, unruled and unmarked, with no lines, no writing, no letters anywhere on its pages. Every paper, ledger, screen, wall and sign in the drawn scene is completely blank and unruled, with no lines, marks or letters anywhere.",
+          "after": "Nadia taps the brass pen on the blank green ledger, then lays it flat; Sarah's shoulder and arm stay at the right edge."
+        },
+        "camera_move": {
+          "before": "static",
+          "after": "static"
+        },
+        "ending_frame": {
+          "before": "The shot ends on Nadia's hazel eyes steady over the laid-flat pen, the green ledger completely blank, unruled and unmarked with no lines, no writing, no letters, Nadia alone in the medium close-up, Sarah still only a shoulder at the frame's right edge.",
+          "after": "Nadia's pen flat on the blank green ledger, Sarah's shoulder still at the right edge."
+        }
+      },
+      "before": {
+        "still": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Accounting & Treasury, ground floor. Medium close-up single at eye level on Nadia, facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Nadia: Chestnut hair in a low bun, round tortoiseshell glasses. Nadia taps the brass pen once against the green ledger; Sarah's shoulder and arm only at the frame's right edge. The green ledger is completely blank, unruled and unmarked, with no lines.",
+        "motion": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame. Nadia taps the brass pen once against the green ledger; Sarah's shoulder and arm only at the frame's right edge. The green ledger is completely blank, unruled. The shot ends on Nadia's hazel eyes steady over the laid-flat pen, the green ledger completely blank, unruled and unmarked with no lines, no writing, no letters, Nadia alone in the medium close-up, Sarah still only a shoulder at the frame's right edge. Continuous, seamless shot. No subtitles, no on-screen text."
+      },
+      "after": {
+        "still": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Accounting & Treasury, ground floor. Medium close-up single at eye level on Nadia, facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Nadia: Chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, wearing plum blouse under a dark violet cardigan, small brass pen on a chain. Nadia taps the brass pen on the blank green ledger; Sarah's shoulder and arm stay at the right edge.",
+        "motion": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame. Nadia taps the brass pen on the blank green ledger, then lays it flat; Sarah's shoulder and arm stay at the right edge. The shot ends on Nadia's pen flat on the blank green ledger, Sarah's shoulder still at the right edge. Their faces stay expressive and the same people throughout. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative": null
+      },
+      "compiled_motion_sha256": "df7f3a60fb484f717e0fd0ca23ae2709094b783baba21bbd9fb2de82925c08eb",
+      "canonical_characters": [
+        {
+          "id": "7b52b75e-380d-4ad8-826a-6327c4e54098",
+          "name": "Nadia Accountant",
+          "face_hair": "Chestnut hair in a low bun, round tortoiseshell glasses; attentive hazel eyes",
+          "outfit": "Plum blouse under a dark violet cardigan, small brass pen on a chain",
+          "props": "Green ledger book, a calculator with a paper roll, a jar of sharpened pencils.",
+          "never": "Do not depict Nadia without her glasses or with a laptop in place of the ledger."
+        }
+      ],
+      "composition_issues": [],
+      "blocks": [],
+      "warnings": [
+        {
+          "code": "STILL_LENGTH",
+          "severity": "WARN",
+          "scene": 4,
+          "evidence": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural",
+          "message_ro": "Promptul imaginii are 152 de cuvinte („Warm hand-drawn 2D animation like the studio's own office”); lungimea potrivită este 60–120."
+        },
+        {
+          "code": "THEN_CHAIN",
+          "severity": "WARN",
+          "scene": 4,
+          "evidence": "then",
+          "message_ro": "Promptul de mișcare înșiră acțiuni cu „then”. Pe LTX-2.5 un clip trebuie să fie o singură mișcare continuă."
+        },
+        {
+          "code": "MOTION_ENVIRONMENT",
+          "severity": "WARN",
+          "scene": 4,
+          "evidence": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame.",
+          "message_ro": "Promptul de mișcare nu are nicio mișcare a mediului („Static camera on a fixed tripod, steady, the life of the”): nori care trec, vânt în iarbă, apă care curge, praf."
+        }
+      ],
+      "prompt_units": {
+        "still": 967,
+        "motion": 436
+      },
+      "required_review": [
+        "Sarah must compare every current QC finding with these actual compiled words.",
+        "Check the current storyboard, canonical characters, claims and accepted source image; this snapshot can be stale.",
+        "A local lint pass is not a Director TREATS decision or visual acceptance.",
+        "Compare all visible clothing, props and framing with the complete character bible and references, not only the minimum compiler identity clauses.",
+        "The recorded accepted image wore the wrong clothes. Rejudge the existing still against Nadia's plum blouse/violet cardigan; a motion prompt cannot change that first frame. Keep Sarah as a shoulder/arm, not a second full person."
+      ],
+      "proposed_package": {
+        "story_purpose": "REVEAL",
+        "narration": "My close went out twice today. Same figures, same period, two letters.\nWithin limit, both times?",
+        "writer_visual": "Ground floor, quiet office, Nadia at her ledger desk, brass pen on its chain, two cups of tea cooling.",
+        "seconds": 6.4,
+        "subject": "Nadia Accountant at her ledger desk facing the viewer, brass pen on its chain in hand; Sarah stands opposite her, half in frame, turned toward Nadia.",
+        "action": "Nadia taps the brass pen on the blank green ledger, then lays it flat; Sarah's shoulder and arm stay at the right edge.",
+        "environment": "the AMN-AI headquarters, the studio's own building",
+        "camera": "Medium close-up on Nadia, a slow tilt down from her face to the ledger and back up as she speaks, ending on her eyes behind the tortoiseshell glasses.",
+        "lighting": "the series look",
+        "composition": "subject centred in a vertical frame, readable on a phone",
+        "motion": "slow, natural movement within the frame",
+        "emotion": "Nadia even and precise; Sarah measured, testing.",
+        "background": "The calculator with its paper roll, a jar of sharpened pencils, two cups of tea cooling untouched, warm lamp light and a bookshelf behind; the ground-floor office is hushed. All paper, ledgers, screens, walls and signs are completely blank and unruled, with no lines, marks or letters anywhere in the",
+        "continuity": "New room, Accounting & Treasury ground floor; Nadia's low bun, glasses, plum blouse and violet cardigan established here and held for scene 5; Sarah's suit unchanged from scenes 2-3.",
+        "ending_frame": "Nadia's pen flat on the blank green ledger, Sarah's shoulder still at the right edge.",
+        "audio_intent": "Nadia's even delivery with the pause before the number, Sarah's quiet question across the desk.",
+        "transition": "Hold on Nadia, cut on her answer.",
+        "avoid": [
+          "photorealistic live-action footage",
+          "glossy 3D CGI render look",
+          "chibi or toy proportions",
+          "warped or extra hands and fingers",
+          "faces or clothes changing between shots",
+          "writing on walls, boards or screens",
+          "watermarks or logos"
+        ],
+        "characters": [
+          {
+            "id": "7b52b75e-380d-4ad8-826a-6327c4e54098",
+            "name": "Nadia Accountant",
+            "face_hair": "Chestnut hair in a low bun, round tortoiseshell glasses; attentive hazel eyes",
+            "outfit": "Plum blouse under a dark violet cardigan, small brass pen on a chain",
+            "props": "Green ledger book, a calculator with a paper roll, a jar of sharpened pencils.",
+            "never": "Do not depict Nadia without her glasses or with a laptop in place of the ledger."
+          },
+          {
+            "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+            "name": "Sarah Executive",
+            "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+            "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+            "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+            "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+          }
+        ],
+        "camera_move": "static",
+        "source": "model",
+        "location": "Accounting & Treasury, ground floor",
+        "shot_size": "single",
+        "in_frame": [
+          {
+            "id": "7b52b75e-380d-4ad8-826a-6327c4e54098",
+            "name": "Nadia Accountant",
+            "face_hair": "Chestnut hair in a low bun, round tortoiseshell glasses; attentive hazel eyes",
+            "outfit": "Plum blouse under a dark violet cardigan, small brass pen on a chain",
+            "props": "Green ledger book, a calculator with a paper roll, a jar of sharpened pencils.",
+            "never": "Do not depict Nadia without her glasses or with a laptop in place of the ledger."
+          }
+        ],
+        "series_look_version": 2,
+        "from_model": true,
+        "motion_prompt": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame. Nadia taps the brass pen on the blank green ledger, then lays it flat; Sarah's shoulder and arm stay at the right edge. The shot ends on Nadia's pen flat on the blank green ledger, Sarah's shoulder still at the right edge. Their faces stay expressive and the same people throughout. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "still_prompt": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Accounting & Treasury, ground floor. Medium close-up single at eye level on Nadia, facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Nadia: Chestnut hair in a low bun, round tortoiseshell glasses, attentive hazel eyes, wearing plum blouse under a dark violet cardigan, small brass pen on a chain. Nadia taps the brass pen on the blank green ledger; Sarah's shoulder and arm stay at the right edge.",
+        "motion_emotion": "Nadia even and precise; Sarah measured, testing, her presence held at the frame's edge only, her question heard from off-centre."
+      }
+    },
+    {
+      "storyboard_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
+      "title": "Storyboard: The Zero Script Club",
+      "board_status": "RENDERED",
+      "scene": 6,
+      "kind": "serial",
+      "model": "LTX-2.5",
+      "status": "OFFLINE_DRAFT_NOT_DIRECTOR_APPROVED",
+      "auto_apply": false,
+      "historical_rejected_board": false,
+      "repair_owner": "Kael + Sarah",
+      "required_layer": "still",
+      "source_package_sha256": "dcdd29f93b434874f351c48d4aebbaa134ca75347c000159755fcbd5ae1e0dc1",
+      "field_changes": {
+        "action": {
+          "before": "Sarah speaks toward the room with a level, deadline-setting stillness, one hand resting on the doorframe; behind her, Marcus lets his head drop in a deadpan tilt as he delivers his line.",
+          "after": "Sarah holds the doorframe; Marcus lowers his head; Kael's chair is empty."
+        },
+        "ending_frame": {
+          "before": "Sarah's hand on the doorframe, Marcus's deadpan tilt held, the empty chair between them and camera.",
+          "after": "Sarah's hand on the doorframe, Marcus's head tilted, Kael's empty chair between them and the viewer."
+        }
+      },
+      "before": {
+        "still": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Video & Render Bay, floor 1. Medium two-shot at eye level, both speakers facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Sarah: Brunette professional bob with warm highlights; Marcus: Tousled wavy dark hair. Sarah speaks toward the room with a level, deadline-setting stillness, one hand resting on the doorframe; behind. Sarah plain and final; Marcus wry, deadpan.",
+        "motion": "Slow push-in from the wide view toward the subject, steady all the way, ending close on it. Sarah speaks toward the room with a level, deadline-setting stillness, one hand resting on the doorframe; behind her, Marcus lets his head drop in a deadpan tilt as he delivers his line. Their faces stay expressive and the same people throughout. As they speak their hands gesture, heads turn and shoulders shift, and behind them the lamp light flickers softly and the plants stir. Continuous, seamless shot. No subtitles, no on-screen text."
+      },
+      "after": {
+        "still": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Video & Render Bay, floor 1. Medium two-shot at eye level, both speakers facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Sarah: Brunette professional bob with warm highlights, wearing crisp navy two-piece executive blazer; Marcus: Tousled wavy dark hair, wearing comfortable royal purple fleece hoodie over grey crew tee. Sarah holds the doorframe; Marcus lowers his head; Kael's chair is empty.",
+        "motion": "Slow push-in from the wide view toward the subject, steady all the way, ending close on it. Sarah holds the doorframe; Marcus lowers his head; Kael's chair is empty. The shot ends on Sarah's hand on the doorframe, Marcus's head tilted, Kael's empty chair between them and the viewer. Their faces stay expressive and the same people throughout. As they speak their hands gesture, heads turn and shoulders shift, and behind them the lamp light flickers softly and the plants stir. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative": null
+      },
+      "compiled_motion_sha256": "558370ee92f8eb8767bc74f638764b0a2a7e6d26f6a267a779964ae8430c4b67",
+      "canonical_characters": [
+        {
+          "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+          "name": "Sarah Executive",
+          "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+          "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+          "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+          "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+        },
+        {
+          "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+          "name": "Marcus Scriptwriter",
+          "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+          "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+          "props": "Mechanical keyboard laptop, cork storyboard wall pinned with colorful index cards and red yarn.",
+          "never": "Do not depict wearing formal suits; maintain creative storyteller persona."
+        }
+      ],
+      "composition_issues": [],
+      "blocks": [],
+      "warnings": [
+        {
+          "code": "STILL_LENGTH",
+          "severity": "WARN",
+          "scene": 6,
+          "evidence": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural",
+          "message_ro": "Promptul imaginii are 146 de cuvinte („Warm hand-drawn 2D animation like the studio's own office”); lungimea potrivită este 60–120."
+        }
+      ],
+      "prompt_units": {
+        "still": 967,
+        "motion": 538
+      },
+      "required_review": [
+        "Sarah must compare every current QC finding with these actual compiled words.",
+        "Check the current storyboard, canonical characters, claims and accepted source image; this snapshot can be stale.",
+        "A local lint pass is not a Director TREATS decision or visual acceptance.",
+        "Compare all visible clothing, props and framing with the complete character bible and references, not only the minimum compiler identity clauses."
+      ],
+      "proposed_package": {
+        "story_purpose": "PAYOFF",
+        "narration": "Four subjects sit with failed renders. Kael gets a letter too.\nSo accounting gets audited and the edit bay gets audited.",
+        "writer_visual": "Sarah at the doorway of the render bay, Kael's empty chair visible behind her; she speaks toward the room, Marcus trailing behind her.",
+        "seconds": 8.4,
+        "subject": "Sarah standing in the doorway of the render bay facing into the room and toward the viewer, Marcus trailing just behind her shoulder; Kael's empty chair visible behind her.",
+        "action": "Sarah holds the doorframe; Marcus lowers his head; Kael's chair is empty.",
+        "environment": "the AMN-AI headquarters, the studio's own building",
+        "camera": "Medium two-shot from inside the room, a slow crane down from the empty chair and triple monitors to Sarah in the doorway, ending with both speakers framed.",
+        "lighting": "the series look",
+        "composition": "subject centred in a vertical frame, readable on a phone",
+        "motion": "slow, natural movement within the frame",
+        "emotion": "Sarah plain and final; Marcus wry, deadpan.",
+        "background": "Kael's triple ultrawide monitors glowing with abstract timelines, the RGB tower humming, his chair pushed back; the equipment lives quietly and does not compete with the speakers.",
+        "continuity": "New room, Video & Render Bay floor 1; Sarah and Marcus in the same costumes as scenes 2-3; Kael's workstation and empty chair introduced here as his established presence.",
+        "ending_frame": "Sarah's hand on the doorframe, Marcus's head tilted, Kael's empty chair between them and the viewer.",
+        "audio_intent": "Sarah's plain deadline line, Marcus's deadpan summary riding over the room's low fan hum.",
+        "transition": "Cut back upstairs on Marcus's last word.",
+        "avoid": [
+          "photorealistic live-action footage",
+          "glossy 3D CGI render look",
+          "chibi or toy proportions",
+          "warped or extra hands and fingers",
+          "faces or clothes changing between shots",
+          "writing on walls, boards or screens",
+          "watermarks or logos"
+        ],
+        "characters": [
+          {
+            "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+            "name": "Sarah Executive",
+            "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+            "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+            "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+            "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+          },
+          {
+            "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+            "name": "Marcus Scriptwriter",
+            "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+            "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+            "props": "Mechanical keyboard laptop, cork storyboard wall pinned with colorful index cards and red yarn.",
+            "never": "Do not depict wearing formal suits; maintain creative storyteller persona."
+          },
+          {
+            "id": "d7c2a435-cb46-4d63-b54a-803d4cb4c7a5",
+            "name": "Kael Video Editor",
+            "face_hair": "Sandy blonde spiky hair; focused concentration, single-ear comms headset.",
+            "outfit": "Amber work shirt with rolled-up sleeves, dark cargo pants.",
+            "props": "Triple ultrawide curved monitors showing Premiere/FFmpeg timelines, RGB liquid-cooled tower.",
+            "never": "Never depict editing on a tiny laptop; always triple-screen workstation."
+          }
+        ],
+        "camera_move": "slow push-in",
+        "source": "model",
+        "location": "Video & Render Bay, floor 1",
+        "shot_size": "two_shot",
+        "in_frame": [
+          {
+            "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+            "name": "Sarah Executive",
+            "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+            "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+            "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+            "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+          },
+          {
+            "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+            "name": "Marcus Scriptwriter",
+            "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+            "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+            "props": "Mechanical keyboard laptop, cork storyboard wall pinned with colorful index cards and red yarn.",
+            "never": "Do not depict wearing formal suits; maintain creative storyteller persona."
+          }
+        ],
+        "series_look_version": 2,
+        "from_model": true,
+        "motion_prompt": "Slow push-in from the wide view toward the subject, steady all the way, ending close on it. Sarah holds the doorframe; Marcus lowers his head; Kael's chair is empty. The shot ends on Sarah's hand on the doorframe, Marcus's head tilted, Kael's empty chair between them and the viewer. Their faces stay expressive and the same people throughout. As they speak their hands gesture, heads turn and shoulders shift, and behind them the lamp light flickers softly and the plants stir. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "still_prompt": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Video & Render Bay, floor 1. Medium two-shot at eye level, both speakers facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Sarah: Brunette professional bob with warm highlights, wearing crisp navy two-piece executive blazer; Marcus: Tousled wavy dark hair, wearing comfortable royal purple fleece hoodie over grey crew tee. Sarah holds the doorframe; Marcus lowers his head; Kael's chair is empty."
+      }
+    },
+    {
+      "storyboard_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
+      "title": "Storyboard: The Zero Script Club",
+      "board_status": "RENDERED",
+      "scene": 7,
+      "kind": "serial",
+      "model": "LTX-2.5",
+      "status": "OFFLINE_DRAFT_NOT_DIRECTOR_APPROVED",
+      "auto_apply": false,
+      "historical_rejected_board": false,
+      "repair_owner": "Kael + Sarah",
+      "required_layer": "still",
+      "source_package_sha256": "e8d35cd19719c50614402d7f5235704f9651005cec90909187a38172aff22733",
+      "field_changes": {
+        "action": {
+          "before": "Sarah squares the stack of notes with both palms and allows a rare small smile; Marcus's marker hovers over the blank whiteboard, then his whole face lights up and he lowers the marker without writing, turning fully toward her.",
+          "after": "Sarah smiles at notes; Marcus holds a marker over a blank board, then lowers it and turns toward Sarah."
+        },
+        "ending_frame": {
+          "before": "Marcus facing Sarah with the marker lowered and his grin breaking, Sarah's rare smile answering.",
+          "after": "Marcus turned toward Sarah, marker lowered, both smiling."
+        }
+      },
+      "before": {
+        "still": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Executive Penthouse (Director / CEO), floor 4. Medium two-shot at eye level, both speakers facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Sarah: Brunette professional bob with warm highlights; Marcus: Tousled wavy dark hair. Sarah squares the stack of notes with both palms and allows a rare small smile; Marcus's marker hovers over the blank whiteboard.",
+        "motion": "Slow pan left, smooth and with a clear start and end, sweeping from the right side of the scene across to the subject. Sarah squares the stack of notes with both palms and allows a rare small smile; Marcus's marker hovers over the blank whiteboard, then his whole face lights up and he lowers the marker without writing, turning fully toward her. The shot ends on Marcus facing Sarah with the marker lowered and his grin breaking, Sarah's rare smile answering. Continuous, seamless shot. No subtitles, no on-screen text."
+      },
+      "after": {
+        "still": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Executive Penthouse (Director / CEO), floor 4. Medium two-shot at eye level, both speakers facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Sarah: Brunette professional bob with warm highlights, wearing crisp navy two-piece executive blazer; Marcus: Tousled wavy dark hair, wearing comfortable royal purple fleece hoodie over grey crew tee. Sarah smiles at notes; Marcus holds a marker over a blank board.",
+        "motion": "Slow pan left, smooth and with a clear start and end, sweeping from the right side of the scene across to the subject. Sarah smiles at notes; Marcus holds a marker over a blank board, then lowers it and turns toward Sarah. The shot ends on Marcus turned toward Sarah, marker lowered, both smiling. Their faces stay expressive and the same people throughout. As they speak their hands gesture, heads turn and shoulders shift, and behind them the lamp light flickers softly and the plants stir. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "negative": null
+      },
+      "compiled_motion_sha256": "5dcfbef0d62dc622b1b8349636bb6dc7b6f35c69e6a96aa6e5dea1bfbb798d54",
+      "canonical_characters": [
+        {
+          "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+          "name": "Sarah Executive",
+          "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+          "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+          "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+          "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+        },
+        {
+          "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+          "name": "Marcus Scriptwriter",
+          "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+          "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+          "props": "Mechanical keyboard laptop, cork storyboard wall pinned with colorful index cards and red yarn.",
+          "never": "Do not depict wearing formal suits; maintain creative storyteller persona."
+        }
+      ],
+      "composition_issues": [],
+      "blocks": [],
+      "warnings": [
+        {
+          "code": "STILL_LENGTH",
+          "severity": "WARN",
+          "scene": 7,
+          "evidence": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural",
+          "message_ro": "Promptul imaginii are 147 de cuvinte („Warm hand-drawn 2D animation like the studio's own office”); lungimea potrivită este 60–120."
+        },
+        {
+          "code": "THEN_CHAIN",
+          "severity": "WARN",
+          "scene": 7,
+          "evidence": "then",
+          "message_ro": "Promptul de mișcare înșiră acțiuni cu „then”. Pe LTX-2.5 un clip trebuie să fie o singură mișcare continuă."
+        }
+      ],
+      "prompt_units": {
+        "still": 976,
+        "motion": 552
+      },
+      "required_review": [
+        "Sarah must compare every current QC finding with these actual compiled words.",
+        "Check the current storyboard, canonical characters, claims and accepted source image; this snapshot can be stale.",
+        "A local lint pass is not a Director TREATS decision or visual acceptance.",
+        "Compare all visible clothing, props and framing with the complete character bible and references, not only the minimum compiler identity clauses."
+      ],
+      "proposed_package": {
+        "story_purpose": "PAYOFF",
+        "narration": "One thing at a time. The day is five hours old and already investigated.\nOkay, hear me out. That is the episode.",
+        "writer_visual": "Back in Sarah's office, the stack of morning notes squared on the desk; Marcus at the whiteboard, marker up, nothing written yet.",
+        "seconds": 8.8,
+        "subject": "Sarah at her desk with the morning notes squared into a neat stack, facing the viewer; Marcus at the whiteboard, marker raised, turned back toward her and camera.",
+        "action": "Sarah smiles at notes; Marcus holds a marker over a blank board, then lowers it and turns toward Sarah.",
+        "environment": "the AMN-AI headquarters, the studio's own building",
+        "camera": "Medium two-shot, a slow pan from Sarah's desk across the room to Marcus at the whiteboard, holding both as he turns.",
+        "lighting": "the series look",
+        "composition": "subject centred in a vertical frame, readable on a phone",
+        "motion": "slow, natural movement within the frame",
+        "emotion": "Sarah dry with a rare smile; Marcus igniting with the idea.",
+        "background": "The mahogany desk, espresso cup and bookshelves as in scenes 2-3, the whiteboard completely blank, warm lamps and the big window; the room stays calm around the turn.",
+        "continuity": "Same office as scenes 2-3 with the desk props where they were; the blank whiteboard stays blank — no writing appears anywhere in frame.",
+        "ending_frame": "Marcus turned toward Sarah, marker lowered, both smiling.",
+        "audio_intent": "Sarah's dry line with the smile audible in it, Marcus's brightening outburst.",
+        "transition": "Cut on his grin to the button.",
+        "avoid": [
+          "photorealistic live-action footage",
+          "glossy 3D CGI render look",
+          "chibi or toy proportions",
+          "warped or extra hands and fingers",
+          "faces or clothes changing between shots",
+          "writing on walls, boards or screens",
+          "watermarks or logos"
+        ],
+        "characters": [
+          {
+            "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+            "name": "Sarah Executive",
+            "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+            "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+            "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+            "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+          },
+          {
+            "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+            "name": "Marcus Scriptwriter",
+            "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+            "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+            "props": "Mechanical keyboard laptop, cork storyboard wall pinned with colorful index cards and red yarn.",
+            "never": "Do not depict wearing formal suits; maintain creative storyteller persona."
+          }
+        ],
+        "camera_move": "slow pan left",
+        "source": "model",
+        "location": "Executive Penthouse (Director / CEO), floor 4",
+        "shot_size": "two_shot",
+        "in_frame": [
+          {
+            "id": "6daa56a0-3ab6-4250-9e01-fad08f2e2c17",
+            "name": "Sarah Executive",
+            "face_hair": "Brunette professional bob with warm highlights; expressive determined brown eyes.",
+            "outfit": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie.",
+            "props": "Mahogany desk, post-it note array, steaming espresso cup, gold nameplate.",
+            "never": "Do not depict Sarah in casual athletic wear or disheveled hair."
+          },
+          {
+            "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+            "name": "Marcus Scriptwriter",
+            "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+            "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+            "props": "Mechanical keyboard laptop, cork storyboard wall pinned with colorful index cards and red yarn.",
+            "never": "Do not depict wearing formal suits; maintain creative storyteller persona."
+          }
+        ],
+        "series_look_version": 2,
+        "from_model": true,
+        "motion_prompt": "Slow pan left, smooth and with a clear start and end, sweeping from the right side of the scene across to the subject. Sarah smiles at notes; Marcus holds a marker over a blank board, then lowers it and turns toward Sarah. The shot ends on Marcus turned toward Sarah, marker lowered, both smiling. Their faces stay expressive and the same people throughout. As they speak their hands gesture, heads turn and shoulders shift, and behind them the lamp light flickers softly and the plants stir. Continuous, seamless shot. No subtitles, no on-screen text.",
+        "still_prompt": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow. Location: Executive Penthouse (Director / CEO), floor 4. Medium two-shot at eye level, both speakers facing the viewer. One continuous picture fills the whole tall frame, the people in its upper two thirds. Pages and screens are blank. In frame, facing the viewer: Sarah: Brunette professional bob with warm highlights, wearing crisp navy two-piece executive blazer; Marcus: Tousled wavy dark hair, wearing comfortable royal purple fleece hoodie over grey crew tee. Sarah smiles at notes; Marcus holds a marker over a blank board."
+      }
+    }
+  ],
+  "examples_blocked": 0
+}
