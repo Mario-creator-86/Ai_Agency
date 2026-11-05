@@ -2,6 +2,7 @@
 // Every result carries its source and retrieval time; numbers are computed here, never by the model.
 import {lookup} from 'node:dns/promises';
 import {isIP} from 'node:net';
+import {myChannel,myAnalytics,bridgeStatus} from './youtube-bridge.mjs';
 
 const UA_BROWSER='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 // The SEC asks automated clients to identify themselves; set SEC_USER_AGENT="Name email" in .env.
@@ -201,11 +202,14 @@ export const DATA_TOOLS={
  wikipedia:{fn:wikipedia,doc:'{"type":"wikipedia","query":"subiect","lang":"en|ro"} rezumat enciclopedic'},
  youtube_suggest:{fn:youtubeSuggest,doc:'{"type":"youtube_suggest","query":"how ai"} ce caută oamenii pe YouTube'},
  youtube_channel:{fn:youtubeChannel,doc:'{"type":"youtube_channel","channel":"@handle"} ultimele video-uri ale unui canal cu vizualizări'},
+ my_channel:{fn:myChannel,doc:'{"type":"my_channel","channel":"Leo Explains"} canalul TĂU: abonați, vizualizări, ultimele video-uri cu statistici (doar citire)'},
+ my_analytics:{fn:myAnalytics,doc:'{"type":"my_analytics","channel":"Leo Explains","days":28} statisticile TALE: vizionări, timp vizionat, retenție medie, abonați câștigați/pierduți, top video-uri, surse de trafic'},
  youtube_search:{fn:youtubeSearch,doc:'{"type":"youtube_search","query":"subiect"} video-uri de top cu vizualizări (necesită YOUTUBE_API_KEY)'}
 };
 // Quick reachability check of each source, shown in Settings.
 export async function sourceStatus(){
  const checks={'Prețuri (Yahoo Finance)':()=>marketQuote({symbols:['SPY']}).then(r=>{if(r.quotes[0].error)throw new Error(r.quotes[0].error);}),'Rapoarte companii (SEC)':()=>cikFor('AAPL'),'Știri (Google News)':()=>newsSearch({query:'stock market'}),'Macro (FRED)':()=>get('https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS',{ttl:600,timeout:10000}).catch(e=>{throw new Error(e.message+' · rezerva din piață rămâne activă pentru dobânzi, petrol, VIX, dolar');}),'Cursuri (BNR/BCE)':()=>fxRates(),'YouTube':()=>youtubeSuggest({query:'ai'}),'Wikipedia':()=>wikipedia({query:'Bucharest'})};
  const out={};await Promise.all(Object.entries(checks).map(async([k,fn])=>{const t=Date.now();try{await Promise.race([fn(),new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),12000))]);out[k]={ok:true,ms:Date.now()-t};}catch(e){out[k]={ok:false,error:e.message.slice(0,160)};}}));
+ out['Canalele tale (prin studio)']=await bridgeStatus();
  out['YouTube statistici']={ok:!!process.env.YOUTUBE_API_KEY,error:process.env.YOUTUBE_API_KEY?undefined:'opțional: YOUTUBE_API_KEY în .env'};return out;
 }

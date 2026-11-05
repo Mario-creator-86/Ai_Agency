@@ -1,10 +1,10 @@
-node_modules/
-.env
-data/
-workspaces/
 *.zip
 .DS_Store
+.env
 .openai/
+data/
 diagnostic/
-test-creiere-raport.txt
 instalare-raport.txt
+node_modules/
+test-creiere-raport.txt
+workspaces/
