@@ -2,7 +2,7 @@
 
 Oraș local, privat, pentru Mario și zece agenți AI. Proiect independent în repository-ul `Mario-creator-86/Ai_Agency`, branch `mario-agent-town`, folder `mario-agent-town/`.
 
-**Stadiu: prototip funcțional local, cu adaptoare AI implementate dar netestate pe conturi reale.** Nu este încă un sistem complet care administrează automat YouTube, Gmail sau Calendar. Vezi [HANDOFF.md](HANDOFF.md) pentru continuare.
+**Stadiu: prototip funcțional local, cu adaptoare AI implementate dar netestate pe conturi reale.** Nu este încă un sistem complet care administrează automat YouTube, Gmail sau Calendar. Vezi [HANDOFF.md](HANDOFF.md) pentru continuare. Pentru grafica v2 începe cu [art/README_CLAUDE.md](art/README_CLAUDE.md), care documentează harta nouă, cele zece sprite sheet-uri și atlasele.
 
 ## Pornire
 
@@ -17,7 +17,7 @@ Pe alte sisteme, copiază `.env.example` în `.env` dacă ai nevoie de configura
 
 ## Ce include
 
-- Hartă izometrică originală: zece case tematice, Town Hall, parc central, bănci, fântână animată și reședință mai mare pentru CEO.
+- Hartă RPG pictată originală: zece case tematice, Town Hall, parc central, bănci, fântână animată și reședință mai mare pentru CEO.
 - Personaj Mario bazat pe fotografiile furnizate explicit în această conversație: cap ras, barbă grizonantă, pulover închis **cu fermoar scurt la gât**. Fotografiile originale nu sunt incluse.
 - Săgeți / WASD, Shift pentru alergare, T pentru chat cu agentul apropiat, M pentru Alex. Click pe case/personaje; click pe teren pentru deplasare; drag pentru cameră; rotița pentru zoom.
 - Personaje care se plimbă, se orientează spre CEO în apropiere și se adună la Town Hall. Alex îl însoțește. Deplasările sunt animație decorativă, nu dovadă de muncă AI.
