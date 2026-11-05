@@ -2,6 +2,13 @@
 
 
 
+
+## Instalare pe PC-ul lui Mario — 5 noiembrie 2026, 19:30
+
+Instalat în `E:\mario-agent-town` (la cererea lui Mario). Windows: Node 24.14, Codex CLI 0.144.4 (logat cu ChatGPT), Claude Code 2.1.289 (`~\.local\bin\claude.exe`), Ollama 0.40.14 cu 6 modele cloud și niciun model local. `verifica.cmd` scrie raportul PC-ului; `test-creiere.cmd` trimite câte o cerere fiecărui creier prin adaptoarele orașului.
+
+Rezultat real de pe PC: **Claude Code răspunde** prin oraș. **Codex**: limita abonamentului ChatGPT atinsă până la 6 noiembrie, 16:30 (adaptorul afișează acum mesajul real din JSON, nu doar „cod 1”). **Ollama cloud**: HTTP 403, plata abonamentului Ollama restantă (mesajul serverului apare acum în eroare). Toate sursele de date răspund de pe PC, inclusiv FRED. Toți agenții V1 setați pe Claude. Test de acceptanță: Radu a folosit `market_quote` și a raportat S&P 500 cu sursă și oră, verificat independent.
+
 ## Date reale pentru agenți — 5 noiembrie 2026 (v3.3)
 
 Mario: „fiecare agent trebuie să aibă acces la ce are nevoie ca să poată livra”. Implementat `src/datatools.mjs` (surse publice gratuite, fără chei plătite), cu sursă și oră în fiecare rezultat și calcule făcute în cod, nu de model:
