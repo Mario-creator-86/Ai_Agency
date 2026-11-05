@@ -76,7 +76,7 @@ export class Runtime{
  case 'read_feed':{if(!this.tools(a).includes('read_feed'))throw new Error('read_feed nu face parte din rolul tău.');const r=await readFeed(x.source);this.store.event('source',a.id,{text:'Flux citit: '+x.source,data:r});return r;}
  case 'read_artifact':{const r=this.store.db.prepare('SELECT * FROM artifacts WHERE id=?').get(str(x.id,100));if(!r)throw new Error('Livrabil inexistent.');return r;}
  case 'request_help':{if(a.staff||a.id==='alex')throw new Error('Doar directorii pot cere un om nou.');return this.proposeCandidate(a.id,str(x.reason,1000));}
- default:{const tool=DATA_TOOLS[x.type];if(!tool)throw new Error('Instrument indisponibil: '+x.type);if(!this.tools(a).includes(x.type))throw new Error(`${x.type} nu face parte din rolul tău; cere unui coleg care are acces.`);const {type,...args}=x;const r=await tool.fn(args);this.store.event('source',a.id,{text:`${a.name} · ${type}: ${r.source||r.provider||''}`.slice(0,200)});return r;}
+ default:{const tool=DATA_TOOLS[x.type];if(!tool)throw new Error('Instrument indisponibil: '+x.type);if(!this.tools(a).includes(x.type))throw new Error(`${x.type} nu face parte din rolul tău; cere unui coleg care are acces.`);const {type,...args}=x;const r=await tool.fn(args,{agent:a.id});this.store.event('source',a.id,{text:`${a.name} · ${type}: ${r.source||r.provider||''}`.slice(0,200)});if(type==='publish_youtube'&&r.url){this.store.message('system','townhall',`${a.name} a programat ${r.kind==='short'?'Short-ul':'video-ul'} ${r.episode}${r.title?' „'+r.title+'”':''} pe YouTube: ${r.url} · public la ${r.publishAt}.`);this.store.event('publish',a.id,{text:`${r.episode} ${r.kind} → ${r.url} (${r.publishAt})`});}return r;}
  }
  }
 

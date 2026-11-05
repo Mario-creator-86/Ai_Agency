@@ -198,3 +198,10 @@ Un agent real produce un livrabil persistat; doi colaborează real; un restart p
 - Verified on the PC: dashboard reported running; Irina (Claude Haiku) read real figures through the tool (YouTube 18 subs / 7,274 views, TikTok 5 / 6,026, Facebook 10, Instagram 5). Autonomy turned on for V3.
 - Gap: no publishing tool exists in the town yet (YouTube bridge is read-only). Agents prepare complete packages until one is built.
 - Tests: `node --test tests/*.test.mjs` → 43 pass (4 new, fake dashboard server and launcher).
+
+## v3.5 — YouTube publishing linked to the Leo pipeline (2026-11-05)
+- `src/leo-publish.mjs`: tools `release_queue` (read) and `publish_youtube` (write). Publishing calls the existing pipeline scripts with the AI Acency venv python (`upload_long.py` / `youtube_upload_short.py vN <channel> --publish-at ISO`), so the same preflight, AI disclosure, vault and duplicate guard are used, then records the step with `release.py vN step yt_long|yt_short`.
+- Enforced from PUBLISHING_SCHEDULE.md: `social/STOP` stops everything; `social/locks/youtube.lock` shared with the scheduled tasks (exclusive create, removed after); `hold_until` respected; status must be `ready`; never re-upload; Short only after its long video; max 2 long + 2 Shorts per day, ≥3 h apart; slots 14:00/18:00 (long) and 17:00/21:00 (Short), uploaded private with publishAt; one publish at a time in the town. Failed uploads are never recorded.
+- Who: V3 Maria and Ana publish; Alex reads the queue. Each publish posts a Town Hall message with the link and time.
+- Not linked: TikTok, Instagram, Facebook, Pinterest (the Leo scheduled tasks post there via the browser); Shorts' "Related video" must be set in YouTube Studio (no API).
+- Tests: 48 pass (5 new, temp project + fake runner; no real upload). Env overrides: LEO_PROJECT_DIR, LEO_PYTHON, LEO_CHANNEL_ID.
