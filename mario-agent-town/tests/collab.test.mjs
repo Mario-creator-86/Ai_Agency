@@ -36,3 +36,19 @@ test('rejecting a candidate hires nobody',async()=>{const f=setup();const rt=new
 
 test('room chat: everyone with a brain answers once, Demo agents are reported not faked',async()=>{const f=setup();real(f.store,'ana','radu');let n=0;const rt=new Runtime(f.store,f.dir,()=>{},async()=>JSON.stringify({reply:'Răspuns '+(++n)}));try{await sleep(5);
  assert.equal(rt.say('all','Bună dimineața',['ana','radu','maria','mario']).queued,2);await drained(rt);const said=f.store.messages().filter(m=>m.channel==='meeting');assert.deepEqual(said.map(m=>m.sender),['mario','ana','radu']);}finally{rt.close();f.close();}});
+
+import {TEAMS,agentsFor} from '../src/agents.mjs';
+import {BUILDINGS,HALL} from '../public/village-layout.js';
+test('three team versions reuse the same characters with distinct jobs, houses and chairs',()=>{
+ assert.deepEqual(Object.keys(TEAMS),['v1','v2','v3']);
+ for(const t of Object.keys(TEAMS)){const list=agentsFor(t);assert.equal(new Set(list.map(a=>a.id)).size,list.length);assert.equal(new Set(list.map(a=>a.role)).size,list.length,t+' roles are unique');
+  for(const a of list){assert.ok(BUILDINGS.some(b=>b.owner===a.id),a.id+' keeps a house');assert.ok(HALL.assignment[a.id]!==undefined,a.id+' keeps a chair');assert.ok(a.mission.length>80);}}
+ assert.equal(agentsFor('v2').length,9,'the trading firm has nine agents');assert.equal(agentsFor('v2').find(a=>a.id==='alex').role,'Director de investiții & coordonator');
+ assert.ok(agentsFor('v2').some(a=>a.role==='Manager de risc'));assert.equal(agentsFor('v3').length,10);
+});
+test('a team keeps its own data and its charter reaches every prompt',async()=>{const dir=mkdtempSync(join(tmpdir(),'agent-town-team-'));const v2=new Store(join(dir,'v2'),'v2');const seen=[];
+ v2.set('agent:david',{provider:'ollama',model:'fake',enabled:true,lastAuto:0});const rt=new Runtime(v2,join(dir,'v2'),()=>{},async(p,m,messages)=>{seen.push(messages[0].content);return JSON.stringify({reply:'BLOCATĂ — DATE INSUFICIENTE',actions:[]});});
+ try{await sleep(5);rt.enqueue({agent:'david',text:'Verifică propunerea',channel:'david',depth:0});await drained(rt);assert.match(seen[0],/Manager de risc/);assert.match(seen[0],/BLOCATĂ — DATE INSUFICIENTE/);assert.match(seen[0],/Tăcerea nu este aprobare/);
+  assert.equal(v2.snapshot().agents.some(a=>a.id==='maria'),false,'Maria is not in the trading firm');
+  const v1=new Store(join(dir,'v1'),'v1');assert.equal(v1.messages().some(m=>m.text.includes('Verifică propunerea')||m.sender==='david'),false,'chats do not leak across versions');v1.close();}
+ finally{rt.close();v2.close();rmSync(dir,{recursive:true,force:true});}});

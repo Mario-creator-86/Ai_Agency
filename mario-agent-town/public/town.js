@@ -89,7 +89,7 @@ export class Town {
   c.addEventListener('pointermove',e=>{if(this.drag&&e.buttons){const dx=e.clientX-this.drag.x,dy=e.clientY-this.drag.y;if(Math.hypot(dx,dy)>5)this.drag.moved=true;if(this.drag.moved)this.pan={x:this.drag.pan.x+dx,y:this.drag.pan.y+dy};return;}const r=c.getBoundingClientRect();this.hover=this.hit(e.clientX-r.left,e.clientY-r.top);c.style.cursor=this.hover?'pointer':'grab';});
   c.addEventListener('pointerleave',()=>{this.hover=null;});
   c.addEventListener('pointerup',e=>{const dragged=this.drag?.moved;this.drag=null;if(dragged)return;const r=c.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,hit=this.hit(x,y);
-   if(hit){if(hit.id==='mario')this.onNearby?.('Acasă la Mario · CEO');else if(hit.owner===null)this.onNearby?.(hit.name+' · '+hit.subtitle);else this.select(hit.owner||hit.id);}
+   if(hit){if(hit.id==='mario')this.onNearby?.('Acasă la Mario · CEO');else if(hit.owner===null)this.onNearby?.(hit.name+' · '+hit.subtitle);else if(hit.owner&&hit.owner!=='mario'&&!this.people.has(hit.owner))this.onNearby?.(`Casa lui ${hit.name} este liberă în această versiune.`);else this.select(hit.owner||hit.id);}
    else if(this.scene==='village'&&this.ceo.where==='village'&&!this.meeting)this.ceo.path=smoothPath(this.ceo,findPath(this.ceo,this.world(x,y)));});
   c.addEventListener('wheel',e=>{e.preventDefault();this.setZoom(this.zoom*(e.deltaY>0?.93:1.07));},{passive:false});
   c.addEventListener('keydown',e=>{const key=e.key.toLowerCase();if(['arrowup','arrowdown','arrowleft','arrowright','w','a','s','d','shift'].includes(key)){e.preventDefault();this.keys.add(key);}
@@ -106,15 +106,17 @@ export class Town {
  }
  // ---------- movement ----------
  go(p,to){const target=nearestWalkable(to);if(!target){p.path=[];return false;}p.path=smoothPath(p,findPath(p,target));p.goal=target;return p.path.length>0||dist(p,target)<.05;}
- blocked(p,nx,ny){for(const o of [this.ceo,...this.people.values()]){if(o===p||o.where!==p.where||o.where!=='village')continue;const d=Math.hypot(o.x-nx,o.y-ny);if(d<.34&&d<Math.hypot(o.x-p.x,o.y-p.y))return o;}return null;}
+ blocked(p,nx,ny){if(p.ghostUntil>performance.now())return null;for(const o of [this.ceo,...this.people.values()]){if(o===p||o.where!==p.where||o.where!=='village')continue;const d=Math.hypot(o.x-nx,o.y-ny),limit=p.id==='mario'?.18:.34;if(d<limit&&d<Math.hypot(o.x-p.x,o.y-p.y))return o;}return null;}
  step(p,dt){
   if(!p.path.length)return false;const to=p.path[0],dx=to.x-p.x,dy=to.y-p.y,d=Math.hypot(dx,dy),amount=dt*p.speed;
   let nx=d<amount?to.x:p.x+dx/d*amount,ny=d<amount?to.y:p.y+dy/d*amount;
+  if(!isWalkable(nx,ny)){if(p.goal&&!p.replanned){p.replanned=true;this.go(p,p.goal);}else p.path.shift();return false;}
+  p.replanned=false;
   const other=this.blocked(p,nx,ny);
   if(other){// Walk around the other person: try a small sidestep, otherwise wait and re-plan.
    const sx=-dy/d*.06,sy=dx/d*.06;for(const k of [1,-1]){const ax=p.x+sx*k+dx/d*amount*.5,ay=p.y+sy*k+dy/d*amount*.5;if(isWalkable(ax,ay)&&!this.blocked(p,ax,ay)){p.x=ax;p.y=ay;p.blockedT=0;this.face(p,dx,dy);p.anim+=dt;return true;}}
-   p.blockedT=(p.blockedT||0)+dt;if(p.blockedT>1.6){p.blockedT=0;if(p.goal)this.go(p,p.goal);}this.face(p,dx,dy);return false;}
-  p.blockedT=0;p.x=nx;p.y=ny;if(d<amount)p.path.shift();this.face(p,dx,dy);p.anim+=dt;return true;
+   p.blockedT=(p.blockedT||0)+dt;p.jam=(p.jam||0)+dt;if(p.blockedT>1.6){p.blockedT=0;if(p.goal)this.go(p,p.goal);}if(p.jam>3){p.jam=0;p.ghostUntil=performance.now()+900;}this.face(p,dx,dy);return false;}
+  p.blockedT=0;p.jam=Math.max(0,(p.jam||0)-dt);p.x=nx;p.y=ny;if(d<amount)p.path.shift();this.face(p,dx,dy);p.anim+=dt;return true;
  }
  face(p,dx,dy){p.dir=Math.abs(dx)>Math.abs(dy)?(dx>0?1:0):(dy>0?2:3);}
  lookAt(p,o){this.face(p,o.x-p.x,o.y-p.y);}
@@ -130,8 +132,9 @@ export class Town {
   return [{x:aisle,y:985},{x:aisle,y:seat.y},{x:seat.x+(left?-60:60),y:seat.y},{x:seat.x,y:seat.y}];
  }
  exitHallRoute(p){const s=p.hall;const aisle=s.x<768?HALL.aisles.left:HALL.aisles.right;return s.y>900?[{x:HALL.door[0],y:HALL.door[1]}]:[{x:aisle,y:s.y},{x:aisle,y:950},{x:HALL.door[0],y:HALL.door[1]}];}
+ doorBusy(){const d=wpt(BUILDINGS.find(b=>b.id==='townhall').door);return [this.ceo,...this.people.values()].some(o=>o.where==='village'&&dist(o,d)<.3);}
  enterHall(p){p.where='hall';p.seated=false;p.hall={x:HALL.door[0],y:HALL.door[1]};p.hallPath=this.hallRoute(p,this.seatFor(p));p.path=[];}
- leaveHall(p){p.where='village';p.hall=null;p.seated=false;const d=wpt(BUILDINGS.find(b=>b.id==='townhall').door);p.x=d.x;p.y=d.y;p.path=[];p.wait=0;}
+ leaveHall(p){p.where='village';p.hall=null;p.seated=false;const d=wpt(BUILDINGS.find(b=>b.id==='townhall').door);p.x=d.x;p.y=d.y;p.path=[];p.wait=0;p.returning=p.id!=='mario';}
  home(p){return homeOf(p.role==='worker'||p.role==='candidate'?p.director:p.id);}
  yardPoint(b,center=false){const [x0,y0,x1,y1]=b.yard;return wpt(center?[(x0+x1)/2,(y0+y1)/2]:[rand(x0+8,x1-8),rand(y0+14,y1-6)]);}
  inYard(p,b){const q=pixelPoint(p.x,p.y);return q.x>=b.yard[0]-2&&q.x<=b.yard[2]+2&&q.y>=b.yard[1]-2&&q.y<=b.yard[3]+2;}
@@ -145,7 +148,7 @@ export class Town {
   if(p.where==='hall'){
    if(meeting||(p.role==='candidate'&&this.meeting)){if(!p.hallPath?.length&&!p.seated){const seat=this.seatFor(p);if(seat&&Math.hypot(p.hall.x-seat.x,p.hall.y-seat.y)<2){p.seated=true;p.dir=DIR[seat.facing];}else if(!seat)p.dir=3;}return;}
    if(!p.leaving){p.leaving=true;p.seated=false;p.hallPath=this.exitHallRoute(p);}
-   if(!p.hallPath.length){p.leaving=false;this.leaveHall(p);}return;}
+   if(!p.hallPath.length){if(performance.now()-(this.lastExit||0)<650||this.doorBusy())return;this.lastExit=performance.now();p.leaving=false;this.leaveHall(p);}return;}
   // village
   if(meeting||(p.role==='candidate'&&!p.hired)){
    if(p.role==='candidate'&&!this.meeting){if(!p.path.length&&dist(p,wpt([828+20,528]))>.2)this.go(p,wpt([830,530]));if(!p.path.length)this.lookAt(p,this.ceo);return;}
@@ -155,7 +158,10 @@ export class Town {
   if(p.goalKind==='work'||p.goalKind==='hall')p.goalKind=null;
   if(p.goalKind==='report'&&!p.hired)p.goalKind=null;
   // Mario walks by: idle characters stop and turn toward him.
-  if(this.ceo.where==='village'&&dist(p,this.ceo)<2&&p.goalKind!=='talk'){p.watching=true;if(p.path.length)p.paused=p.path,p.path=[];this.lookAt(p,this.ceo);return;}
+  // After a meeting the chief of staff waits with Mario in front of the Town Hall.
+  if(p.role==='chief'&&p.afterMeeting){p.returning=false;const spot=wpt(HALL_FRONT.alex);if(dist(this.ceo,spot)>4&&dist(p,spot)<.2){p.afterMeeting=false;return;}if(dist(p,spot)>.15){if(!p.path.length)this.go(p,spot);}else{p.path=[];this.lookAt(p,this.ceo);}return;}
+  if(p.returning&&((p.role==='worker'&&dist(p,wpt(townhall.door))>1.5)||this.inYard(p,home||townhall)||(p.role==='chief'&&!p.path.length)))p.returning=false;
+  if(!p.returning&&this.ceo.where==='village'&&dist(p,this.ceo)<2&&p.goalKind!=='talk'){p.watching=true;if(p.path.length)p.paused=p.path,p.path=[];this.lookAt(p,this.ceo);return;}
   if(p.watching){p.watching=false;if(p.paused){p.path=p.paused;p.paused=null;}}
   if(p.hold>0){p.hold-=dt;if(p.partner)this.lookAt(p,p.partner);if(p.hold<=0)p.partner=null;return;}
   // A real AI conversation pulls the two speakers together.
@@ -167,7 +173,6 @@ export class Town {
   if(p.role==='worker'){// Workers roam the whole town along the paths.
    const spots=[[230,608],[461,282],[1070,282],[1340,282],[620,700],[920,700],[401,450],[1143,450],[221,901],[964,901],[1310,901],[700,282],[1000,608],[540,901]];
    this.go(p,wpt(spots[Math.floor(Math.random()*spots.length)]));p.wait=rand(2,6);return;}
-  if(p.role==='chief'&&p.afterMeeting){if(dist(p,wpt(HALL_FRONT.alex))>.15)this.go(p,wpt(HALL_FRONT.alex));p.wait=rand(8,14);p.afterMeeting=dist(p,wpt(HALL_FRONT.alex))>.15;return;}
   const b=home||townhall;// Directors stay in their own yard and pace a little.
   if(!this.inYard(p,b)){this.go(p,this.yardPoint(b,true));p.wait=rand(1,3);return;}
   this.go(p,this.yardPoint(b));p.wait=rand(3,8);
@@ -185,14 +190,14 @@ export class Town {
  tick(dt){
   const k=this.keys,ceo=this.ceo;
   if(this.meeting&&ceo.where==='village'){if(!ceo.path.length||ceo.goalKind!=='hall'){ceo.goalKind='hall';this.go(ceo,wpt(BUILDINGS.find(b=>b.id==='townhall').door));}if(this.atDoor(ceo,BUILDINGS.find(b=>b.id==='townhall')))this.enterHall(ceo);}
-  if(ceo.where==='hall'){if(!this.meeting){if(!ceo.leaving){ceo.leaving=true;ceo.seated=false;ceo.hallPath=this.exitHallRoute(ceo);}if(!ceo.hallPath.length){ceo.leaving=false;this.leaveHall(ceo);ceo.goalKind='front';this.go(ceo,wpt(HALL_FRONT.mario));const alex=this.people.get('alex');if(alex)alex.afterMeeting=true;}}
+  if(ceo.where==='hall'){if(!this.meeting){if(!ceo.leaving){ceo.leaving=true;ceo.seated=false;ceo.hallPath=this.exitHallRoute(ceo);}if(!ceo.hallPath.length&&performance.now()-(this.lastExit||0)>650&&!this.doorBusy()){this.lastExit=performance.now();ceo.leaving=false;this.leaveHall(ceo);ceo.goalKind='front';this.go(ceo,wpt(HALL_FRONT.mario));const alex=this.people.get('alex');if(alex)alex.afterMeeting=true;}}
    else if(!ceo.hallPath?.length&&!ceo.seated){ceo.seated=true;ceo.dir=2;}ceo.walking=this.stepHall(ceo,dt);}
   else{let dx=0,dy=0;if(k.has('w')||k.has('arrowup'))dy--;if(k.has('s')||k.has('arrowdown'))dy++;if(k.has('a')||k.has('arrowleft'))dx--;if(k.has('d')||k.has('arrowright'))dx++;
    ceo.walking=false;if((dx||dy)&&!this.meeting){ceo.path=[];const speed=(k.has('shift')?2.4:1.4)*dt,d=Math.hypot(dx,dy),nx=ceo.x+dx/d*speed,ny=ceo.y+dy/d*speed;if(isWalkable(nx,ny)&&!this.blocked(ceo,nx,ny)){ceo.x=nx;ceo.y=ny;ceo.walking=true;ceo.anim+=dt;}else if(isWalkable(nx,ceo.y)&&!this.blocked(ceo,nx,ceo.y)){ceo.x=nx;ceo.walking=true;ceo.anim+=dt;}else if(isWalkable(ceo.x,ny)&&!this.blocked(ceo,ceo.x,ny)){ceo.y=ny;ceo.walking=true;ceo.anim+=dt;}this.face(ceo,dx,dy);}
    else{ceo.speed=1.4;ceo.walking=this.step(ceo,dt);}
    if(ceo.walking&&Date.now()-(this.lastSave||0)>1000){this.lastSave=Date.now();this.onMove?.({x:ceo.x,y:ceo.y});}}
   for(const p of [...this.people.values()]){this.brain(p,dt);if(!this.people.has(p.id))continue;
-   if(p.where==='hall'){p.walking=this.stepHall(p,dt);if(p.seated&&this.speaker&&this.speaker!==p.id){}}
+   if(p.where==='hall')p.walking=this.stepHall(p,dt);
    else if(p.where==='village'){p.walking=this.step(p,dt);if(!p.path.length&&p.resume&&p.hold<=0){this.go(p,p.resume);p.resume=null;}}
    if(p.alpha!==undefined&&p.alpha<1)p.alpha=Math.min(1,p.alpha+dt*3);
    if(p.lookAt){const o=p.lookAt==='mario'?this.ceo:this.people.get(p.lookAt);if(o&&o.where===p.where&&!p.walking&&!p.seated){p.where==='hall'?this.face(p,o.hall.x-p.hall.x,o.hall.y-p.hall.y):this.lookAt(p,o);}if(!p.bubble||p.bubble.until<performance.now())p.lookAt=null;}}
@@ -302,12 +307,13 @@ export class Town {
   const [tx,ty,tw,th]=R(table[0],table[1],table[2],table[3]);c.save();c.shadowColor='#0007';c.shadowBlur=18*s;c.shadowOffsetY=10*s;g=c.createLinearGradient(tx,0,tx+tw,0);g.addColorStop(0,'#7b4a26');g.addColorStop(.5,'#a8693a');g.addColorStop(1,'#7b4a26');c.fillStyle=g;c.beginPath();c.roundRect(tx,ty,tw,th,18*s);c.fill();c.restore();
   c.strokeStyle='#5a331b';c.lineWidth=4*s;c.beginPath();c.roundRect(tx,ty,tw,th,18*s);c.stroke();c.strokeStyle='#c98f55';c.lineWidth=1.5*s;c.beginPath();c.roundRect(tx+8*s,ty+8*s,tw-16*s,th-16*s,12*s);c.stroke();
   for(const seat of HALL.seats){if(seat.role==='head'){this.paper(768,350,s,0);continue;}if(seat.role==='foot'){this.paper(768,780,s,0);continue;}const left=seat.side==='left';this.paper(left?705:831,seat.y+10,s,left?-.2:.2);this.cup(left?725:811,seat.y-22,s);}
+  for(const p of inHall.filter(p=>p.seated&&seatOf(p)?.side))this.drawHallPerson(p,H,seatOf(p),{upper:true});
   const ctr=P(768,560);c.fillStyle='#2f5d3a';c.beginPath();c.ellipse(ctr.x,ctr.y,30*s,16*s,0,0,Math.PI*2);c.fill();for(let i=0;i<9;i++){const a=i/9*Math.PI*2;c.fillStyle=['#ff8fb1','#ffd166','#f4f1de'][i%3];c.beginPath();c.arc(ctr.x+Math.cos(a)*18*s,ctr.y+Math.sin(a)*8*s,4.5*s,0,Math.PI*2);c.fill();}
   for(const p of inHall.filter(p=>p.seated&&seatOf(p)?.role==='foot'))this.drawHallPerson(p,H,seatOf(p));
   this.chair(HALL.seats[11],s,true);
   for(const p of walkers.filter(p=>p.hall.y>=HALL.table[3]))this.drawHallPerson(p,H);
   // name plates: big and readable
-  for(const p of inHall){const seat=seatOf(p);const q=P(p.hall.x,p.hall.y);const font=Math.max(9,Math.min(14,13*s+4)),label=(p.id==='mario'?'♛ ':'')+p.name+(p.role==='candidate'?' · candidat':'');this.ctx.font=`600 ${font}px 'Segoe UI',sans-serif`;const half=this.ctx.measureText(label).width/2+9;const lx=seat?.side==='left'?q.x-44*s-half:seat?.side==='right'?q.x+44*s+half:q.x;const y=seat?.role==='head'?this.px(0,HALL.table[1]).y-H*.85*s-font:seat?.role==='foot'?q.y+44*s:seat?q.y-40*s:q.y+14*s;const speaking=this.speaker===p.id;this.pill(lx,y,label,{border:speaking?'#8be08a':p.id==='mario'?'#e7bf5b':(p.color||'#b8964f'),color:speaking?'#c9f7b5':'#fff4d6',font});}
+  for(const p of inHall){const seat=seatOf(p);const q=P(p.hall.x,p.hall.y);const font=Math.max(9,Math.min(14,13*s+4)),label=(p.id==='mario'?'♛ ':'')+p.name+(p.role==='candidate'?' · candidat':'');this.ctx.font=`600 ${font}px 'Segoe UI',sans-serif`;const half=this.ctx.measureText(label).width/2+9;const lx=seat?.side==='left'?q.x-52*s-half:seat?.side==='right'?q.x+52*s+half:q.x;const y=seat?.role==='head'?this.px(0,HALL.table[1]).y-H*.85*s-font:seat?.role==='foot'?q.y+44*s:seat?q.y-40*s:q.y+14*s;const speaking=this.speaker===p.id;this.pill(lx,y,label,{border:speaking?'#8be08a':p.id==='mario'?'#e7bf5b':(p.color||'#b8964f'),color:speaking?'#c9f7b5':'#fff4d6',font});}
   c.restore();
   c.strokeStyle='#c2a56a';c.lineWidth=2;c.beginPath();c.roundRect(v.x-2,v.y-2,v.w+4,v.h+4,8);c.stroke();
  }
@@ -316,13 +322,15 @@ export class Town {
  chair(seat,s,frontBack=false){const c=this.ctx,q=this.px(seat.x,seat.y),wood='#6b3d1f',cush='#a7262c';c.save();c.lineWidth=2*s;c.strokeStyle='#3b210f';
   if(seat.role==='head'){c.fillStyle='#5a3218';c.beginPath();c.roundRect(q.x-56*s,q.y-92*s,112*s,140*s,[44*s,44*s,6*s,6*s]);c.fill();c.stroke();c.fillStyle=cush;c.beginPath();c.roundRect(q.x-44*s,q.y-80*s,88*s,120*s,[36*s,36*s,4*s,4*s]);c.fill();c.fillStyle='#e8bd4b';c.beginPath();c.arc(q.x,q.y-94*s,10*s,0,Math.PI*2);c.fill();}
   else if(seat.role==='foot'){if(!frontBack){c.restore();return;}c.fillStyle=wood;c.beginPath();c.roundRect(q.x-34*s,q.y-48*s,68*s,62*s,8*s);c.fill();c.stroke();c.fillStyle=cush;c.fillRect(q.x-26*s,q.y-40*s,52*s,40*s);c.fillStyle=wood;c.fillRect(q.x-30*s,q.y+12*s,8*s,22*s);c.fillRect(q.x+22*s,q.y+12*s,8*s,22*s);}
-  else{const dir=seat.side==='left'?-1:1;c.fillStyle=wood;c.beginPath();c.roundRect(q.x+dir*26*s-6*s,q.y-92*s,12*s,96*s,4*s);c.fill();c.stroke();c.fillStyle=cush;c.beginPath();c.roundRect(q.x-30*s,q.y-34*s,60*s,26*s,6*s);c.fill();c.stroke();c.fillStyle=wood;c.fillRect(q.x-28*s,q.y-10*s,6*s,20*s);c.fillRect(q.x+22*s,q.y-10*s,6*s,20*s);}
+  else{const dir=seat.side==='left'?-1:1;c.fillStyle=wood;c.beginPath();c.roundRect(q.x+dir*30*s-6*s,q.y-84*s,12*s,88*s,4*s);c.fill();c.stroke();c.fillStyle=cush;c.beginPath();c.roundRect(q.x-26*s+dir*8*s,q.y-30*s,44*s,24*s,6*s);c.fill();c.stroke();c.fillStyle=wood;c.fillRect(q.x-20*s+dir*8*s,q.y-8*s,6*s,16*s);c.fillRect(q.x+12*s+dir*8*s,q.y-8*s,6*s,16*s);}
   c.restore();}
- drawHallPerson(p,H,seat=null){const v=this.view(),s=v.scale,q=this.px(p.hall.x,p.hall.y);
+ drawHallPerson(p,H,seat=null,{upper=false}={}){const v=this.view(),s=v.scale,q=this.px(p.hall.x,p.hall.y);
+  // Seated at the long sides: legs go under the table, head and shoulders stay above it.
+  if(upper){const h=H*.86*s;this.sprite(p,q.x,q.y+4*s,h,{clipY:q.y+4*s-h*.43});return;}
   if(seat?.role==='head'){// Mario at the head: the table covers him below the waist.
    const top=this.px(0,HALL.table[1]).y;this.sprite(p,q.x,top+H*.36*s,H*1.08*s,{clipY:top+6*s});}
   else if(seat?.role==='foot')this.sprite(p,q.x,q.y+4*s,H*s);
-  else if(seat)this.sprite(p,q.x,q.y+6*s,H*.94*s);
+  else if(seat)this.sprite(p,q.x,q.y+4*s,H*.86*s);
   else this.sprite(p,q.x,q.y,H*s);
   if(p.bubble&&p.bubble.until>performance.now())this.bubble(q.x,q.y-(seat?.role==='head'?175:H*.95)*s,p.bubble.text,p.bubble);
   if(this.speaker===p.id){this.ctx.strokeStyle='#8be08a';this.ctx.lineWidth=2.5;this.ctx.beginPath();this.ctx.ellipse(q.x,q.y+6*s,40*s,12*s,0,0,Math.PI*2);this.ctx.stroke();}}
@@ -345,12 +353,12 @@ export class Town {
  overlays(v){
   const s=v.scale,now=performance.now();
   for(const b of BUILDINGS){if(this.hover?.id===b.id){const c=this.ctx;c.save();c.strokeStyle=b.color;c.lineWidth=2;c.shadowColor=b.color;c.shadowBlur=12;c.strokeRect(v.x+b.bounds[0]*s,v.y+b.bounds[1]*s,(b.bounds[2]-b.bounds[0])*s,(b.bounds[3]-b.bounds[1])*s);c.restore();}
-   const q=this.px(b.label[0],b.label[1]);this.pill(q.x,q.y,b.icon+' '+b.name,{border:b.color,color:b.id==='mario'?'#ffe59a':'#fff4d6',font:Math.max(8,Math.min(11,11*s+4))});
+   const q=this.px(b.label[0],b.label[1]),present=!b.owner||b.owner==='mario'||this.people.has(b.owner);this.pill(q.x,q.y,(b.id==='townhall'?'⌂ Town Hall':b.icon+' '+b.name)+(present?'':' · liberă'),{border:present?b.color:'#7d7d70',color:b.id==='mario'?'#ffe59a':present?'#fff4d6':'#b9b6a8',font:Math.max(8,Math.min(11,11*s+4))});
    const inside=[...this.people.values()].filter(p=>p.where==='house'&&this.home(p)?.id===b.id&&this.working.has(p.id));if(inside.length){const d=this.px(b.door[0],b.door[1]-52);this.pill(d.x,d.y,'● '+inside.map(p=>p.name).join(', ')+' lucrează la birou',{color:'#c6efa5',border:'#6baf65',font:9});}}
   for(const p of [...this.people.values(),this.ceo]){if(p.where!=='village')continue;const pos=this.screen(p.x,p.y),ceo=p.id==='mario';
    const show=ceo||this.hover?.id===p.id||this.selected===p.id||dist(p,this.ceo)<2||p.role!=='director';if(show)this.pill(pos.x,pos.y-(ceo?83:75)*s,ceo?'♛ Mario':p.name+(p.role==='candidate'?' · candidat':p.role==='worker'?' · echipa '+p.director:''),{border:ceo?'#e7bf5b':p.color||'#f2c230',font:9});
    if(p.notes>now)this.pill(pos.x+18*s,pos.y-40*s,'✎',{font:9,border:'#c9b07a'});
    if(p.bubble&&p.bubble.until>now)this.bubble(pos.x,pos.y-(ceo?92:84)*s,p.bubble.text,p.bubble);}
  }
- tooltip(v){const tooltip=document.getElementById('mapTooltip');if(!tooltip)return;if(this.hover){tooltip.hidden=false;const p=this.hover.bounds?{x:v.x+this.hover.label[0]*v.scale,y:v.y+this.hover.label[1]*v.scale}:this.posOf(this.hover);tooltip.style.left=Math.max(12,Math.min(this.width-235,p.x-70))+'px';tooltip.style.top=Math.max(122,p.y+16)+'px';tooltip.textContent=this.hover.name+' · '+(this.hover.subtitle||this.state?.agents.find(a=>a.id===this.hover.id)?.role||'CEO');}else tooltip.hidden=true;}
+ tooltip(v){const tooltip=document.getElementById('mapTooltip');if(!tooltip)return;if(this.hover){tooltip.hidden=false;const p=this.hover.bounds?{x:v.x+this.hover.label[0]*v.scale,y:v.y+this.hover.label[1]*v.scale}:this.posOf(this.hover);tooltip.style.left=Math.max(12,Math.min(this.width-235,p.x-70))+'px';tooltip.style.top=Math.max(122,p.y+16)+'px';const owner=this.hover.bounds?this.state?.agents.find(a=>a.id===this.hover.owner):null;tooltip.textContent=this.hover.bounds?(owner?`${this.hover.name} · ${owner.role}`:this.hover.owner&&this.hover.owner!=='mario'?`Casa lui ${this.hover.name} · nu face parte din echipa actuală`:this.hover.name+' · '+this.hover.subtitle):this.hover.name+' · '+(this.state?.agents.find(a=>a.id===this.hover.id)?.role||'CEO');}else tooltip.hidden=true;}
 }

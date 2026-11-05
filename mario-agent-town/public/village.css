@@ -69,3 +69,5 @@
 .meeting-box.collapsed>:not(.meeting-box-head){display:none}
 .meeting-box.collapsed .meeting-box-head{border-bottom:0}
 @media (max-width:900px){.meeting-box{top:auto;bottom:6px;height:70%}.meeting-box.collapsed{bottom:auto;top:6px}}
+.team-picker select{background:#1d3329;color:#f2e6c4;border:1px solid #b8964f;border-radius:8px;padding:7px 8px;font:600 12px Inter,'Segoe UI',sans-serif;max-width:190px;cursor:pointer}
+@media (max-width:700px){.team-picker select{max-width:92px;padding:6px 4px;font-size:11px}}

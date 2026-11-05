@@ -32,3 +32,7 @@ test('Town Hall table has 12 chairs, Mario at the head and a unique seat for eve
  for(const a of agents)assert.ok(HALL.assignment[a.id]!==undefined,a.id+' has a chair');
  assert.ok(!seats.includes(11),'the foot chair stays free for interview candidates');
 });
+
+test('every house door can reach every other door (no unreachable targets)',()=>{
+ for(const a of BUILDINGS)for(const b of BUILDINGS){if(a===b)continue;assert.ok(findPath(worldPoint(...a.door),worldPoint(...b.door)).length>0,a.id+' -> '+b.id);}
+});
