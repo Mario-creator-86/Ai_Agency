@@ -205,3 +205,9 @@ Un agent real produce un livrabil persistat; doi colaborează real; un restart p
 - Who: V3 Maria and Ana publish; Alex reads the queue. Each publish posts a Town Hall message with the link and time.
 - Not linked: TikTok, Instagram, Facebook, Pinterest (the Leo scheduled tasks post there via the browser); Shorts' "Related video" must be set in YouTube Studio (no API).
 - Tests: 48 pass (5 new, temp project + fake runner; no real upload). Env overrides: LEO_PROJECT_DIR, LEO_PYTHON, LEO_CHANNEL_ID.
+
+## Open items when continuing in Claude desktop (2026-11-05 20:30)
+- Facebook/Instagram/TikTok/Pinterest: the Leo scheduled tasks (HANDOVER/tasks/leo-publish-*.md, leo-comic-daily, leo-tiktok-recut) were stopped by Mario. Options presented: (1) official APIs (Meta Graph, Pinterest, TikTok Content Posting) as narrow town tools; (2) re-enable the desktop scheduled tasks, town agents prepare content; (3) town starts `claude -p --chrome` with the fixed task prompts — blocked in the cloud session by the safety classifier; needs Mario's explicit decision. Claude Code CLI on the PC is NOT connected to Claude in Chrome yet (`claude --chrome` once, interactively).
+- Sofia and Tudor (Ollama) not re-tested after Mario fixed Ollama billing.
+- Shorts "Related video" must be set in YouTube Studio before publishAt (no API).
+- Town runs from E:\mario-agent-town\start.cmd (http://127.0.0.1:8012); V3 active, autonomy ON.
