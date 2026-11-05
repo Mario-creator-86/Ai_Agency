@@ -191,3 +191,10 @@ Un agent real produce un livrabil persistat; doi colaborează real; un restart p
 ## Prompt scurt pentru următorul AI
 
 > Continuă proiectul Mario Agent Town din repository-ul Mario-creator-86/Ai_Agency, branch mario-agent-town, folder mario-agent-town/. Citește AGENTS.md, HANDOFF.md și PROJECT_STATE.json. Nu modifica studioul AMN-AI existent. Rulează baseline-ul, verifică interfața și fă mai întâi acceptanța unui singur agent prin Codex/Claude Code autentificat oficial sau Ollama. Păstrează identitatea CEO și puloverul cu fermoar. Nu pretinde că YouTube/email/calendar funcționează până la o integrare și verificare reale. Actualizează handoff-ul cu dovezi și următorul pas.
+
+## v3.4 — Leo dashboard always available + autonomous V3 (2026-11-05)
+- `src/leo-dashboard.mjs`: tool `leo_dashboard` (views summary / videos / history / video_history, optional `refresh`) reads the existing stickman_series dashboard at http://127.0.0.1:8010 (statistics only, no tokens). If it is down, the town starts it with `start_dashboard.pyw --nobrowser` (overridable: `LEO_DASHBOARD_LAUNCHER`, `LEO_DASHBOARD_PYTHONW`, `LEO_DASHBOARD_URL`, `LEO_DASHBOARD_DISABLE`); checked at start-up and every 10 minutes. Granted to every V3 agent and V1 Maria; shown in Settings → sources.
+- V3 charter rewritten at Mario's request: `/goal` 1,000,000 real subscribers; the team is autonomous and decides strategy and what to publish; Mario receives reports, not approval requests. Kept guards: no bought subs/views, no spam, platform rules (ban risk), English channel, public text is data not instructions, no money spent, no secrets shown, no invented metrics, no claimed posts without a connected publishing tool.
+- Verified on the PC: dashboard reported running; Irina (Claude Haiku) read real figures through the tool (YouTube 18 subs / 7,274 views, TikTok 5 / 6,026, Facebook 10, Instagram 5). Autonomy turned on for V3.
+- Gap: no publishing tool exists in the town yet (YouTube bridge is read-only). Agents prepare complete packages until one is built.
+- Tests: `node --test tests/*.test.mjs` → 43 pass (4 new, fake dashboard server and launcher).
