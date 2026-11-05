@@ -1,5 +1,13 @@
 # Preluare proiect — Mario Agent Town
 
+
+## Actualizare v3.1 — versiuni de echipă și verificări — 5 noiembrie 2026
+
+- **Selector de versiune** în bara de sus: V1 · Echipa personală (rolurile v3), V2 · Firma de trading (9 agenți, după anexa lui Mario: Alex director de investiții, Radu cercetaș, Irina fundamental, Elena earnings/catalizatori, Tudor macro, Victor cantitativ/tehnic, Sofia SHORT/contestatar, David manager de risc, Ana operațiuni/performanță; Maria nu face parte, casa ei apare „liberă”), V3 · Echipa YouTube 1M (10 roluri: showrunner, producător executiv, cercetare, scenarist, fact-check, montaj, producție tehnică, ambalare, analytics, community). Fiecare versiune are bază de date, chat, memorie, sarcini și angajați separați (`data/` pentru V1, `data/v2/`, `data/v3/`); creierele alese se copiază la prima deschidere a unei versiuni. Regulile echipei (charter) intră în fiecare prompt; V2 include fluxul obligatoriu, formatul propunerii în 12 puncte, „BLOCATĂ — DATE INSUFICIENTE” și interdicția execuției fără aprobare. Nu există broker conectat.
+- **Reparat după simulare automată în Chrome** (eșantion la 250 ms, 13–14 personaje, ședință completă): ușile lui Mario și Maria erau inaccesibile ca destinație (A* bloca animația ~1 s) → țintele se aliniază la grilă, A* cu heap; blocaj permanent la ieșirea din Town Hall → ieșire eșalonată pe ușă, cine se întoarce acasă nu se mai oprește la Mario, cedare după 3 s de blocaj; pas lateral care putea ieși de pe alee → interzis. Rezultat final: 0 poziții în afara aleilor, 0 teleportări, 0 suprapuneri peste 1 s.
+- **Masa:** scaunele lungi au pas de 108 px; picioarele trec sub masă, capul și umerii se desenează peste marginea mesei (verificat la zoom 260%).
+- Teste: 22/22.
+
 ## Actualizare v3 — oraș viu, ședințe, angajări — 5 noiembrie 2026
 
 Cerut de Mario. Higgsfield NU a fost folosit (fără credite; Mario a cerut explicit să lucrăm cu grafica ChatGPT). Nicio casă nu a fost redesenată și nimic nu a fost generat la 4K.

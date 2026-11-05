@@ -1,13 +1,23 @@
 import http from 'node:http';
-import {readFileSync,existsSync,mkdirSync} from 'node:fs';
+import {readFileSync,existsSync,mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,dirname,extname,join,relative as relativePath,isAbsolute} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Store} from './src/store.mjs';
 import {Runtime,everyone,localClock} from './src/runtime.mjs';
-import {agents,providerIds} from './src/agents.mjs';
+import {agents,providerIds,TEAMS} from './src/agents.mjs';
 import {diagnostics} from './src/providers.mjs';
 const root=dirname(fileURLToPath(import.meta.url));const arg=name=>{const i=process.argv.indexOf(name);return i>=0?process.argv[i+1]:undefined;};const port=Number(arg('--port')||process.env.PORT||8012);const preview=process.argv.includes('--preview')||process.env.TOWN_PREVIEW==='1';const host=arg('--host')||process.env.HOST||(preview?'0.0.0.0':'127.0.0.1');
-const store=new Store(process.env.TOWN_DATA_DIR||join(root,'data'));const streams=new Set();let world={ceo:{x:10,y:14},meeting:false};const notify=()=>{const text='data: '+JSON.stringify({at:Date.now()})+'\n\n';for(const r of streams)r.write(text);};const runtime=new Runtime(store,root,notify);
+const dataRoot=process.env.TOWN_DATA_DIR||join(root,'data');mkdirSync(dataRoot,{recursive:true});const teamFile=join(dataRoot,'active-team.json');
+const streams=new Set();let world={ceo:{x:10,y:14},meeting:false};const notify=()=>{const text='data: '+JSON.stringify({at:Date.now()})+'\n\n';for(const r of streams)r.write(text);};
+// Each team version has its own database and agent folders. V1 keeps the original locations.
+const openTeam=team=>{const dir=team==='v1'?dataRoot:join(dataRoot,team);const s=new Store(dir,team);return {store:s,runtime:new Runtime(s,team==='v1'?root:dir,notify)};};
+let activeTeam='v1';try{const t=JSON.parse(readFileSync(teamFile,'utf8')).team;if(TEAMS[t])activeTeam=t;}catch{}
+let {store,runtime}=openTeam(activeTeam);
+function switchTeam(team){if(!TEAMS[team])throw new Error('Versiune de echipă necunoscută.');if(team===activeTeam)return;const brains=Object.fromEntries(agents.map(a=>[a.id,store.get('agent:'+a.id)]).filter(([,c])=>c));runtime.close();store.close();
+ ({store,runtime}=openTeam(team));activeTeam=team;writeFileSync(teamFile,JSON.stringify({team}));world={...world,meeting:false};
+ // A team opened for the first time inherits the brains chosen in the previous team.
+ if(!store.get('brainsCopied')){for(const a of store.members()){const old=brains[a.id],now=store.get('agent:'+a.id);if(old&&now&&now.provider==='demo'&&old.provider!=='demo')store.set('agent:'+a.id,{...now,provider:old.provider,model:old.model});}store.set('brainsCopied',true);}
+ store.event('team','mario',{text:'Versiunea activă: '+TEAMS[team].label});notify();}
 const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data));};
 const validAgent=id=>everyone().some(a=>a.id===id);const text=(value,max)=>{if(typeof value!=='string'||!value.trim()||value.length>max)throw new Error('Text invalid sau prea lung.');return value.trim();};
 async function body(req){if(!req.headers['content-type']?.startsWith('application/json'))throw new Error('Este necesar JSON.');let b='';for await(const c of req){b+=c;if(b.length>250000)throw new Error('Cerere prea mare.');}return JSON.parse(b||'{}');}
@@ -37,6 +47,7 @@ const server=http.createServer(async(req,res)=>{try{
  if(path==='/api/encounter'){return json(res,200,runtime.encounter(b.a,b.b));}
  if(path==='/api/staff/request'){return json(res,202,runtime.proposeCandidate(b.director,typeof b.reason==='string'&&b.reason.trim()?b.reason.trim().slice(0,500):'Mario a cerut ajutor pentru această echipă.'));}
  if(path==='/api/staff/decide'){if(typeof b.yes!=='boolean')throw new Error('Decizie invalidă.');const r=runtime.hire(text(b.id,40),b.yes);notify();return json(res,200,r);}
+ if(path==='/api/team'){switchTeam(text(b.team,10));return json(res,200,{team:activeTeam});}
  if(path==='/api/stop'){const s=store.get('settings');store.set('settings',{...s,paused:true,autonomy:false});runtime.stop();store.db.prepare("UPDATE tasks SET status='cancelled' WHERE status='queued'").run();notify();return json(res,200,{ok:true});}
  return json(res,404,{error:'Rută inexistentă.'});
  }

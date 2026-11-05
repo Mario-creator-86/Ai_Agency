@@ -7,12 +7,12 @@
   "phase": "local_prototype",
   "tests": {
     "command": "npm test",
-    "passed": 19,
+    "passed": 22,
     "failed": 0,
     "runtime": "Node 22.23.4 Linux",
     "real_provider_acceptance": false
   },
-  "browser_qa": "v3 village day/night, meeting gathering, Town Hall table seating and candidate flow inspected in Chrome desktop 1600x1000 and phone 412x900; live providers not verified",
+  "browser_qa": "v3 village day/night, meeting gathering, Town Hall table seating and candidate flow inspected in Chrome desktop 1600x1000 and phone 412x900; live providers not verified; automated 250 ms rule simulation: 0 off-path, 0 teleports, 0 lasting overlaps",
   "providers_implemented_not_live_verified": [
     "codex-cli-subscription",
     "claude-code-cli-subscription",
@@ -42,7 +42,12 @@
     "shared_projects": true,
     "daily_standup": true,
     "higgsfield_assets": false,
-    "house_interiors": false
+    "house_interiors": false,
+    "team_versions": [
+      "v1",
+      "v2",
+      "v3"
+    ]
   },
   "next_task": "On Owner PC: assign Claude Code/Codex/Ollama to two agents, call a meeting, run a discussion and verify the saved strategy; then one live hire",
   "blockers": [
@@ -73,5 +78,10 @@
     "sofia": "AI News",
     "elena": "Outreach",
     "alex": "Chief of Staff (Town Hall)"
+  },
+  "team_data": {
+    "v1": "data/",
+    "v2": "data/v2/",
+    "v3": "data/v3/"
   }
 }

@@ -66,12 +66,12 @@ export const EFFECTS={
 // Town Hall interior: one big table, 12 chairs. Mario at the head (top).
 // Coordinates are in the same 1536 × 1024 space as the map so the camera is shared.
 export const HALL={
- table:[662,300,874,840],door:[768,1000],aisles:{left:500,right:1036},
+ table:[662,300,874,872],door:[768,1000],aisles:{left:500,right:1036},
  seats:[
   {id:0,x:768,y:262,facing:'front',role:'head'},
-  ...[0,1,2,3,4].map(i=>({id:1+i,x:630,y:380+i*98,facing:'right',side:'left'})),
-  ...[0,1,2,3,4].map(i=>({id:6+i,x:906,y:380+i*98,facing:'left',side:'right'})),
-  {id:11,x:768,y:915,facing:'back',role:'foot'}
+  ...[0,1,2,3,4].map(i=>({id:1+i,x:651,y:372+i*108,facing:'right',side:'left'})),
+  ...[0,1,2,3,4].map(i=>({id:6+i,x:885,y:372+i*108,facing:'left',side:'right'})),
+  {id:11,x:768,y:945,facing:'back',role:'foot'}
  ],
  // Mario heads the table; Alex at his right hand; the foot chair is for interview candidates.
  assignment:{mario:0,alex:6,maria:1,ana:7,radu:2,victor:8,irina:3,david:9,sofia:4,elena:10,tudor:5}
@@ -101,11 +101,16 @@ export function nearestWalkable(point){if(isWalkable(point.x,point.y))return poi
 function clearLine(a,b){const d=Math.hypot(b.x-a.x,b.y-a.y),n=Math.ceil(d/.025);for(let i=1;i<n;i++){const t=i/n;if(!isWalkable(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t))return false;}return true;}
 // String-pulling turns the grid staircase into natural straight walks along the paths.
 export function smoothPath(from,path){if(path.length<3)return path;const out=[];let anchor=from,i=0;while(i<path.length){let j=path.length-1;while(j>i&&!clearLine(anchor,path[j]))j--;out.push(path[j]);anchor=path[j];i=j+1;}return out;}
+// Nearest walkable grid cell to a point (doors may sit between grid cells).
+function snapCell(point){const gx=Math.round(point.x/STEP),gy=Math.round(point.y/STEP);let best=null,bd=Infinity;for(let r=0;r<=4;r++){for(let dx=-r;dx<=r;dx++)for(let dy=-r;dy<=r;dy++){if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue;const x=gx+dx,y=gy+dy;if(!isWalkable(x*STEP,y*STEP))continue;const d=Math.hypot(x*STEP-point.x,y*STEP-point.y);if(d<bd){bd=d;best={x,y};}}if(best)return best;}return null;}
+// A* on a 0.25-unit grid with a binary heap.
 export function findPath(from,to){
- const safe=nearestWalkable(to);if(!safe)return [];const start={x:Math.round(from.x/STEP),y:Math.round(from.y/STEP)},end={x:Math.round(safe.x/STEP),y:Math.round(safe.y/STEP)};
- const open=[{...start,g:0,f:0}],parents=new Map(),costs=new Map([[gridKey(start.x,start.y),0]]),visited=new Set();
- while(open.length&&visited.size<9000){open.sort((a,b)=>a.f-b.f);const n=open.shift(),key=gridKey(n.x,n.y);if(visited.has(key))continue;visited.add(key);
- if(n.x===end.x&&n.y===end.y){const path=[];let cursor=key;while(parents.has(cursor)){const [x,y]=cursor.split(',').map(Number);path.unshift({x:x*STEP,y:y*STEP});cursor=parents.get(cursor);}const s0={x:start.x*STEP,y:start.y*STEP};if(Math.hypot(s0.x-from.x,s0.y-from.y)>.01&&isWalkable(s0.x,s0.y))path.unshift(s0);return path;}
- for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){const x=n.x+dx,y=n.y+dy,key2=gridKey(x,y),g=n.g+1;if(!isWalkable(x*STEP,y*STEP)||g>=(costs.get(key2)??Infinity))continue;costs.set(key2,g);parents.set(key2,key);open.push({x,y,g,f:g+Math.abs(x-end.x)+Math.abs(y-end.y)});}
+ const safe=nearestWalkable(to);if(!safe)return [];const end=snapCell(safe);const start={x:Math.round(from.x/STEP),y:Math.round(from.y/STEP)};if(!end)return [];
+ const heap=[{x:start.x,y:start.y,g:0,f:0}],parents=new Map(),costs=new Map([[gridKey(start.x,start.y),0]]),visited=new Set();
+ const push=n=>{heap.push(n);let i=heap.length-1;while(i>0){const p=(i-1)>>1;if(heap[p].f<=heap[i].f)break;[heap[p],heap[i]]=[heap[i],heap[p]];i=p;}};
+ const pop=()=>{const top=heap[0],last=heap.pop();if(heap.length){heap[0]=last;let i=0;for(;;){const l=2*i+1,r=l+1;let m=i;if(l<heap.length&&heap[l].f<heap[m].f)m=l;if(r<heap.length&&heap[r].f<heap[m].f)m=r;if(m===i)break;[heap[m],heap[i]]=[heap[i],heap[m]];i=m;}}return top;};
+ while(heap.length&&visited.size<12000){const n=pop(),key=gridKey(n.x,n.y);if(visited.has(key))continue;visited.add(key);
+ if(n.x===end.x&&n.y===end.y){const path=[];let cursor=key;while(parents.has(cursor)){const [x,y]=cursor.split(',').map(Number);path.unshift({x:x*STEP,y:y*STEP});cursor=parents.get(cursor);}const s0={x:start.x*STEP,y:start.y*STEP};if(Math.hypot(s0.x-from.x,s0.y-from.y)>.01&&isWalkable(s0.x,s0.y))path.unshift(s0);if(isWalkable(to.x,to.y)&&Math.hypot(to.x-end.x*STEP,to.y-end.y*STEP)<.3)path.push({x:to.x,y:to.y});return path;}
+ for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){const x=n.x+dx,y=n.y+dy,key2=gridKey(x,y),g=n.g+1;if(!isWalkable(x*STEP,y*STEP)||g>=(costs.get(key2)??Infinity))continue;costs.set(key2,g);parents.set(key2,key);push({x,y,g,f:g+Math.abs(x-end.x)+Math.abs(y-end.y)});}
  }return [];
 }
