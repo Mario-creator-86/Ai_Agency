@@ -1,6 +1,28 @@
 # Preluare proiect — Mario Agent Town
 
 
+
+## Audit de producție — 5 noiembrie 2026 (v3.2)
+
+Mario a cerut verificare pentru producție. Ce s-a testat efectiv și rezultatele:
+
+| Verificare | Rezultat |
+| --- | --- |
+| `npm test` (Node 22.23, Linux) | 25/25 |
+| Închiderea orașului / schimbarea echipei cât un agent lucrează | **Bug critic găsit și reparat**: procesul crăpa („database is not open”). Test de regresie adăugat. |
+| Fuzz API: 16 rute × 22 intrări ostile, JSON stricat, 400 KB, Origin/Host străin, path traversal | 0 erori 5xx, server viu; ora ședinței validată strict (25:99 respins) |
+| Kill -9 + repornire | echipa activă, angajații, folderele și proiectele se păstrează |
+| Claude Code 2.1.318 real, apelat prin adaptor | răspuns JSON corect. Pe Windows, instalarea npm a Claude Code 2.x (bin/claude.exe) nu era găsită → reparat + test |
+| Codex 0.166.0 real | rulează; aici eșuează la rețea, mesajul de eroare ajunge clar în oraș |
+| Ollama oprit | mesaj clar „Pornește aplicația Ollama” în loc de „fetch failed” |
+| Click pe fiecare control din UI (31 de pași) | toate funcționează, 0 erori în consolă |
+| Soak 6 min cu GC forțat | heap 2,1 → 2,4 MB, DOM stabil (fără scurgeri) |
+| Cadre 2 min | mediană 16,7 ms (60 fps), p99 33 ms |
+| Simulare reguli de mișcare (`tests/browser/movement_rules.py`) | PASS după 3 reparații: blocaj la ușa Town Hall, personaje suprapuse exact în același punct, ieșire lentă (35 s → 9,5 s) |
+| Vizual | reparat: bara de sus pe telefon, insigna DEMO acoperită, eticheta „echipa radu”, textul peste hartă la zoom, prea multe etichete pe ecran mic. Ziua/noaptea urmează acum răsăritul și apusul reale la București (noiembrie: 6:57 / 17:01). |
+
+Rămâne neverificat aici: autentificarea pe PC-ul lui Mario, Windows real, Codex cu internet, Ollama real, modele care răspund prost la JSON. Limite cunoscute: mesajele de chat aflate în coadă la oprirea serverului nu sunt reluate (sarcinile da); un singur agent lucrează odată; angajații stau în picioare la ședință (12 scaune). `start.cmd` deschide acum browserul singur și explică dacă portul e ocupat.
+
 ## Actualizare v3.1 — versiuni de echipă și verificări — 5 noiembrie 2026
 
 - **Selector de versiune** în bara de sus: V1 · Echipa personală (rolurile v3), V2 · Firma de trading (9 agenți, după anexa lui Mario: Alex director de investiții, Radu cercetaș, Irina fundamental, Elena earnings/catalizatori, Tudor macro, Victor cantitativ/tehnic, Sofia SHORT/contestatar, David manager de risc, Ana operațiuni/performanță; Maria nu face parte, casa ei apare „liberă”), V3 · Echipa YouTube 1M (10 roluri: showrunner, producător executiv, cercetare, scenarist, fact-check, montaj, producție tehnică, ambalare, analytics, community). Fiecare versiune are bază de date, chat, memorie, sarcini și angajați separați (`data/` pentru V1, `data/v2/`, `data/v3/`); creierele alese se copiază la prima deschidere a unei versiuni. Regulile echipei (charter) intră în fiecare prompt; V2 include fluxul obligatoriu, formatul propunerii în 12 puncte, „BLOCATĂ — DATE INSUFICIENTE” și interdicția execuției fără aprobare. Nu există broker conectat.

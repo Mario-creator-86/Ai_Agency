@@ -71,3 +71,16 @@
 @media (max-width:900px){.meeting-box{top:auto;bottom:6px;height:70%}.meeting-box.collapsed{bottom:auto;top:6px}}
 .team-picker select{background:#1d3329;color:#f2e6c4;border:1px solid #b8964f;border-radius:8px;padding:7px 8px;font:600 12px Inter,'Segoe UI',sans-serif;max-width:190px;cursor:pointer}
 @media (max-width:700px){.team-picker select{max-width:92px;padding:6px 4px;font-size:11px}}
+.meeting-discuss button:disabled{opacity:.5;cursor:not-allowed}
+
+/* v3.2 polish: narrow screens and zoomed map */
+.city-heading{transition:opacity .25s ease}
+.city-panel.zoomed .city-heading,.city-panel.zoomed .map-caption,.city-panel.zoomed .map-instructions,.city-panel.zoomed .map-sign{opacity:.08}
+.city-panel.zoomed .city-heading:hover{opacity:1}
+@media (max-width:760px){
+ .top-center{display:none}
+ .mode-pill{top:73px;right:44px;left:auto}
+ .focus-toggle{top:69px;right:4px}
+}
+@media (prefers-reduced-motion:reduce){.city-heading{transition:none}}
+.map-caption,.map-instructions,.map-sign{transition:opacity .25s ease}

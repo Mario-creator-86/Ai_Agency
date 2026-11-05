@@ -7,10 +7,11 @@
   "phase": "local_prototype",
   "tests": {
     "command": "npm test",
-    "passed": 22,
+    "passed": 25,
     "failed": 0,
     "runtime": "Node 22.23.4 Linux",
-    "real_provider_acceptance": false
+    "real_provider_acceptance": false,
+    "browser": "tests/browser/movement_rules.py PASS"
   },
   "browser_qa": "v3 village day/night, meeting gathering, Town Hall table seating and candidate flow inspected in Chrome desktop 1600x1000 and phone 412x900; live providers not verified; automated 250 ms rule simulation: 0 off-path, 0 teleports, 0 lasting overlaps",
   "providers_implemented_not_live_verified": [
@@ -62,7 +63,9 @@
     "Daily limit counts workflows, each at most 3 model requests",
     "Hires reuse an existing sheet with a code-painted yellow vest (Higgsfield not used: no credits)",
     "Mario has no seated sprite row; at the table he is clipped at the waist",
-    "Houses were not repainted for the new jobs"
+    "Houses were not repainted for the new jobs",
+    "Queued chat messages are not replayed after a restart (tasks are)",
+    "Hired staff stand at meetings: 12 chairs"
   ],
   "entry_document": "HANDOFF.md",
   "art_handoff": "art/README_CLAUDE.md",
@@ -83,5 +86,15 @@
     "v1": "data/",
     "v2": "data/v2/",
     "v3": "data/v3/"
+  },
+  "production_audit": {
+    "date": "2026-11-05",
+    "crash_on_close_fixed": true,
+    "api_fuzz_5xx": 0,
+    "heap_growth_6min_mb": 0.3,
+    "median_frame_ms": 16.7,
+    "real_claude_code_cli": "responded",
+    "real_codex_cli": "network unavailable in cloud",
+    "windows_verified": false
   }
 }

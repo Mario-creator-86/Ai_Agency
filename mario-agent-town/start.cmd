@@ -14,6 +14,7 @@ if errorlevel 1 (
   exit /b 1
 )
 if not exist .env copy .env.example .env >nul
-echo Deschide http://127.0.0.1:8012 in browser dupa pornire.
+echo Orasul porneste... browserul se deschide singur.
+start "" /b cmd /c "timeout /t 2 >nul & start http://127.0.0.1:8012"
 node --env-file-if-exists=.env server.mjs
 pause
