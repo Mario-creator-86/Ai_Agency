@@ -52,7 +52,7 @@ Autonomia este oprită implicit, furnizorii sunt Demo. Mișcarea locală nu folo
 - `npm test`: **9/9 trecute** pe Node 24.22.1, Linux. Testele acoperă unicitatea rolurilor, persistență/restart, demo fără apeluri, artefacte și delegare cu model fals, limitele de instrumente/delegare, STOP înaintea mutațiilor, plafon zilnic, eliminarea cheilor API din mediul CLI și parsarea erorilor.
 - Verificări de sintaxă JavaScript executate în dezvoltare; repetă pentru toate fișierele înainte de modificări.
 - Avatarul cu fermoar a fost inspectat vizual înaintea optimizării assetului.
-- Prima încercare de preview a eșuat deoarece serverul nu interpreta argumentele `--host/--port` ale mediului. A fost adăugat suport; rezultatul QA suplimentar se înregistrează în PROJECT_STATE dacă este verificat.
+- Prima încercare de preview a eșuat deoarece serverul nu interpreta argumentele `--host/--port` ale mediului. A fost adăugat suport și preview-ul a pornit. Verificare browser desktop reușită: hartă, avatar CEO, chat Maria cu răspuns Demo corect etichetat, control ședință și setări/diagnostic furnizori. Mobilul și furnizorii live nu au fost testați.
 - Nicio execuție reală ChatGPT/Codex, Claude, Ollama, email, calendar, YouTube sau FFmpeg nu a fost demonstrată aici. Nu transforma testele cu modele false în afirmații de integrare live.
 - Suita studioului AMN-AI părinte nu a fost executată: codul său nu este modificat, acesta este un proiect nou izolat.
 
