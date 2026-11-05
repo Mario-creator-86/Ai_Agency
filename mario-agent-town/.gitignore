@@ -5,3 +5,6 @@ workspaces/
 *.zip
 .DS_Store
 .openai/
+diagnostic/
+test-creiere-raport.txt
+instalare-raport.txt
