@@ -1,5 +1,22 @@
 # Preluare proiect — Mario Agent Town
 
+## Actualizare v3 — oraș viu, ședințe, angajări — 5 noiembrie 2026
+
+Cerut de Mario. Higgsfield NU a fost folosit (fără credite; Mario a cerut explicit să lucrăm cu grafica ChatGPT). Nicio casă nu a fost redesenată și nimic nu a fost generat la 4K.
+
+**Roluri (mapare aleasă de Mario):** Maria YouTube · Ana inbox & email · Irina money · Radu research · David products · Tudor family · Victor trading (casa ceasului) · Sofia AI news · Elena outreach · Alex Chief of Staff în Town Hall. Casa-studio din dreapta jos a rămas anexa de producție YouTube (fără locatar). Casele pictate se potrivesc deja aproximativ cu meseriile noi; nu au decor nou pictat.
+
+**Implementat și verificat offline (19/19 teste, Node 22.23 Linux) + inspectat în Chrome desktop/telefon:**
+- `public/village-layout.js`: uși, curți, porți, obstacole (bănci, ghivece), recuzită plasată pe iarbă (testat: nicio piesă pe alei), coordonatele efectelor, sala Town Hall cu 12 scaune și locuri fixe (Mario în capul mesei, Alex la dreapta lui, scaunul de la capăt pentru candidați).
+- `public/assets/props/*.webp`: cele 12 obiecte tăiate din atlasul ChatGPT, cu halo-ul colorat eliminat. Butoaie, lăzi și automatul retro „POP!” sunt desenate în cod.
+- `public/town.js` (rescris): reguli de mișcare (lucru = merge acasă, intră pe ușă, ascuns + „lucrează la birou”; director liber = stă în curte și se plimbă; când Mario e aproape, se opresc și se uită la el; muncitorii hoinăresc și, la prima întâlnire din zi, se opresc, întreabă la ce lucrează celălalt și își notează; nimeni nu se teleportează, ocolire între personaje, A* + string-pulling); sala de ședințe desenată în cod cu personajele așezate (rândul „șezut” din sheet, picioarele sub masă); efecte: fum din 9 coșuri reale, apă în fântână și pârâu, steaguri fluturând (deformarea picturii), felinare și ferestre la noapte, ecrane pâlpâind, frunze, petale, păsări, licurici, zi/noapte după ora București (`?hour=21` pentru test); sunet ambiental foarte încet generat cu WebAudio (vânt, păsări rare, greieri noaptea). Fără foc: nu există șemineu vizibil în pictură.
+- Server/runtime: `/api/meeting`, `/api/meeting/say` (toată sala sau o persoană), `/api/meeting/discuss` (runde + strategie salvată ca livrabil + sarcini), `/api/encounter` (notițe reale din tabla de sarcini fără AI; conversație AI dacă ambii au creier), `/api/staff/request|decide` (Alex propune, Mario decide; la „da”: folder `workspaces/<id>/` cu IDENTITY.md, INSTRUCTIONS.md, NOTES.md, agent nou cu creierul directorului), proiecte comune, ședință zilnică și conversații spontane (doar cu autonomia pornită).
+- UI: buton „Convoacă ședința” în bara de sus, chat de ședință în stânga (redimensionabil, mărime poze/nume, pliabil pe telefon), alegerea creierului direct în profilul fiecărui personaj, tab Proiecte, sunet on/off.
+
+**Limite reale:** candidații/angajații refolosesc un sheet existent cu o vestă galbenă pictată în cod (nu un sheet Higgsfield). Interioarele caselor nu există: „la birou” = personajul intră pe ușă și apare indicatorul. Mario nu are rând „șezut”: la masă e desenat în picioare cu masa acoperindu-l de la talie. Furnizorii reali (Codex 0.166.0 / Claude Code 2.1.318: flag-urile CLI au fost verificate cu `--help`, autentificarea nu) rămân neverificați live.
+
+**Următorul pas:** pe PC-ul lui Mario, alege Claude Code sau Codex pentru doi agenți, convoacă ședința și apasă „Discutați”; verifică strategia salvată.
+
 ## Actualizare grafică v2 — 5 noiembrie 2026
 
 Mario a respins aspectul geometric/pastel și a cerut un sat bogat în culori, cu volum și detalii ca în imaginile furnizate, apoi a precizat că dorește imaginile pregătite pentru continuarea în Claude. Au fost desenate: o hartă completă fără personaje în fundal; zece sprite sheet-uri distincte (16 cadre fiecare); atlas cu 12 clădiri; atlas de obiecte cu fântână, bancă, copaci, felinar, flori, pod și alte obiecte. Avatarul CEO cu fermoar este păstrat.

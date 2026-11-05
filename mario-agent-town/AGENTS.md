@@ -15,3 +15,7 @@ Run `npm test` and syntax checks after code changes. Use temporary data for test
 ## Owner graphic update, 2026-11-05
 
 The Owner explicitly requested richly colored illustrated RPG village graphics instead of the first flat pastel isometric scene, then asked for drawn characters/city images so Claude can continue. The v2 art is in public/assets with its exact inventory and slicing contract in art/manifest.json. Preserve this delivered map, ten unique animated character sheets and the approved quarter-zip CEO. The display coordinates are authoritative in public/village-layout.js; the old x/y presentation fields in src/agents.mjs are legacy and not used by the new renderer. Do not paint static people into the background or duplicate atlas buildings over the already painted map. No new external integrations were added by the graphic revision.
+
+## Owner update v3, 2026-11-05
+
+Roles remapped by the Owner (see HANDOFF v3). Ten core agents remain; the Owner explicitly asked that Alex may propose new hires, created only after the Owner says yes, so `staff` rows can add agents. Hires reuse an existing sheet plus a code-painted vest. Higgsfield was not used. Movement rules and the Town Hall seating live in `public/town.js` and `public/village-layout.js`.
