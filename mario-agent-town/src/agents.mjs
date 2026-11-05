@@ -67,9 +67,10 @@ const MARKET=['market_quote','price_history','symbol_search'];
 const FUND=['company_financials','company_filings'];
 const MACRO=['macro_series','fx_rates'];
 const YT=['youtube_suggest','youtube_channel','youtube_search'];
+const MINE=['my_channel','my_analytics'];
 const ACCESS={
- v1:{maria:[...YT,'read_feed'],ana:[],radu:[...MARKET,...FUND,...MACRO,'read_feed'],alex:[...MARKET,'portfolio'],elena:['youtube_channel'],victor:[...MARKET,'risk_check','paper_trade','portfolio'],david:['read_feed'],irina:[...MACRO,...MARKET,'portfolio'],sofia:['read_feed'],tudor:[]},
+ v1:{maria:[...YT,...MINE,'read_feed'],ana:[],radu:[...MARKET,...FUND,...MACRO,'read_feed'],alex:[...MARKET,'portfolio'],elena:['youtube_channel'],victor:[...MARKET,'risk_check','paper_trade','portfolio'],david:['read_feed'],irina:[...MACRO,...MARKET,'portfolio'],sofia:['read_feed'],tudor:[]},
  v2:{alex:[...MARKET,...FUND,...MACRO,'risk_check','portfolio'],radu:[...MARKET,...FUND],irina:[...FUND,...MARKET],elena:[...FUND,...MARKET],tudor:[...MACRO,...MARKET],victor:[...MARKET,'risk_check'],sofia:[...MARKET,...FUND],david:['risk_check',...MARKET,'portfolio'],ana:['paper_trade','portfolio',...MARKET]},
- v3:{maria:[...YT],alex:['youtube_channel'],radu:[...YT,'read_feed'],elena:['youtube_suggest'],sofia:['read_feed'],victor:['youtube_channel'],david:[],tudor:[...YT],irina:['youtube_channel','youtube_search',...MACRO],ana:[...YT]}
+ v3:{maria:[...YT,...MINE],alex:['youtube_channel',...MINE],radu:[...YT,'read_feed','my_channel'],elena:['youtube_suggest'],sofia:['read_feed'],victor:['youtube_channel'],david:[],tudor:[...YT,...MINE],irina:['youtube_channel','youtube_search',...MINE,...MACRO],ana:[...YT,'my_channel']}
 };
 export function toolsFor(team,id,director=null){const t=ACCESS[team]||ACCESS.v1;return [...new Set([...BASE,...(t[id]||t[director]||[])])];}

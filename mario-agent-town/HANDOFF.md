@@ -3,6 +3,13 @@
 
 
 
+
+## Puntea YouTube (doar citire) — 5 noiembrie 2026, 20:00
+
+Aprobată explicit de Mario („folosește puntea, da”), după ce un filtru de siguranță oprise prima copiere. `src/youtube-bridge.mjs` folosește conexiunile YouTube deja autorizate în studioul AI Agency (`AMN_STUDIO_DIR`, implicit `E:\AI Acency\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP`), la fel ca pipeline-ul Leo Explains (`stickman_video/youtube_upload.py`): bază deschisă read-only, cheia Fernet deblocată cu DPAPI prin PowerShell doar în memorie, token de acces scurt de la Google, apoi numai endpointuri GET (Data API + Analytics API). Nu scrie nimic în studio, nu loghează secrete, nu le trimite modelului și nu folosește dreptul de upload. Unelte: `my_channel`, `my_analytics` (V1 Maria; V3 Maria, Alex, Tudor, Irina; `my_channel` și Radu, Ana).
+
+Verificat pe PC (`test-youtube.cmd`): Leo Explains 18 abonați, 7.274 vizualizări, 52 video-uri; 28 de zile: 9.341 vizionări, retenție medie 42,24%, +23/−5 abonați, trafic majoritar SHORTS. NEXUS CURIOSITY: Google refuză (autorizare expirată/revocată). Limite: CTR/afișările nu sunt în API; dacă aplicația OAuth e în modul „Testing”, tokenul expiră la ~7 zile (vezi predarea Leo, `memory/leo-youtube-token-expired.md`). Antivirusul poate trata scriptul DPAPI+rețea ca suspect.
+
 ## Instalare pe PC-ul lui Mario — 5 noiembrie 2026, 19:30
 
 Instalat în `E:\mario-agent-town` (la cererea lui Mario). Windows: Node 24.14, Codex CLI 0.144.4 (logat cu ChatGPT), Claude Code 2.1.289 (`~\.local\bin\claude.exe`), Ollama 0.40.14 cu 6 modele cloud și niciun model local. `verifica.cmd` scrie raportul PC-ului; `test-creiere.cmd` trimite câte o cerere fiecărui creier prin adaptoarele orașului.
