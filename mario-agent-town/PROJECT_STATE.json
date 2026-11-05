@@ -5,12 +5,44 @@
   "directory": "mario-agent-town",
   "updated": "2026-11-05",
   "phase": "local_prototype",
-  "tests": {"command": "npm test", "passed": 9, "failed": 0, "runtime": "Node 24.22.1 Linux", "real_provider_acceptance": false},
-  "browser_qa": "pending after preview argument compatibility repair",
-  "providers_implemented_not_live_verified": ["codex-cli-subscription", "claude-code-cli-subscription", "ollama-local", "ollama-cloud"],
-  "features": {"ten_agents": true, "isometric_town": true, "ceo_quarter_zip_sprite": true, "chat": true, "persistent_tasks": true, "internal_tools": true, "autonomy_default": false, "youtube": false, "gmail": false, "calendar": false, "video_rendering": false},
-  "next_task": "Browser acceptance, then one real-provider agent acceptance on Owner PC",
-  "blockers": ["No authenticated local Codex, Claude or Ollama runtime in development environment", "External accounts and video tools not connected"],
-  "known_limits": ["Direct chat jobs are not durable", "Restart can replay task actions without idempotency", "No multi-process lease", "No house interiors", "Daily limit counts workflows, each at most 3 model requests"],
+  "tests": {
+    "command": "npm test",
+    "passed": 9,
+    "failed": 0,
+    "runtime": "Node 24.22.1 Linux",
+    "real_provider_acceptance": false
+  },
+  "browser_qa": "passed desktop smoke: town rendering, CEO sprite, Maria chat with honest Demo response, meeting control, settings diagnostics; mobile and live providers not tested",
+  "providers_implemented_not_live_verified": [
+    "codex-cli-subscription",
+    "claude-code-cli-subscription",
+    "ollama-local",
+    "ollama-cloud"
+  ],
+  "features": {
+    "ten_agents": true,
+    "isometric_town": true,
+    "ceo_quarter_zip_sprite": true,
+    "chat": true,
+    "persistent_tasks": true,
+    "internal_tools": true,
+    "autonomy_default": false,
+    "youtube": false,
+    "gmail": false,
+    "calendar": false,
+    "video_rendering": false
+  },
+  "next_task": "One real-provider agent acceptance on Owner PC, followed by durable/idempotent job improvements",
+  "blockers": [
+    "No authenticated local Codex, Claude or Ollama runtime in development environment",
+    "External accounts and video tools not connected"
+  ],
+  "known_limits": [
+    "Direct chat jobs are not durable",
+    "Restart can replay task actions without idempotency",
+    "No multi-process lease",
+    "No house interiors",
+    "Daily limit counts workflows, each at most 3 model requests"
+  ],
   "entry_document": "HANDOFF.md"
 }

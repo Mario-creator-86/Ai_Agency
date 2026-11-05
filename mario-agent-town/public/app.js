@@ -1,5 +1,5 @@
 import {Town} from './town.js';
-const $=id=>document.getElementById(id);let state,channel='townhall',currentTab='chat',lastMessages='',refreshing=false,refreshAgain=false;const colors={mario:'#d3bf95',system:'#d6ddc9'};
+const $=id=>document.getElementById(id);let state,channel='townhall',currentTab='chat',lastMessages=null,refreshing=false,refreshAgain=false;const colors={mario:'#d3bf95',system:'#d6ddc9'};
 function element(tag,props={},children=[]){const el=document.createElement(tag);for(const [k,v]of Object.entries(props)){if(k==='text')el.textContent=v;else if(k==='class')el.className=v;else el.setAttribute(k,v);}for(const child of children)el.append(child);return el;}
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,4500);}
 async function api(path,data){const r=await fetch('/api/'+path,data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{});const json=await r.json();if(!r.ok)throw new Error(json.error||'Cerere eșuată');return json;}
@@ -7,7 +7,7 @@ const protect=fn=>async(...args)=>{try{return await fn(...args);}catch(e){toast(
 const town=new Town($('city'),{select:id=>selectChannel(id),move:position=>{api('world',{ceo:position}).catch(()=>{});},nearby:toast});
 function initials(a){return a==='system'?'✦':a==='mario'?'M':a[0].toUpperCase();}
 function avatar(id){const a=state.agents.find(a=>a.id===id);const e=element('span',{class:'avatar '+(a?.provider!=='demo'&&a?'real':''),text:initials(id)});e.style.background=a?.color||colors[id]||'#dae1ce';return e;}
-function selectChannel(id){channel=id;lastMessages='';showTab('chat');render();$('messageInput').focus();}
+function selectChannel(id){channel=id;lastMessages=null;showTab('chat');render();$('messageInput').focus();}
 function showTab(tab){currentTab=tab;document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));for(const name of ['chat','tasks','activity'])$(name+'View').classList.toggle('active',tab===name);}
 function time(at){return new Date(at).toLocaleTimeString('ro-RO',{hour:'2-digit',minute:'2-digit'});}
 function render(){if(!state)return;town.update({...state,channel});$('roster').replaceChildren(...state.agents.map(a=>{const btn=element('button',{class:'agent-row '+(channel===a.id?'selected':''),title:a.name+' · '+a.role},[avatar(a.id),element('span',{class:'agent-info'},[element('strong',{text:a.name}),element('small',{text:a.role})]),element('span',{text:state.runtime.active?.agent===a.id?'●':'↗'})]);btn.onclick=()=>selectChannel(a.id);return btn;}));
