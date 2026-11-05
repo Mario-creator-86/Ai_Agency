@@ -4,6 +4,9 @@ import {lookup} from 'node:dns/promises';
 import {isIP} from 'node:net';
 import {myChannel,myAnalytics,bridgeStatus} from './youtube-bridge.mjs';
 import {leoDashboard,dashboardStatus} from './leo-dashboard.mjs';
+import {releaseQueue,publishYoutube,projectDir} from './leo-publish.mjs';
+import {existsSync} from 'node:fs';
+import {join} from 'node:path';
 
 const UA_BROWSER='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 // The SEC asks automated clients to identify themselves; set SEC_USER_AGENT="Name email" in .env.
@@ -206,6 +209,8 @@ export const DATA_TOOLS={
  my_channel:{fn:myChannel,doc:'{"type":"my_channel","channel":"Leo Explains"} canalul TĂU: abonați, vizualizări, ultimele video-uri cu statistici (doar citire)'},
  my_analytics:{fn:myAnalytics,doc:'{"type":"my_analytics","channel":"Leo Explains","days":28} statisticile TALE: vizionări, timp vizionat, retenție medie, abonați câștigați/pierduți, top video-uri, surse de trafic'},
  leo_dashboard:{fn:leoDashboard,doc:'{"type":"leo_dashboard","view":"summary|videos|history|video_history","platform":"youtube|tiktok|facebook|instagram|pinterest","id":"<video id>","refresh":false} dashboard-ul Leo: urmăritori, vizualizări, like-uri, postări pe TOATE platformele, analytics, monetizare, alerte (refresh:true cere statistici noi, max 1/min)'},
+ release_queue:{fn:releaseQueue,doc:'{"type":"release_queue"} episoadele Leo gata de publicat, cele ținute până la o dată, ce e deja programat și următorul slot liber pe YouTube'},
+ publish_youtube:{fn:publishYoutube,doc:'{"type":"publish_youtube","episode":"v44","kind":"long|short","publishAt":"opțional, ISO"} PUBLICĂ pe Leo Explains: încarcă privat și programează publicarea (slotul liber următor dacă lipsește publishAt); respectă ritmul de 2 lungi + 2 Shorts/zi; verifică întâi cu release_queue'},
  youtube_search:{fn:youtubeSearch,doc:'{"type":"youtube_search","query":"subiect"} video-uri de top cu vizualizări (necesită YOUTUBE_API_KEY)'}
 };
 // Quick reachability check of each source, shown in Settings.
@@ -214,5 +219,6 @@ export async function sourceStatus(){
  const out={};await Promise.all(Object.entries(checks).map(async([k,fn])=>{const t=Date.now();try{await Promise.race([fn(),new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),12000))]);out[k]={ok:true,ms:Date.now()-t};}catch(e){out[k]={ok:false,error:e.message.slice(0,160)};}}));
  out['Canalele tale (prin studio)']=await bridgeStatus();
  out['Dashboard Leo (toate platformele)']=await dashboardStatus();
+ out['Publicare YouTube (pipeline Leo)']=(()=>{const q=projectDir();if(!existsSync(join(q,'release.py')))return {ok:false,error:'proiectul Leo nu e găsit (LEO_PROJECT_DIR)'};if(existsSync(join(q,'social','STOP')))return {ok:false,error:'social/STOP: publicarea e oprită'};return {ok:true};})();
  out['YouTube statistici']={ok:!!process.env.YOUTUBE_API_KEY,error:process.env.YOUTUBE_API_KEY?undefined:'opțional: YOUTUBE_API_KEY în .env'};return out;
 }
