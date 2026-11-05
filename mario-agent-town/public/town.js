@@ -307,7 +307,7 @@ export class Town {
   this.chair(HALL.seats[11],s,true);
   for(const p of walkers.filter(p=>p.hall.y>=HALL.table[3]))this.drawHallPerson(p,H);
   // name plates: big and readable
-  for(const p of inHall){const seat=seatOf(p);const q=P(p.hall.x,p.hall.y);const lx=seat?.side==='left'?q.x-92*s:seat?.side==='right'?q.x+92*s:q.x;const y=seat?.role==='head'?q.y-150*s:seat?.role==='foot'?q.y+44*s:seat?q.y-40*s:q.y+14*s;const speaking=this.speaker===p.id;this.pill(lx,y,(p.id==='mario'?'♛ ':'')+p.name+(p.role==='candidate'?' · candidat':''),{border:speaking?'#8be08a':p.id==='mario'?'#e7bf5b':(p.color||'#b8964f'),color:speaking?'#c9f7b5':'#fff4d6',font:Math.max(9,Math.min(14,13*s+4))});}
+  for(const p of inHall){const seat=seatOf(p);const q=P(p.hall.x,p.hall.y);const font=Math.max(9,Math.min(14,13*s+4)),label=(p.id==='mario'?'♛ ':'')+p.name+(p.role==='candidate'?' · candidat':'');this.ctx.font=`600 ${font}px 'Segoe UI',sans-serif`;const half=this.ctx.measureText(label).width/2+9;const lx=seat?.side==='left'?q.x-44*s-half:seat?.side==='right'?q.x+44*s+half:q.x;const y=seat?.role==='head'?this.px(0,HALL.table[1]).y-H*.85*s-font:seat?.role==='foot'?q.y+44*s:seat?q.y-40*s:q.y+14*s;const speaking=this.speaker===p.id;this.pill(lx,y,label,{border:speaking?'#8be08a':p.id==='mario'?'#e7bf5b':(p.color||'#b8964f'),color:speaking?'#c9f7b5':'#fff4d6',font});}
   c.restore();
   c.strokeStyle='#c2a56a';c.lineWidth=2;c.beginPath();c.roundRect(v.x-2,v.y-2,v.w+4,v.h+4,8);c.stroke();
  }
