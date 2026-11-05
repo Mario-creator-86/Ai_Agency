@@ -7,12 +7,12 @@
   "phase": "local_prototype",
   "tests": {
     "command": "npm test",
-    "passed": 12,
+    "passed": 19,
     "failed": 0,
-    "runtime": "Node 24.22.1 Linux",
+    "runtime": "Node 22.23.4 Linux",
     "real_provider_acceptance": false
   },
-  "browser_qa": "v2 painted village and all ten authored character sheets inspected desktop; live providers and mobile not verified",
+  "browser_qa": "v3 village day/night, meeting gathering, Town Hall table seating and candidate flow inspected in Chrome desktop 1600x1000 and phone 412x900; live providers not verified",
   "providers_implemented_not_live_verified": [
     "codex-cli-subscription",
     "claude-code-cli-subscription",
@@ -33,9 +33,18 @@
     "video_rendering": false,
     "painted_rpg_village_v2": true,
     "ten_character_sheets_16_frames": true,
-    "building_and_prop_atlases": true
+    "building_and_prop_atlases": true,
+    "living_town_effects": true,
+    "town_hall_table_12_seats": true,
+    "meeting_room_chat": true,
+    "agent_encounter_notes": true,
+    "recruiting_with_ceo_approval": true,
+    "shared_projects": true,
+    "daily_standup": true,
+    "higgsfield_assets": false,
+    "house_interiors": false
   },
-  "next_task": "One real-provider agent acceptance on Owner PC, followed by durable/idempotent job improvements",
+  "next_task": "On Owner PC: assign Claude Code/Codex/Ollama to two agents, call a meeting, run a discussion and verify the saved strategy; then one live hire",
   "blockers": [
     "No authenticated local Codex, Claude or Ollama runtime in development environment",
     "External accounts and video tools not connected"
@@ -45,9 +54,24 @@
     "Restart can replay task actions without idempotency",
     "No multi-process lease",
     "No house interiors",
-    "Daily limit counts workflows, each at most 3 model requests"
+    "Daily limit counts workflows, each at most 3 model requests",
+    "Hires reuse an existing sheet with a code-painted yellow vest (Higgsfield not used: no credits)",
+    "Mario has no seated sprite row; at the table he is clipped at the waist",
+    "Houses were not repainted for the new jobs"
   ],
   "entry_document": "HANDOFF.md",
   "art_handoff": "art/README_CLAUDE.md",
-  "art_manifest": "art/manifest.json"
+  "art_manifest": "art/manifest.json",
+  "roles": {
+    "maria": "YouTube",
+    "ana": "Inbox & email",
+    "irina": "Money",
+    "radu": "Research",
+    "david": "Products",
+    "tudor": "Family",
+    "victor": "Trading",
+    "sofia": "AI News",
+    "elena": "Outreach",
+    "alex": "Chief of Staff (Town Hall)"
+  }
 }

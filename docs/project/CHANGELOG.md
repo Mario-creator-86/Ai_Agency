@@ -6,6 +6,11 @@
 
 This summary replaces private operational records only in the GitHub copy.
 
+
+## 2026-11-05 — Mario Agent Town v3 (feature branch only)
+
+Sidecar only: living-town effects, Town Hall table meetings with room chat, agent encounters with notes, Owner-approved hiring, shared projects and the Owner's new role mapping. 19 offline tests pass; browser-inspected; no live provider verified; Higgsfield not used. Entry: `../../mario-agent-town/HANDOFF.md`. AMN-AI runtime unchanged.
+
 ## 2026-11-05 — Mario Agent Town prototype on feature branch
 
 Added the explicitly requested independent ten-agent village under `mario-agent-town/`, with Node/SQLite runtime, original Canvas town, confirmed quarter-zip CEO sprite, CLI/Ollama adapters, nine offline tests and continuation instructions. External accounts and real video operations are not connected. Existing AMN-AI implementation and architecture files unchanged.
