@@ -7,6 +7,7 @@ import {Runtime,everyone,localClock} from './src/runtime.mjs';
 import {agents,providerIds,TEAMS} from './src/agents.mjs';
 import {diagnostics} from './src/providers.mjs';
 import {sourceStatus} from './src/datatools.mjs';
+import {keepDashboardAlive} from './src/leo-dashboard.mjs';
 const root=dirname(fileURLToPath(import.meta.url));const arg=name=>{const i=process.argv.indexOf(name);return i>=0?process.argv[i+1]:undefined;};const port=Number(arg('--port')||process.env.PORT||8012);const preview=process.argv.includes('--preview')||process.env.TOWN_PREVIEW==='1';const host=arg('--host')||process.env.HOST||(preview?'0.0.0.0':'127.0.0.1');
 const dataRoot=process.env.TOWN_DATA_DIR||join(root,'data');mkdirSync(dataRoot,{recursive:true});const teamFile=join(dataRoot,'active-team.json');
 const streams=new Set();let world={ceo:{x:10,y:14},meeting:false};const notify=()=>{const text='data: '+JSON.stringify({at:Date.now()})+'\n\n';for(const r of streams)r.write(text);};
@@ -59,5 +60,5 @@ const server=http.createServer(async(req,res)=>{try{
  }catch(e){json(res,400,{error:e.message});}});
 const heartbeat=setInterval(()=>{for(const r of streams)r.write(': heartbeat\n\n');},20000);
 server.on('error',e=>{console.error(e.code==='EADDRINUSE'?`Portul ${port} este deja folosit. Probabil orașul rulează deja: deschide http://127.0.0.1:${port}. Altfel, schimbă PORT în .env.`:'Serverul nu a putut porni: '+e.message);process.exit(1);});
-server.listen(port,host,()=>console.log(`Mario Agent Town: http://${host}:${port}\nDatele și autentificările rămân pe calculator. Ctrl+C pentru oprire.`));
+server.listen(port,host,()=>{keepDashboardAlive();setInterval(keepDashboardAlive,10*60000).unref();console.log(`Mario Agent Town: http://${host}:${port}\nDatele și autentificările rămân pe calculator. Ctrl+C pentru oprire.`);});
 for(const sig of ['SIGINT','SIGTERM'])process.on(sig,()=>{clearInterval(heartbeat);runtime.close();for(const r of streams)r.end();server.close(()=>{store.close();process.exit(0);});});
