@@ -6,6 +6,7 @@ import {Store} from './src/store.mjs';
 import {Runtime,everyone,localClock} from './src/runtime.mjs';
 import {agents,providerIds,TEAMS} from './src/agents.mjs';
 import {diagnostics} from './src/providers.mjs';
+import {sourceStatus} from './src/datatools.mjs';
 const root=dirname(fileURLToPath(import.meta.url));const arg=name=>{const i=process.argv.indexOf(name);return i>=0?process.argv[i+1]:undefined;};const port=Number(arg('--port')||process.env.PORT||8012);const preview=process.argv.includes('--preview')||process.env.TOWN_PREVIEW==='1';const host=arg('--host')||process.env.HOST||(preview?'0.0.0.0':'127.0.0.1');
 const dataRoot=process.env.TOWN_DATA_DIR||join(root,'data');mkdirSync(dataRoot,{recursive:true});const teamFile=join(dataRoot,'active-team.json');
 const streams=new Set();let world={ceo:{x:10,y:14},meeting:false};const notify=()=>{const text='data: '+JSON.stringify({at:Date.now()})+'\n\n';for(const r of streams)r.write(text);};
@@ -26,6 +27,8 @@ const server=http.createServer(async(req,res)=>{try{
  if(req.headers.origin&&new URL(req.headers.origin).host!==reqHost)return json(res,403,{error:'Origine nepermisă.'});
  const url=new URL(req.url,'http://localhost');const path=url.pathname;
  if(req.method==='GET'&&path==='/api/state'){const day=localClock().day;const met=Object.entries(store.get('met')||{}).filter(([,d])=>d===day).map(([k])=>k);return json(res,200,{...store.snapshot(),runtime:runtime.status(),world,metToday:met});}
+ if(req.method==='GET'&&path==='/api/sources')return json(res,200,await sourceStatus());
+ if(req.method==='GET'&&path==='/api/portfolio')return json(res,200,store.paperTrades().length?await runtime.portfolio():{mode:'SIMULARE',positions:[],closedTrades:0,realizedPnl:0,unrealizedPnl:0});
  if(req.method==='GET'&&path==='/api/diagnostics')return json(res,200,await diagnostics());
  if(req.method==='GET'&&path==='/api/events'){res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});res.write(': connected\n\n');streams.add(res);req.on('close',()=>streams.delete(res));return;}
  if(req.method==='GET'&&path.startsWith('/api/artifacts/')){const r=store.db.prepare('SELECT * FROM artifacts WHERE id=?').get(path.split('/').pop());return json(res,r?200:404,r||{error:'Livrabil inexistent.'});}

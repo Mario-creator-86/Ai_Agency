@@ -31,6 +31,7 @@ export class Store{
   if(!columns('tasks').includes('project'))this.db.exec('ALTER TABLE tasks ADD COLUMN project TEXT');
   if(!columns('artifacts').includes('project'))this.db.exec('ALTER TABLE artifacts ADD COLUMN project TEXT');
   this.db.exec(`CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,title TEXT NOT NULL,goal TEXT NOT NULL,lead TEXT NOT NULL,members TEXT NOT NULL,status TEXT NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL);
+   CREATE TABLE IF NOT EXISTS paper_trades(id TEXT PRIMARY KEY,agent TEXT NOT NULL,symbol TEXT NOT NULL,side TEXT NOT NULL,qty REAL NOT NULL,entry REAL NOT NULL,entry_at TEXT NOT NULL,entry_source TEXT NOT NULL,bench_entry REAL,exit REAL,exit_at TEXT,status TEXT NOT NULL,note TEXT NOT NULL DEFAULT '');
    CREATE TABLE IF NOT EXISTS staff(id TEXT PRIMARY KEY,name TEXT NOT NULL,role TEXT NOT NULL,director TEXT NOT NULL,status TEXT NOT NULL,profile TEXT NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL);
    CREATE TABLE IF NOT EXISTS meetings(id TEXT PRIMARY KEY,topic TEXT NOT NULL,project TEXT,chair TEXT NOT NULL,participants TEXT NOT NULL,status TEXT NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,transcript TEXT NOT NULL DEFAULT '[]',summary TEXT NOT NULL DEFAULT '',artifact TEXT);`);
   // A meeting cannot resume mid-discussion after a crash; mark it honestly instead of replaying it.
@@ -54,5 +55,9 @@ export class Store{
  staffStatus(id,status){this.db.prepare('UPDATE staff SET status=?,updated=? WHERE id=?').run(status,new Date().toISOString(),id);}
  // Hired staff become agents: same tools and memory, reporting to their director.
  hiredStaff(){return this.staff().filter(w=>w.status==='hired').map(w=>({id:w.id,name:w.name,role:`${w.role} · echipa ${w.director}`,director:w.director,house:'',color:'#f2c230',icon:'vest',staff:true,sheet:w.profile.sheet,personality:w.profile.personality||'Harnic, atent, învață repede.',mission:`Lucrezi în echipa directorului ${w.director}, ca ${w.role}. ${w.profile.mission||''} Raportezi directorului tău și lui Mario. Nu inventezi acces, rezultate sau date.`,deliverable:w.profile.deliverable||'Livrabile cerute de director.',kpi:'Sarcini încheiate și verificate de director.',goal:w.profile.firstTask||'Întreabă-ți directorul ce are mai urgent și începe.'}));}
+
+ paperOpen(t){const r={id:randomUUID(),...t,status:'open'};this.db.prepare('INSERT INTO paper_trades(id,agent,symbol,side,qty,entry,entry_at,entry_source,bench_entry,status,note) VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(r.id,r.agent,r.symbol,r.side,r.qty,r.entry,r.entry_at,r.entry_source,r.bench_entry??null,'open',r.note||'');return r;}
+ paperClose(id,price){const t=this.db.prepare("SELECT * FROM paper_trades WHERE id=? AND status='open'").get(id);if(!t)return null;this.db.prepare("UPDATE paper_trades SET status='closed',exit=?,exit_at=? WHERE id=?").run(price,new Date().toISOString(),id);return {...t,exit:price,status:'closed'};}
+ paperTrades(){return this.db.prepare('SELECT * FROM paper_trades ORDER BY entry_at DESC LIMIT 200').all();}
  close(){this.db.close();}
 }

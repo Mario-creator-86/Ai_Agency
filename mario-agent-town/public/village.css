@@ -84,3 +84,6 @@
 }
 @media (prefers-reduced-motion:reduce){.city-heading{transition:none}}
 .map-caption,.map-instructions,.map-sign{transition:opacity .25s ease}
+.sources-title{font:600 10px Inter,'Segoe UI',sans-serif;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:10px 0 4px}
+.settings-grid label.check-row{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:10px;align-self:end;padding-bottom:12px}
+.settings-grid label.check-row input{width:auto;margin:0}
