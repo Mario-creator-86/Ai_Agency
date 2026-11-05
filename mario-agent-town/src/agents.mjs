@@ -60,3 +60,16 @@ export const TEAMS={
 export const teamIds=Object.keys(TEAMS);
 export function agentsFor(team='v1'){const t=TEAMS[team]||TEAMS.v1;return t.members.map(id=>({...agents.find(a=>a.id===id),...(t.roles[id]||{}),team:t.id}));}
 export function teamInfo(team='v1'){const t=TEAMS[team]||TEAMS.v1;return {id:t.id,label:t.label,mission:t.mission};}
+
+// ---- What each agent can reach. Everyone gets basic research; specialists get their sources.
+const BASE=['news_search','web_page','wikipedia'];
+const MARKET=['market_quote','price_history','symbol_search'];
+const FUND=['company_financials','company_filings'];
+const MACRO=['macro_series','fx_rates'];
+const YT=['youtube_suggest','youtube_channel','youtube_search'];
+const ACCESS={
+ v1:{maria:[...YT,'read_feed'],ana:[],radu:[...MARKET,...FUND,...MACRO,'read_feed'],alex:[...MARKET,'portfolio'],elena:['youtube_channel'],victor:[...MARKET,'risk_check','paper_trade','portfolio'],david:['read_feed'],irina:[...MACRO,...MARKET,'portfolio'],sofia:['read_feed'],tudor:[]},
+ v2:{alex:[...MARKET,...FUND,...MACRO,'risk_check','portfolio'],radu:[...MARKET,...FUND],irina:[...FUND,...MARKET],elena:[...FUND,...MARKET],tudor:[...MACRO,...MARKET],victor:[...MARKET,'risk_check'],sofia:[...MARKET,...FUND],david:['risk_check',...MARKET,'portfolio'],ana:['paper_trade','portfolio',...MARKET]},
+ v3:{maria:[...YT],alex:['youtube_channel'],radu:[...YT,'read_feed'],elena:['youtube_suggest'],sofia:['read_feed'],victor:['youtube_channel'],david:[],tudor:[...YT],irina:['youtube_channel','youtube_search',...MACRO],ana:[...YT]}
+};
+export function toolsFor(team,id,director=null){const t=ACCESS[team]||ACCESS.v1;return [...new Set([...BASE,...(t[id]||t[director]||[])])];}

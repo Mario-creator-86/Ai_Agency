@@ -2,6 +2,27 @@
 
 
 
+## Date reale pentru agenți — 5 noiembrie 2026 (v3.3)
+
+Mario: „fiecare agent trebuie să aibă acces la ce are nevoie ca să poată livra”. Implementat `src/datatools.mjs` (surse publice gratuite, fără chei plătite), cu sursă și oră în fiecare rezultat și calcule făcute în cod, nu de model:
+
+| Instrument | Sursă | Verificat live aici |
+| --- | --- | --- |
+| market_quote, price_history (SMA, RSI, ATR, volatilitate, drawdown), symbol_search | Yahoo Finance (endpoint public neoficial, poate fi întârziat) | da |
+| risk_check (corelații, beta, VaR istoric, dimensionarea poziției) | calcule locale pe prețurile Yahoo | da |
+| company_financials, company_filings | SEC EDGAR (data.sec.gov, efts) | da (MSFT FY2026: 331,8 mld. USD venituri) |
+| news_search | Google News RSS | da |
+| macro_series | FRED, cu rezervă din piață (^TNX, CL=F, ^VIX, DXY) când FRED nu răspunde | FRED instabil din cloud; rezerva da |
+| fx_rates | BNR, rezervă BCE | BCE da; BNR blocat din cloud |
+| web_page | orice pagină publică; rețeaua locală și metadatele cloud blocate | da |
+| wikipedia, youtube_suggest, youtube_channel | Wikipedia, YouTube | da |
+| youtube_search, abonați | YouTube Data API | necesită `YOUTUBE_API_KEY` (gratuit) |
+| paper_trade, portfolio | portofoliu SIMULAT cu prețul luat de oraș și reper S&P 500 | da (teste) |
+
+Accesul pe roluri este în `toolsFor()` din `src/agents.mjs` (toți au știri, web, Wikipedia; specialiștii au sursele meseriei; doar operațiunile V2 și tradingul V1 pot deschide poziții simulate; angajații moștenesc accesul directorului). Rundele de model per execuție: 4. Rezultatele trimise modelului sunt plafonate (9 000 / 30 000 caractere).
+
+Rulări live reale cu Claude Code 2.1.318: David (V2, risc NVDA/AMD/MSFT) a folosit 5 instrumente și a livrat dimensionarea cu stop 2×ATR, cerând aprobarea lui Mario; Radu (V3) a găsit subiecte din autocomplete YouTube, Google News și fluxul OpenAI; Tudor (V3) a salvat titluri A/B ca livrabil. Bug-uri găsite prin aceste rulări și reparate: variația „zilnică” era pe 5 zile (AMD −15,5% era de fapt pe 5 zile; pe o zi +1,0%); acțiunile scrise după text nu erau executate, deci agentul spunea „salvat” fără document; adresa IPv6 locală trecea de filtrul web. 35/35 teste.
+
 ## Audit de producție — 5 noiembrie 2026 (v3.2)
 
 Mario a cerut verificare pentru producție. Ce s-a testat efectiv și rezultatele:
