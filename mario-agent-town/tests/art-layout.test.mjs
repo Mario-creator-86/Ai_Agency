@@ -36,3 +36,10 @@ test('Town Hall table has 12 chairs, Mario at the head and a unique seat for eve
 test('every house door can reach every other door (no unreachable targets)',()=>{
  for(const a of BUILDINGS)for(const b of BUILDINGS){if(a===b)continue;assert.ok(findPath(worldPoint(...a.door),worldPoint(...b.door)).length>0,a.id+' -> '+b.id);}
 });
+
+import {sunTimes,darkness} from '../public/town.js';
+test('day and night follow real Bucharest sunrise and sunset',()=>{
+ const nov=sunTimes(new Date('2026-11-05T12:00:00Z')),jun=sunTimes(new Date('2026-06-21T12:00:00Z'));
+ assert.ok(Math.abs(nov.sunrise-6.95)<.2&&Math.abs(nov.sunset-17.02)<.2,'November');assert.ok(Math.abs(jun.sunrise-5.52)<.2&&Math.abs(jun.sunset-21.05)<.2,'June (summer time)');
+ assert.equal(darkness(12,new Date('2026-11-05T12:00:00Z')),0);assert.equal(darkness(2,new Date('2026-11-05T12:00:00Z')),1);assert.ok(darkness(18.5,new Date('2026-11-05T12:00:00Z'))>.8,'dark after 18:30 in November');assert.equal(darkness(19,new Date('2026-06-21T12:00:00Z')),0,'still light at 19:00 in June');
+});

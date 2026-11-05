@@ -52,3 +52,18 @@ test('a team keeps its own data and its charter reaches every prompt',async()=>{
   assert.equal(v2.snapshot().agents.some(a=>a.id==='maria'),false,'Maria is not in the trading firm');
   const v1=new Store(join(dir,'v1'),'v1');assert.equal(v1.messages().some(m=>m.text.includes('Verifică propunerea')||m.sender==='david'),false,'chats do not leak across versions');v1.close();}
  finally{rt.close();v2.close();rmSync(dir,{recursive:true,force:true});}});
+
+test('closing the town while an agent is mid-call never crashes the process',async()=>{const dir=mkdtempSync(join(tmpdir(),'agent-town-close-'));const store=new Store(dir,'v1');real(store,'maria','alex','sofia');
+ const rejections=[];const onRej=e=>rejections.push(e);process.on('unhandledRejection',onRej);
+ const rt=new Runtime(store,dir,()=>{},async()=>{await sleep(60);return JSON.stringify({reply:'ok',actions:[{type:'write_artifact',title:'t',content:'c'}]});});
+ try{await sleep(5);rt.enqueue({agent:'maria',text:'lucru',channel:'maria',depth:0});rt.startMeeting({topic:'test'});await sleep(20);rt.close();store.close();await sleep(250);assert.deepEqual(rejections.map(e=>e.message),[]);}
+ finally{process.off('unhandledRejection',onRej);rmSync(dir,{recursive:true,force:true});}});
+
+import {executable} from '../src/providers.mjs';
+import {mkdirSync,writeFileSync} from 'node:fs';
+test('finds Claude Code 2.x and Codex installed with npm when they are not on PATH',()=>{const dir=mkdtempSync(join(tmpdir(),'agent-town-npm-'));const keep={PATH:process.env.PATH,APPDATA:process.env.APPDATA,HOME:process.env.HOME,CLAUDE_BIN:process.env.CLAUDE_BIN,CODEX_BIN:process.env.CODEX_BIN};
+ try{for(const rel of ['npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe','npm/node_modules/@openai/codex/bin/codex.js']){mkdirSync(join(dir,rel,'..'),{recursive:true});writeFileSync(join(dir,rel),'');}
+  process.env.PATH='';process.env.APPDATA=dir;process.env.HOME=dir;delete process.env.CLAUDE_BIN;delete process.env.CODEX_BIN;
+  assert.match(executable('claude'),/claude-code[\\/]bin[\\/]claude\.exe$/);assert.match(executable('codex'),/codex[\\/]bin[\\/]codex\.js$/);
+  process.env.CLAUDE_BIN='C:\\custom\\claude.exe';assert.equal(executable('claude'),'C:\\custom\\claude.exe');}
+ finally{for(const [k,v] of Object.entries(keep))if(v===undefined)delete process.env[k];else process.env[k]=v;rmSync(dir,{recursive:true,force:true});}});

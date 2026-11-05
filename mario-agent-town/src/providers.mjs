@@ -4,11 +4,13 @@ import {join,delimiter} from 'node:path';
 import {homedir} from 'node:os';
 export function executable(name){
  const override=process.env[name.toUpperCase()+'_BIN'];if(override)return override;
- for(const p of (process.env.PATH||'').split(delimiter))for(const suffix of process.platform==='win32'?['.exe','']:[''])if(existsSync(join(p,name+suffix)))return join(p,name+suffix);
+ // On Windows only a real .exe on PATH can be spawned safely; npm's extensionless shim is a shell script.
+ for(const p of (process.env.PATH||'').split(delimiter))for(const suffix of process.platform==='win32'?['.exe']:[''])if(p&&existsSync(join(p,name+suffix)))return join(p,name+suffix);
  // Execute npm JS entry points directly; never pass user prompts to cmd.exe.
  const prefixes=[process.env.APPDATA&&join(process.env.APPDATA,'npm'),...((process.env.PATH||'').split(delimiter))].filter(Boolean);
- const rel=name==='codex'?'@openai/codex/bin/codex.js':'@anthropic-ai/claude-code/cli.js';
- for(const p of prefixes){const candidate=join(p,'node_modules',rel);if(existsSync(candidate))return candidate;}
+ // Claude Code 2.x ships a native bin/claude.exe inside the npm package; 1.x shipped cli.js.
+ const rels=name==='codex'?['@openai/codex/bin/codex.js']:['@anthropic-ai/claude-code/bin/claude.exe','@anthropic-ai/claude-code/cli.js'];
+ for(const p of prefixes)for(const rel of rels){const candidate=join(p,'node_modules',rel);if(existsSync(candidate))return candidate;}
  const native=join(homedir(),'.local','bin',name+(process.platform==='win32'?'.exe':''));return existsSync(native)?native:null;
 }
 export function cliArgs(provider,model=''){
@@ -33,7 +35,7 @@ export async function complete(provider,model,messages,cwd,signal){
  if(!model)throw new Error('Completează numele unui model Ollama instalat/disponibil în cont.');
  const base=provider==='ollama-cloud'?'https://ollama.com':(process.env.OLLAMA_URL||'http://127.0.0.1:11434');
  if(provider==='ollama-cloud'&&!process.env.OLLAMA_API_KEY)throw new Error('Adaugă OLLAMA_API_KEY în .env sau folosește Ollama local autentificat pentru modelele cloud.');
- const response=await fetch(base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json',...(provider==='ollama-cloud'?{Authorization:'Bearer '+process.env.OLLAMA_API_KEY}:{})},body:JSON.stringify({model,messages,stream:false,format:'json'}),signal:AbortSignal.any([signal,AbortSignal.timeout(180000)])});
+ let response;try{response=await fetch(base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json',...(provider==='ollama-cloud'?{Authorization:'Bearer '+process.env.OLLAMA_API_KEY}:{})},body:JSON.stringify({model,messages,stream:false,format:'json'}),signal:AbortSignal.any([signal,AbortSignal.timeout(180000)])});}catch(e){if(signal.aborted)throw e;if(e.name==='TimeoutError')throw new Error('Ollama nu a răspuns în 180 de secunde. Modelul poate fi prea mare pentru calculator.');throw new Error(provider==='ollama-cloud'?'Nu am putut contacta Ollama Cloud. Verifică internetul și cheia din .env.':`Ollama nu răspunde la ${base}. Pornește aplicația Ollama (sau „ollama serve”) și încearcă din nou.`);}
  if(!response.ok)throw new Error(`Ollama HTTP ${response.status}. Verifică modelul, autentificarea și cota.`);const json=await response.json();if(!json.message?.content)throw new Error('Ollama nu a returnat text.');return json.message.content;
 }
 export async function diagnostics(){let local={available:false,models:[]};try{const r=await fetch((process.env.OLLAMA_URL||'http://127.0.0.1:11434')+'/api/tags',{signal:AbortSignal.timeout(2000)});if(r.ok){const j=await r.json();local={available:true,models:(j.models||[]).map(x=>x.name)};}}catch{}return {codex:{installed:!!executable('codex'),authentication:'Se verifică prin codex login status în terminalul tău.'},claude:{installed:!!executable('claude'),authentication:'Autentificare în aplicația oficială Claude Code.'},ollama:local,'ollama-cloud':{configured:!!process.env.OLLAMA_API_KEY},integrations:{youtube:false,gmail:false,calendar:false,videoRenderer:false}};}

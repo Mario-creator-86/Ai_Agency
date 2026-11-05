@@ -4,15 +4,24 @@ import {MAP_SIZE,BUILDINGS,FOUNTAIN,CEO_START,HALL,HALL_FRONT,VILLAGE_ENTRY,PROP
 // never prove work: "working", speech bubbles with text and meetings come from backend state.
 const WALK_ROWS=[0,1,2,1];
 const DIR={left:0,right:1,front:2,back:3};
-const query=new URLSearchParams(location.search);
+const query=new URLSearchParams(globalThis.location?.search||'');
 const wpt=(p)=>worldPoint(p[0],p[1]);
 const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 const rand=(a,b)=>a+Math.random()*(b-a);
 const pairKey=(a,b)=>[a,b].sort().join('|');
 
 export function bucharestHour(){const forced=Number(query.get('hour'));if(query.has('hour')&&Number.isFinite(forced))return forced;const p=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Bucharest',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).map(x=>[x.type,x.value]));return Number(p.hour)+Number(p.minute)/60;}
-// 0 = full day, 1 = deep night.
-export function darkness(h){if(h>=7.5&&h<18.5)return 0;if(h>=21.5||h<5.5)return 1;if(h>=18.5)return (h-18.5)/3;return 1-(h-5.5)/2;}
+// Sunrise and sunset in Bucharest (44.43 N, 26.10 E) for a date, in local hours (NOAA approximation).
+export function sunTimes(date=new Date()){const rad=Math.PI/180,start=Date.UTC(date.getUTCFullYear(),0,0),day=Math.floor((date-start)/864e5);
+ const g=2*Math.PI/365*(day-1),decl=.006918-.399912*Math.cos(g)+.070257*Math.sin(g)-.006758*Math.cos(2*g)+.000907*Math.sin(2*g)-.002697*Math.cos(3*g)+.00148*Math.sin(3*g);
+ const eq=229.18*(.000075+.001868*Math.cos(g)-.032077*Math.sin(g)-.014615*Math.cos(2*g)-.040849*Math.sin(2*g)),lat=44.43*rad;
+ const ha=Math.acos(Math.cos(90.833*rad)/(Math.cos(lat)*Math.cos(decl))-Math.tan(lat)*Math.tan(decl))/rad;
+ const offset=-new Date(date.toLocaleString('en-US',{timeZone:'UTC'})).getTime()/36e5+new Date(date.toLocaleString('en-US',{timeZone:'Europe/Bucharest'})).getTime()/36e5;
+ const noon=(720-4*26.10-eq)/60+offset;return {sunrise:noon-ha/15,sunset:noon+ha/15};}
+let sunCache={key:'',sun:null};
+// 0 = full day, 1 = deep night. Twilight lasts about an hour around sunrise and sunset.
+export function darkness(h,date=new Date()){const key=date.toDateString();if(sunCache.key!==key)sunCache={key,sun:sunTimes(date)};const {sunrise,sunset}=sunCache.sun;
+ if(h>=sunrise+.6&&h<sunset-.4)return 0;if(h>=sunset+1.3||h<sunrise-1.1)return 1;if(h>=sunset-.4)return Math.min(1,(h-sunset+.4)/1.7);return Math.max(0,1-(h-sunrise+1.1)/1.7);}
 
 class Ambience{
  constructor(){this.ctx=null;this.on=true;this.next=0;}
@@ -81,7 +90,7 @@ export class Town {
  px(x,y){const v=this.view();return {x:v.x+x*v.scale,y:v.y+y*v.scale};}
  screen(x,y){const p=pixelPoint(x,y);return this.px(p.x,p.y);}
  world(x,y){const v=this.view();return worldPoint((x-v.x)/v.scale,(y-v.y)/v.scale);}
- setZoom(value){this.zoom=Math.max(.7,Math.min(3,value));const b=document.getElementById('zoomReset');if(b)b.textContent=Math.round(this.zoom*100)+'%';}
+ setZoom(value){this.zoom=Math.max(.7,Math.min(3,value));this.canvas.closest('.city-panel')?.classList.toggle('zoomed',this.zoom>1.15);const b=document.getElementById('zoomReset');if(b)b.textContent=Math.round(this.zoom*100)+'%';}
  // ---------- input ----------
  setupInput(){
   const c=this.canvas;
@@ -132,9 +141,10 @@ export class Town {
   return [{x:aisle,y:985},{x:aisle,y:seat.y},{x:seat.x+(left?-60:60),y:seat.y},{x:seat.x,y:seat.y}];
  }
  exitHallRoute(p){const s=p.hall;const aisle=s.x<768?HALL.aisles.left:HALL.aisles.right;return s.y>900?[{x:HALL.door[0],y:HALL.door[1]}]:[{x:aisle,y:s.y},{x:aisle,y:950},{x:HALL.door[0],y:HALL.door[1]}];}
- doorBusy(){const d=wpt(BUILDINGS.find(b=>b.id==='townhall').door);return [this.ceo,...this.people.values()].some(o=>o.where==='village'&&dist(o,d)<.3);}
+ // The door counts as busy only while someone stands still in the doorway; after 2 s the next person squeezes out anyway.
+ doorBusy(){const d=wpt(BUILDINGS.find(b=>b.id==='townhall').door);const busy=[this.ceo,...this.people.values()].some(o=>o.where==='village'&&!o.walking&&dist(o,d)<.2);if(!busy){this.doorWait=0;return false;}this.doorWait=(this.doorWait||0)+1/60;return this.doorWait<2;}
  enterHall(p){p.where='hall';p.seated=false;p.hall={x:HALL.door[0],y:HALL.door[1]};p.hallPath=this.hallRoute(p,this.seatFor(p));p.path=[];}
- leaveHall(p){p.where='village';p.hall=null;p.seated=false;const d=wpt(BUILDINGS.find(b=>b.id==='townhall').door);p.x=d.x;p.y=d.y;p.path=[];p.wait=0;p.returning=p.id!=='mario';}
+ leaveHall(p){p.where='village';p.hall=null;p.seated=false;const d=wpt(BUILDINGS.find(b=>b.id==='townhall').door);p.x=d.x;p.y=d.y;p.path=[];p.wait=0;p.returning=p.id!=='mario';p.ghostUntil=performance.now()+1200;this.doorWait=0;}
  home(p){return homeOf(p.role==='worker'||p.role==='candidate'?p.director:p.id);}
  yardPoint(b,center=false){const [x0,y0,x1,y1]=b.yard;return wpt(center?[(x0+x1)/2,(y0+y1)/2]:[rand(x0+8,x1-8),rand(y0+14,y1-6)]);}
  inYard(p,b){const q=pixelPoint(p.x,p.y);return q.x>=b.yard[0]-2&&q.x<=b.yard[2]+2&&q.y>=b.yard[1]-2&&q.y<=b.yard[3]+2;}
@@ -148,7 +158,7 @@ export class Town {
   if(p.where==='hall'){
    if(meeting||(p.role==='candidate'&&this.meeting)){if(!p.hallPath?.length&&!p.seated){const seat=this.seatFor(p);if(seat&&Math.hypot(p.hall.x-seat.x,p.hall.y-seat.y)<2){p.seated=true;p.dir=DIR[seat.facing];}else if(!seat)p.dir=3;}return;}
    if(!p.leaving){p.leaving=true;p.seated=false;p.hallPath=this.exitHallRoute(p);}
-   if(!p.hallPath.length){if(performance.now()-(this.lastExit||0)<650||this.doorBusy())return;this.lastExit=performance.now();p.leaving=false;this.leaveHall(p);}return;}
+   if(!p.hallPath.length){if(performance.now()-(this.lastExit||0)<450||this.doorBusy())return;this.lastExit=performance.now();p.leaving=false;this.leaveHall(p);}return;}
   // village
   if(meeting||(p.role==='candidate'&&!p.hired)){
    if(p.role==='candidate'&&!this.meeting){if(!p.path.length&&dist(p,wpt([828+20,528]))>.2)this.go(p,wpt([830,530]));if(!p.path.length)this.lookAt(p,this.ceo);return;}
@@ -178,7 +188,7 @@ export class Town {
   this.go(p,this.yardPoint(b));p.wait=rand(3,8);
  }
  encounters(){
-  const list=[...this.people.values()].filter(p=>p.where==='village'&&p.role!=='leaving'&&p.role!=='candidate');
+  const hallDoor=wpt(BUILDINGS.find(b=>b.id==='townhall').door);const list=[...this.people.values()].filter(p=>p.where==='village'&&p.role!=='leaving'&&p.role!=='candidate'&&!p.returning&&!this.meeting&&dist(p,hallDoor)>.8);
   for(const a of list){if(a.role!=='worker'||a.hold>0||!a.path.length)continue;
    for(const b of list){if(a===b||b.hold>0)continue;if(dist(a,b)>.5)continue;const key=pairKey(a.id,b.id);if(this.met.has(key)||this.pending.has(key))continue;
     // They have not talked today: stop, ask what the other is working on, both take notes.
@@ -202,7 +212,7 @@ export class Town {
    if(p.alpha!==undefined&&p.alpha<1)p.alpha=Math.min(1,p.alpha+dt*3);
    if(p.lookAt){const o=p.lookAt==='mario'?this.ceo:this.people.get(p.lookAt);if(o&&o.where===p.where&&!p.walking&&!p.seated){p.where==='hall'?this.face(p,o.hall.x-p.hall.x,o.hall.y-p.hall.y):this.lookAt(p,o);}if(!p.bubble||p.bubble.until<performance.now())p.lookAt=null;}}
   // Idle people never stand on top of each other.
-  const idle=[...this.people.values()].filter(p=>p.where==='village'&&!p.walking);for(const a of idle)for(const b of idle){if(a===b)continue;const d=dist(a,b);if(d<.3&&d>0){const nx=a.x+(a.x-b.x)/d*.01,ny=a.y+(a.y-b.y)/d*.01;if(isWalkable(nx,ny)){a.x=nx;a.y=ny;}}}
+  const idle=[...this.people.values()].filter(p=>p.where==='village'&&!p.walking);for(const a of idle)for(const b of idle){if(a===b)continue;const d=dist(a,b);if(d<.3){const ang=d>1e-4?Math.atan2(a.y-b.y,a.x-b.x):(a.id<b.id?0:Math.PI)+Math.random()*.6,nx=a.x+Math.cos(ang)*.012,ny=a.y+Math.sin(ang)*.012;if(isWalkable(nx,ny)){a.x=nx;a.y=ny;}else if(isWalkable(a.x-Math.sin(ang)*.012,a.y+Math.cos(ang)*.012)){a.x-=Math.sin(ang)*.012;a.y+=Math.cos(ang)*.012;}}}
   this.encounters();
   if(this.followScene){const want=this.ceo.where==='hall'?'hall':'village';if(this.scene!==want)this.setScene(want,false);}
   if(!this.meeting)this.followScene=true;
@@ -268,7 +278,7 @@ export class Town {
   c.restore();}
  lighting(t,dark){if(dark<=0.01&&darkness(this.hour)<=0.01){this.lampsDay(t);return;}
   const c=this.ctx,v=this.view(),s=v.scale,h=this.hour;
-  const dusk=h>16.5&&h<21?Math.max(0,1-Math.abs(h-19)/2.5):0;c.save();c.beginPath();c.rect(v.x,v.y,v.w,v.h);c.clip();
+  const sunset=sunCache.sun?.sunset??18,dusk=Math.max(0,1-Math.abs(h-sunset)/1.4);c.save();c.beginPath();c.rect(v.x,v.y,v.w,v.h);c.clip();
   if(dusk>0){c.globalCompositeOperation='soft-light';c.fillStyle=`rgba(255,140,60,${.5*dusk})`;c.fillRect(v.x,v.y,v.w,v.h);}
   c.globalCompositeOperation='multiply';c.fillStyle=`rgba(${Math.round(255-170*dark)},${Math.round(255-150*dark)},${Math.round(255-60*dark)},1)`;c.fillRect(v.x,v.y,v.w,v.h);
   c.globalCompositeOperation='lighter';
@@ -353,10 +363,10 @@ export class Town {
  overlays(v){
   const s=v.scale,now=performance.now();
   for(const b of BUILDINGS){if(this.hover?.id===b.id){const c=this.ctx;c.save();c.strokeStyle=b.color;c.lineWidth=2;c.shadowColor=b.color;c.shadowBlur=12;c.strokeRect(v.x+b.bounds[0]*s,v.y+b.bounds[1]*s,(b.bounds[2]-b.bounds[0])*s,(b.bounds[3]-b.bounds[1])*s);c.restore();}
-   const q=this.px(b.label[0],b.label[1]),present=!b.owner||b.owner==='mario'||this.people.has(b.owner);this.pill(q.x,q.y,(b.id==='townhall'?'⌂ Town Hall':b.icon+' '+b.name)+(present?'':' · liberă'),{border:present?b.color:'#7d7d70',color:b.id==='mario'?'#ffe59a':present?'#fff4d6':'#b9b6a8',font:Math.max(8,Math.min(11,11*s+4))});
+   const q=this.px(b.label[0],b.label[1]),present=!b.owner||b.owner==='mario'||this.people.has(b.owner);this.pill(q.x,q.y,(b.id==='townhall'?'⌂ Town Hall':b.icon+' '+b.name)+(present?'':' · liberă'),{border:present?b.color:'#7d7d70',color:b.id==='mario'?'#ffe59a':present?'#fff4d6':'#b9b6a8',font:s<.45?7:Math.min(11,11*s+4)});
    const inside=[...this.people.values()].filter(p=>p.where==='house'&&this.home(p)?.id===b.id&&this.working.has(p.id));if(inside.length){const d=this.px(b.door[0],b.door[1]-52);this.pill(d.x,d.y,'● '+inside.map(p=>p.name).join(', ')+' lucrează la birou',{color:'#c6efa5',border:'#6baf65',font:9});}}
   for(const p of [...this.people.values(),this.ceo]){if(p.where!=='village')continue;const pos=this.screen(p.x,p.y),ceo=p.id==='mario';
-   const show=ceo||this.hover?.id===p.id||this.selected===p.id||dist(p,this.ceo)<2||p.role!=='director';if(show)this.pill(pos.x,pos.y-(ceo?83:75)*s,ceo?'♛ Mario':p.name+(p.role==='candidate'?' · candidat':p.role==='worker'?' · echipa '+p.director:''),{border:ceo?'#e7bf5b':p.color||'#f2c230',font:9});
+   const roomy=s>.55,show=ceo||this.hover?.id===p.id||this.selected===p.id||(roomy&&(dist(p,this.ceo)<2||p.role!=='director'));if(show)this.pill(pos.x,pos.y-(ceo?83:75)*s,ceo?'♛ Mario':p.name+(p.role==='candidate'?' · candidat':p.role==='worker'?' · echipa '+(this.state?.agents.find(a=>a.id===p.director)?.name||p.director):''),{border:ceo?'#e7bf5b':p.color||'#f2c230',font:9});
    if(p.notes>now)this.pill(pos.x+18*s,pos.y-40*s,'✎',{font:9,border:'#c9b07a'});
    if(p.bubble&&p.bubble.until>now)this.bubble(pos.x,pos.y-(ceo?92:84)*s,p.bubble.text,p.bubble);}
  }

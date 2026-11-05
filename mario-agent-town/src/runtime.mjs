@@ -17,7 +17,9 @@ export async function readFeed(source){const url=feedURLs[source];if(!url)throw 
 export class Runtime{
  constructor(store,root,notify=()=>{},provider=complete){this.store=store;staffSource=()=>store.hiredStaff();baseSource=()=>store.members?store.members():agents;teamCollaborators=()=>TEAMS[store.team]?.collaborators||collaborators;this.root=root;this.notify=notify;this.provider=provider;this.queue=[];this.active=null;this.controller=null;this.closed=false;this.timer=setInterval(()=>this.tick(),15000);setImmediate(()=>{if(this.closed)return;for(const t of this.store.tasks().filter(t=>t.status==='queued').reverse().slice(0,100))this.enqueue({agent:t.agent,text:t.title,taskId:t.id,channel:t.agent,depth:t.depth});});}
  enqueue(job){if(this.queue.length>=100)throw new Error('Coada este plină. Așteaptă finalizarea sarcinilor.');this.queue.push(job);this.notify();void this.pump();}
- async pump(){if(this.closed||this.active||this.store.get('settings').paused)return;const job=this.queue.shift();if(!job)return;this.active=job;this.controller=new AbortController();this.notify();try{await this.execute(job,this.controller.signal);}catch(e){if(job.taskId)this.store.updateTask(job.taskId,'blocked',e.message);this.store.message('system',job.channel||'townhall',`${find(job.agent)?.name||job.agent}: ${e.name==='AbortError'?'execuție oprită de CEO.':e.message}`);this.store.event('error',job.agent,{text:e.message});}finally{this.active=null;this.controller=null;this.notify();if(!this.closed)setImmediate(()=>void this.pump());}}
+ async pump(){if(this.closed||this.active)return;let paused;try{paused=this.store.get('settings').paused;}catch{return;}if(paused)return;const job=this.queue.shift();if(!job)return;this.active=job;this.controller=new AbortController();this.notify();try{await this.execute(job,this.controller.signal);}catch(e){// After close() (team switch, shutdown) the database is gone: nothing left to record.
+  if(!this.closed){try{if(job.taskId)this.store.updateTask(job.taskId,'blocked',e.message);this.store.message('system',job.channel||'townhall',`${find(job.agent)?.name||job.agent}: ${e.name==='AbortError'?'execuție oprită de CEO.':e.message}`);this.store.event('error',job.agent,{text:e.message});}catch(inner){console.error('Mario Agent Town: nu am putut salva eroarea:',inner.message);}}}
+  finally{this.active=null;this.controller=null;if(!this.closed){this.notify();setImmediate(()=>void this.pump());}}}
  async execute(job,signal){
  if(job.kind==='recruit')return this.runRecruit(job,signal);
  if(job.kind==='room')return this.runRoom(job,signal);
@@ -103,7 +105,7 @@ export class Runtime{
    if(summary)this.store.message(chair.id,channel,summary);
    this.store.meetingUpdate(m.id,{status:'done',summary,artifact:doc?.id||null,transcript});this.store.event('meeting',chair.id,{text:`Ședință încheiată: ${created.length} sarcini${doc?', strategie salvată':''}.`,id:doc?.id});
    for(const task of created)this.enqueue({agent:task.agent,text:task.title,taskId:task.id,channel,depth:1,project:m.project});
-  }catch(e){this.store.meetingUpdate(m.id,{status:e.name==='AbortError'?'cancelled':'error',transcript});throw e;}
+  }catch(e){if(!this.closed)this.store.meetingUpdate(m.id,{status:e.name==='AbortError'?'cancelled':'error',transcript});throw e;}
   finally{this.meeting=null;this.notify();}
  }
  // Two agents meet in town. Without AI they still swap truthful notes taken from the task board.
