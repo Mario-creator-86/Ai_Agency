@@ -52,3 +52,9 @@ test('actions are found when the model writes prose and then a JSON block',()=>{
  const d=parseDecision(text);assert.equal(d.actions.length,1);assert.equal(d.actions[0].title,'Brief');assert.match(d.reply,/Am adus trei subiecte/);assert.doesNotMatch(d.reply,/write_artifact/);
  assert.deepEqual(parseDecision('Doar text, fără JSON.').actions,[]);assert.equal(parseDecision('{"reply":"ok","actions":[]}').reply,'ok');
  assert.equal(parseDecision('Text {"reply":"scurt","actions":[{"type":"remember","text":"x"}]}').reply,'scurt','short prose falls back to the JSON reply');});
+import {codexModels,CLAUDE_MODELS} from '../src/providers.mjs';
+import {mkdirSync as mk,writeFileSync as wf} from 'node:fs';
+test('model lists: Claude aliases and the models Codex has cached for the account',()=>{assert.deepEqual(CLAUDE_MODELS.map(m=>m.id),['','opus','sonnet','haiku']);
+ const home=mkdtempSync(join(tmpdir(),'codex-home-'));try{assert.deepEqual(codexModels(home),[],'no cache: empty list, no crash');mk(join(home,'.codex'));
+  wf(join(home,'.codex','models_cache.json'),JSON.stringify({fetched_at:'x',models:[{slug:'gpt-6.1',display_name:'GPT-6.1',visibility:'list'},{slug:'secret',visibility:'hide'},{nope:1}]}));assert.deepEqual(codexModels(home),[{id:'gpt-6.1',label:'GPT-6.1'}]);
+  wf(join(home,'.codex','models_cache.json'),'not json');assert.deepEqual(codexModels(home),[]);}finally{rmSync(home,{recursive:true,force:true});}});

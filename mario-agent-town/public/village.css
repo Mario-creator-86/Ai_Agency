@@ -87,3 +87,7 @@
 .sources-title{font:600 10px Inter,'Segoe UI',sans-serif;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:10px 0 4px}
 .settings-grid label.check-row{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:10px;align-self:end;padding-bottom:12px}
 .settings-grid label.check-row input{width:auto;margin:0}
+.model-picker{display:inline-flex;gap:6px;flex-wrap:wrap;min-width:0}
+.model-picker select,.model-picker input{border:1px solid #ddd2b8;border-radius:7px;padding:4px 6px;font:inherit;background:#fff;min-width:0;max-width:220px}
+.agent-config .model-picker{width:100%}
+.agent-config .model-picker select{flex:1;max-width:none}

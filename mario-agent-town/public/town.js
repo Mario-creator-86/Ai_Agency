@@ -362,7 +362,7 @@ export class Town {
  villagePerson(p){const c=this.ctx,s=this.view().scale,pos=this.screen(p.x,p.y),ceo=p.id==='mario';c.fillStyle='#12291d66';c.beginPath();c.ellipse(pos.x,pos.y,12*s,4*s,0,0,Math.PI*2);c.fill();this.sprite(p,pos.x,pos.y,(ceo?91:82)*s,{alpha:p.alpha??1});}
  overlays(v){
   const s=v.scale,now=performance.now();
-  for(const b of BUILDINGS){if(this.hover?.id===b.id){const c=this.ctx;c.save();c.strokeStyle=b.color;c.lineWidth=2;c.shadowColor=b.color;c.shadowBlur=12;c.strokeRect(v.x+b.bounds[0]*s,v.y+b.bounds[1]*s,(b.bounds[2]-b.bounds[0])*s,(b.bounds[3]-b.bounds[1])*s);c.restore();}
+  for(const b of BUILDINGS){
    const q=this.px(b.label[0],b.label[1]),present=!b.owner||b.owner==='mario'||this.people.has(b.owner);this.pill(q.x,q.y,(b.id==='townhall'?'⌂ Town Hall':b.icon+' '+b.name)+(present?'':' · liberă'),{border:present?b.color:'#7d7d70',color:b.id==='mario'?'#ffe59a':present?'#fff4d6':'#b9b6a8',font:s<.45?7:Math.min(11,11*s+4)});
    const inside=[...this.people.values()].filter(p=>p.where==='house'&&this.home(p)?.id===b.id&&this.working.has(p.id));if(inside.length){const d=this.px(b.door[0],b.door[1]-52);this.pill(d.x,d.y,'● '+inside.map(p=>p.name).join(', ')+' lucrează la birou',{color:'#c6efa5',border:'#6baf65',font:9});}}
   for(const p of [...this.people.values(),this.ceo]){if(p.where!=='village')continue;const pos=this.screen(p.x,p.y),ceo=p.id==='mario';
