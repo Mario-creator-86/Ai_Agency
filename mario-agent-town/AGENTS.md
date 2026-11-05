@@ -1,0 +1,13 @@
+# Instructions for the next coding AI — Mario Agent Town
+
+Read `HANDOFF.md`, `README.md` and `PROJECT_STATE.json` first. This directory is a NEW, independent local prototype explicitly requested by Mario on 2026-11-05. It lives on a feature branch of the existing Ai_Agency repository because the available GitHub integration cannot create a new repository. The current user request authorizes this sidecar project; it does not replace or migrate the existing AMN-AI studio.
+
+Keep all application changes within `mario-agent-town/` unless a separately scoped bridge to the parent studio is requested. Parent documentation tracks this exception. Do not automatically merge this branch. The parent's production runtime, databases, credentials, media and character identities are unrelated to this prototype.
+
+Requirements from the Owner: exactly ten named agents, ten houses, a central Town Hall, park/benches/fountain, a larger CEO house, walkable Mario avatar and agents who look toward him, inter-agent communication, direct/group chat, autonomous work and precise jobs. Maria owns the entire YouTube growth goal of 1M subscribers. Ana is the personal assistant; Radu researches AI/markets/news. The other seven have explicit charters in `src/agents.mjs`. Providers should use ChatGPT/Codex and Claude subscriptions where officially supported, or Ollama local/cloud. Do not silently introduce paid OpenAI/Anthropic API billing.
+
+Mario is bald with a salt-and-pepper beard. Use only the confirmed sprite in `public/assets/mario-sprites.webp`. His sweater MUST have a short zipper at the neck. The earlier short-haired man's photo was explicitly rejected as a different person: do not retrieve or use it. Do not commit original photos, auth tokens, .env, databases or user activity.
+
+Do not turn scenery into fake work evidence. Only backend records indicate real activity. Configured does not mean authenticated or verified. Demo replies must remain explicitly labeled. Never describe scripts or production plans as rendered/published films.
+
+Run `npm test` and syntax checks after code changes. Use temporary data for tests. No real vendor calls in the test suite. Live acceptance is a distinct owner-machine step. Update HANDOFF, PROJECT_STATE and the parent tracking note with actual results, blockers and the next task. Maintain small, reversible commits.
