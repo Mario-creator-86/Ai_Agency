@@ -7,12 +7,12 @@
   "phase": "local_prototype",
   "tests": {
     "command": "npm test",
-    "passed": 9,
+    "passed": 12,
     "failed": 0,
     "runtime": "Node 24.22.1 Linux",
     "real_provider_acceptance": false
   },
-  "browser_qa": "passed desktop smoke: town rendering, CEO sprite, Maria chat with honest Demo response, meeting control, settings diagnostics; mobile and live providers not tested",
+  "browser_qa": "v2 painted village and all ten authored character sheets inspected desktop; live providers and mobile not verified",
   "providers_implemented_not_live_verified": [
     "codex-cli-subscription",
     "claude-code-cli-subscription",
@@ -21,7 +21,7 @@
   ],
   "features": {
     "ten_agents": true,
-    "isometric_town": true,
+    "isometric_town": false,
     "ceo_quarter_zip_sprite": true,
     "chat": true,
     "persistent_tasks": true,
@@ -30,7 +30,10 @@
     "youtube": false,
     "gmail": false,
     "calendar": false,
-    "video_rendering": false
+    "video_rendering": false,
+    "painted_rpg_village_v2": true,
+    "ten_character_sheets_16_frames": true,
+    "building_and_prop_atlases": true
   },
   "next_task": "One real-provider agent acceptance on Owner PC, followed by durable/idempotent job improvements",
   "blockers": [
@@ -44,5 +47,7 @@
     "No house interiors",
     "Daily limit counts workflows, each at most 3 model requests"
   ],
-  "entry_document": "HANDOFF.md"
+  "entry_document": "HANDOFF.md",
+  "art_handoff": "art/README_CLAUDE.md",
+  "art_manifest": "art/manifest.json"
 }

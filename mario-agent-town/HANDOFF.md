@@ -1,5 +1,14 @@
 # Preluare proiect — Mario Agent Town
 
+## Actualizare grafică v2 — 5 noiembrie 2026
+
+Mario a respins aspectul geometric/pastel și a cerut un sat bogat în culori, cu volum și detalii ca în imaginile furnizate, apoi a precizat că dorește imaginile pregătite pentru continuarea în Claude. Au fost desenate: o hartă completă fără personaje în fundal; zece sprite sheet-uri distincte (16 cadre fiecare); atlas cu 12 clădiri; atlas de obiecte cu fântână, bancă, copaci, felinar, flori, pod și alte obiecte. Avatarul CEO cu fermoar este păstrat.
+
+**Începe partea grafică din `art/README_CLAUDE.md` și `art/manifest.json`.** Harta și personajele sunt integrate în Canvas; galeria este `/art-preview.html`. `public/village-layout.js` înlocuiește coordonatele izometrice ale v1. Backendul și conturile nu au primit integrări noi.
+
+Verificare: 12/12 teste offline trecute, inclusiv traseele fiecărei case spre piață și blocarea acoperișurilor/fântânii. Pagina și noua scenă cu toate cele zece personaje au fost inspectate în browser desktop. Atlasul de clădiri și cel de obiecte sunt disponibile pentru continuare, nu se dublează peste harta pictată. Interioarele nu sunt desenate; ședința rămâne în piață.
+
+
 ## Unde este proiectul
 
 - Repository: `Mario-creator-86/Ai_Agency` (privat).
@@ -27,7 +36,7 @@ Windows: Node 24+, apoi `start.cmd`. Fără `npm install`: nu există dependenț
 5. Mario este CEO; avatar bazat pe fotografiile confirmate în conversație: cap ras, barbă grizonantă, pulover închis CU FERMOAR SCURT LA GÂT. Nu folosi fotografia mai veche a bărbatului cu păr scurt, explicit respinsă. Fotografiile originale nu sunt în Git.
 6. Inteligența trebuie să folosească abonamentele ChatGPT/Claude prin aplicațiile lor oficiale, ori Ollama local/cloud. Nu introduce automat API-uri OpenAI/Anthropic plătite.
 7. User a autorizat folosirea unui repository existent. Folosim branch separat și director separat, nu înlocuim studioul existent.
-8. Referințe: CityRT și video YouTube `-mb6buCbv8E`. Transcriere integrală citită. Video prezintă case/agenți, chief of staff, deplasare, chat, sarcini și ședințe; playerul video în sine a rămas în buffering aici. Desenul orașului este original, randat procedural Canvas, nu copiat.
+8. Referințe: CityRT și video YouTube `-mb6buCbv8E`. Transcriere integrală citită. Video prezintă case/agenți, chief of staff, deplasare, chat, sarcini și ședințe; playerul video în sine a rămas în buffering aici. Grafica v2 este o pictură RPG originală, cu personaje animate separat pe Canvas; nu este o captură copiată din video.
 
 ## Fișiere și flux
 
@@ -38,10 +47,10 @@ Windows: Node 24+, apoi `start.cmd`. Fără `npm install`: nu există dependenț
 | `src/runtime.mjs` | Coada, scheduler, context, runde AI, instrumente validate, delegare, STOP |
 | `src/providers.mjs` | Codex CLI, Claude Code CLI, Ollama local/cloud, detectare instalări |
 | `src/agents.mjs` | Cele zece identități, case, misiuni, KPI, obiective autonome |
-| `public/town.js` | Hartă Canvas, clădiri, parc/fântână/bănci, A*, mișcare, orientare, avatar CEO |
+| `public/town.js` | Pictură RPG, sprites separate, efecte decorative, mișcare și orientare; geometria/A* sunt în village-layout.js |
 | `public/app.js` | Chat, misiuni, jurnal/livrabile, setări, SSE |
 | `public/assets/mario-sprites.webp` | Sprite 4 coloane × 3 rânduri; versiunea cu fermoar |
-| `tests/core.test.mjs` | Nouă teste fără conturi sau plăți |
+| `tests/core.test.mjs` | Douăsprezece teste fără conturi sau plăți |
 
 Rutare: chat general → Alex sau agenții menționați cu `@id`; chat direct → agentul ales. O singură execuție simultană. Răspunsul furnizorului conține `reply` și maximum șase `actions`. Instrumente: `remember`, `write_artifact`, `create_task`, `send_message` intern, `read_feed`, `read_artifact`. Maximum trei runde de model per execuție și două niveluri de delegare. Joburile de chat sunt în memorie; sarcinile propriu-zise sunt persistate și reîncărcate după restart.
 
@@ -49,7 +58,7 @@ Autonomia este oprită implicit, furnizorii sunt Demo. Mișcarea locală nu folo
 
 ## Verificări efectuate
 
-- `npm test`: **9/9 trecute** pe Node 24.22.1, Linux. Testele acoperă unicitatea rolurilor, persistență/restart, demo fără apeluri, artefacte și delegare cu model fals, limitele de instrumente/delegare, STOP înaintea mutațiilor, plafon zilnic, eliminarea cheilor API din mediul CLI și parsarea erorilor.
+- `npm test`: **12/12 trecute** pe Node 24.22.1, Linux. Testele acoperă unicitatea rolurilor, persistență/restart, demo fără apeluri, artefacte și delegare cu model fals, limitele de instrumente/delegare, STOP înaintea mutațiilor, plafon zilnic, eliminarea cheilor API din mediul CLI și parsarea erorilor.
 - Verificări de sintaxă JavaScript executate în dezvoltare; repetă pentru toate fișierele înainte de modificări.
 - Avatarul cu fermoar a fost inspectat vizual înaintea optimizării assetului.
 - Prima încercare de preview a eșuat deoarece serverul nu interpreta argumentele `--host/--port` ale mediului. A fost adăugat suport și preview-ul a pornit. Verificare browser desktop reușită: hartă, avatar CEO, chat Maria cu răspuns Demo corect etichetat, control ședință și setări/diagnostic furnizori. Mobilul și furnizorii live nu au fost testați.

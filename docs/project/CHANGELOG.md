@@ -9,3 +9,7 @@ This summary replaces private operational records only in the GitHub copy.
 ## 2026-11-05 — Mario Agent Town prototype on feature branch
 
 Added the explicitly requested independent ten-agent village under `mario-agent-town/`, with Node/SQLite runtime, original Canvas town, confirmed quarter-zip CEO sprite, CLI/Ollama adapters, nine offline tests and continuation instructions. External accounts and real video operations are not connected. Existing AMN-AI implementation and architecture files unchanged.
+
+## 2026-11-05 — Owner graphic handoff v2
+
+Completed the Owner's explicit request to draw the colorful RPG town and characters for Claude to continue: original painted map, ten unique 16-frame character sheets, preserved quarter-zip CEO, 12-building atlas, prop atlas, manifest, art guide and original-PNG art pack. The new art is integrated in the independent sidecar. Twelve offline tests pass; desktop scene inspected. Graphic entry: `../../mario-agent-town/art/README_CLAUDE.md`. Existing studio runtime and normative architecture remain unchanged; no new live-account integration is claimed.

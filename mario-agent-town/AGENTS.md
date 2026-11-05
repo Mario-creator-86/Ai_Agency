@@ -1,6 +1,6 @@
 # Instructions for the next coding AI — Mario Agent Town
 
-Read `HANDOFF.md`, `README.md` and `PROJECT_STATE.json` first. This directory is a NEW, independent local prototype explicitly requested by Mario on 2026-11-05. It lives on a feature branch of the existing Ai_Agency repository because the available GitHub integration cannot create a new repository. The current user request authorizes this sidecar project; it does not replace or migrate the existing AMN-AI studio.
+Read `HANDOFF.md`, `README.md`, `PROJECT_STATE.json` and `art/README_CLAUDE.md` first. This directory is a NEW, independent local prototype explicitly requested by Mario on 2026-11-05. It lives on a feature branch of the existing Ai_Agency repository because the available GitHub integration cannot create a new repository. The current user request authorizes this sidecar project; it does not replace or migrate the existing AMN-AI studio.
 
 Keep all application changes within `mario-agent-town/` unless a separately scoped bridge to the parent studio is requested. Parent documentation tracks this exception. Do not automatically merge this branch. The parent's production runtime, databases, credentials, media and character identities are unrelated to this prototype.
 
@@ -11,3 +11,7 @@ Mario is bald with a salt-and-pepper beard. Use only the confirmed sprite in `pu
 Do not turn scenery into fake work evidence. Only backend records indicate real activity. Configured does not mean authenticated or verified. Demo replies must remain explicitly labeled. Never describe scripts or production plans as rendered/published films.
 
 Run `npm test` and syntax checks after code changes. Use temporary data for tests. No real vendor calls in the test suite. Live acceptance is a distinct owner-machine step. Update HANDOFF, PROJECT_STATE and the parent tracking note with actual results, blockers and the next task. Maintain small, reversible commits.
+
+## Owner graphic update, 2026-11-05
+
+The Owner explicitly requested richly colored illustrated RPG village graphics instead of the first flat pastel isometric scene, then asked for drawn characters/city images so Claude can continue. The v2 art is in public/assets with its exact inventory and slicing contract in art/manifest.json. Preserve this delivered map, ten unique animated character sheets and the approved quarter-zip CEO. The display coordinates are authoritative in public/village-layout.js; the old x/y presentation fields in src/agents.mjs are legacy and not used by the new renderer. Do not paint static people into the background or duplicate atlas buildings over the already painted map. No new external integrations were added by the graphic revision.

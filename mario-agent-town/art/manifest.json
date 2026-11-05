@@ -1,0 +1,448 @@
+{
+  "version": 2,
+  "project": "Mario Agent Town",
+  "style": "colorful detailed painted RPG village",
+  "map": {
+    "path": "public/assets/village-map-v2.webp",
+    "width": 1536,
+    "height": 1024,
+    "containsPeople": false,
+    "containsBuildings": true,
+    "containsFountain": true
+  },
+  "coordinateSource": "public/village-layout.js",
+  "runtime": "public/town.js",
+  "characters": {
+    "maria": {
+      "path": "public/assets/characters/maria.webp",
+      "portrait": "public/assets/portraits/maria.webp",
+      "width": 768,
+      "height": 768,
+      "columns": 4,
+      "rows": 4,
+      "cellWidth": 192.0,
+      "cellHeight": 192.0,
+      "directions": {
+        "left": 0,
+        "right": 1,
+        "front": 2,
+        "back": 3
+      },
+      "states": {
+        "walk_a": 0,
+        "idle": 1,
+        "walk_b": 2,
+        "seated": 3
+      },
+      "walkSequenceRows": [
+        0,
+        1,
+        2,
+        1
+      ],
+      "walkFramesPerSecond": 8,
+      "anchorNormalized": [
+        0.5,
+        0.91
+      ],
+      "alpha": true
+    },
+    "ana": {
+      "path": "public/assets/characters/ana.webp",
+      "portrait": "public/assets/portraits/ana.webp",
+      "width": 768,
+      "height": 768,
+      "columns": 4,
+      "rows": 4,
+      "cellWidth": 192.0,
+      "cellHeight": 192.0,
+      "directions": {
+        "left": 0,
+        "right": 1,
+        "front": 2,
+        "back": 3
+      },
+      "states": {
+        "walk_a": 0,
+        "idle": 1,
+        "walk_b": 2,
+        "seated": 3
+      },
+      "walkSequenceRows": [
+        0,
+        1,
+        2,
+        1
+      ],
+      "walkFramesPerSecond": 8,
+      "anchorNormalized": [
+        0.5,
+        0.91
+      ],
+      "alpha": true
+    },
+    "radu": {
+      "path": "public/assets/characters/radu.webp",
+      "portrait": "public/assets/portraits/radu.webp",
+      "width": 768,
+      "height": 768,
+      "columns": 4,
+      "rows": 4,
+      "cellWidth": 192.0,
+      "cellHeight": 192.0,
+      "directions": {
+        "left": 0,
+        "right": 1,
+        "front": 2,
+        "back": 3
+      },
+      "states": {
+        "walk_a": 0,
+        "idle": 1,
+        "walk_b": 2,
+        "seated": 3
+      },
+      "walkSequenceRows": [
+        0,
+        1,
+        2,
+        1
+      ],
+      "walkFramesPerSecond": 8,
+      "anchorNormalized": [
+        0.5,
+        0.91
+      ],
+      "alpha": true
+    },
+    "alex": {
+      "path": "public/assets/characters/alex.webp",
+      "portrait": "public/assets/portraits/alex.webp",
+      "width": 768,
+      "height": 768,
+      "columns": 4,
+      "rows": 4,
+      "cellWidth": 192.0,
+      "cellHeight": 192.0,
+      "directions": {
+        "left": 0,
+        "right": 1,
+        "front": 2,
+        "back": 3
+      },
+      "states": {
+        "walk_a": 0,
+        "idle": 1,
+        "walk_b": 2,
+        "seated": 3
+      },
+      "walkSequenceRows": [
+        0,
+        1,
+        2,
+        1
+      ],
+      "walkFramesPerSecond": 8,
+      "anchorNormalized": [
+        0.5,
+        0.91
+      ],
+      "alpha": true
+    },
+    "elena": {
+      "path": "public/assets/characters/elena.webp",
+      "portrait": "public/assets/portraits/elena.webp",
+      "width": 768,
+      "height": 768,
+      "columns": 4,
+      "rows": 4,
+      "cellWidth": 192.0,
+      "cellHeight": 192.0,
+      "directions": {
+        "left": 0,
+        "right": 1,
+        "front": 2,
+        "back": 3
+      },
+      "states": {
+        "walk_a": 0,
+        "idle": 1,
+        "walk_b": 2,
+        "seated": 3
+      },
+      "walkSequenceRows": [
+        0,
+        1,
+        2,
+        1
+      ],
+      "walkFramesPerSecond": 8,
+      "anchorNormalized": [
+        0.5,
+        0.91
+      ],
+      "alpha": true
+    },
+    "victor": {
+      "path": "public/assets/characters/victor.webp",
+      "portrait": "public/assets/portraits/victor.webp",
+      "width": 768,
+      "height": 768,
+      "columns": 4,
+      "rows": 4,
+      "cellWidth": 192.0,
+      "cellHeight": 192.0,
+      "directions": {
+        "left": 0,
+        "right": 1,
+        "front": 2,
+        "back": 3
+      },
+      "states": {
+        "walk_a": 0,
+        "idle": 1,
+        "walk_b": 2,
+        "seated": 3
+      },
+      "walkSequenceRows": [
+        0,
+        1,
+        2,
+        1
+      ],
+      "walkFramesPerSecond": 8,
+      "anchorNormalized": [
+        0.5,
+        0.91
+      ],
+      "alpha": true
+    },
+    "david": {
+      "path": "public/assets/characters/david.webp",
+      "portrait": "public/assets/portraits/david.webp",
+      "width": 768,
+      "height": 768,
+      "columns": 4,
+      "rows": 4,
+      "cellWidth": 192.0,
+      "cellHeight": 192.0,
+      "directions": {
+        "left": 0,
+        "right": 1,
+        "front": 2,
+        "back": 3
+      },
+      "states": {
+        "walk_a": 0,
+        "idle": 1,
+        "walk_b": 2,
+        "seated": 3
+      },
+      "walkSequenceRows": [
+        0,
+        1,
+        2,
+        1
+      ],
+      "walkFramesPerSecond": 8,
+      "anchorNormalized": [
+        0.5,
+        0.91
+      ],
+      "alpha": true
+    },
+    "irina": {
+      "path": "public/assets/characters/irina.webp",
+      "portrait": "public/assets/portraits/irina.webp",
+      "width": 768,
+      "height": 768,
+      "columns": 4,
+      "rows": 4,
+      "cellWidth": 192.0,
+      "cellHeight": 192.0,
+      "directions": {
+        "left": 0,
+        "right": 1,
+        "front": 2,
+        "back": 3
+      },
+      "states": {
+        "walk_a": 0,
+        "idle": 1,
+        "walk_b": 2,
+        "seated": 3
+      },
+      "walkSequenceRows": [
+        0,
+        1,
+        2,
+        1
+      ],
+      "walkFramesPerSecond": 8,
+      "anchorNormalized": [
+        0.5,
+        0.91
+      ],
+      "alpha": true
+    },
+    "sofia": {
+      "path": "public/assets/characters/sofia.webp",
+      "portrait": "public/assets/portraits/sofia.webp",
+      "width": 768,
+      "height": 768,
+      "columns": 4,
+      "rows": 4,
+      "cellWidth": 192.0,
+      "cellHeight": 192.0,
+      "directions": {
+        "left": 0,
+        "right": 1,
+        "front": 2,
+        "back": 3
+      },
+      "states": {
+        "walk_a": 0,
+        "idle": 1,
+        "walk_b": 2,
+        "seated": 3
+      },
+      "walkSequenceRows": [
+        0,
+        1,
+        2,
+        1
+      ],
+      "walkFramesPerSecond": 8,
+      "anchorNormalized": [
+        0.5,
+        0.91
+      ],
+      "alpha": true
+    },
+    "tudor": {
+      "path": "public/assets/characters/tudor.webp",
+      "portrait": "public/assets/portraits/tudor.webp",
+      "width": 768,
+      "height": 768,
+      "columns": 4,
+      "rows": 4,
+      "cellWidth": 192.0,
+      "cellHeight": 192.0,
+      "directions": {
+        "left": 0,
+        "right": 1,
+        "front": 2,
+        "back": 3
+      },
+      "states": {
+        "walk_a": 0,
+        "idle": 1,
+        "walk_b": 2,
+        "seated": 3
+      },
+      "walkSequenceRows": [
+        0,
+        1,
+        2,
+        1
+      ],
+      "walkFramesPerSecond": 8,
+      "anchorNormalized": [
+        0.5,
+        0.91
+      ],
+      "alpha": true
+    },
+    "mario": {
+      "path": "public/assets/mario-sprites.webp",
+      "columns": 4,
+      "rows": 3,
+      "directions": {
+        "left": 0,
+        "right": 1,
+        "front": 2,
+        "back": 3
+      },
+      "states": {
+        "walk_a": 0,
+        "idle": 1,
+        "walk_b": 2
+      },
+      "walkSequenceRows": [
+        0,
+        1,
+        2,
+        1
+      ],
+      "anchorNormalized": [
+        0.5,
+        0.91
+      ],
+      "alpha": true,
+      "identity": "Bald, salt-and-pepper beard, dark quarter-zip sweater; no seated row."
+    }
+  },
+  "buildingAtlas": {
+    "path": "public/assets/atlases/buildings-v2.webp",
+    "columns": 4,
+    "rows": 3,
+    "order": [
+      "tudor",
+      "ana",
+      "mario",
+      "radu",
+      "alex",
+      "maria",
+      "townhall",
+      "david",
+      "irina",
+      "sofia",
+      "elena",
+      "victor"
+    ],
+    "usedInCurrentScene": false,
+    "width": 1536,
+    "height": 1024,
+    "cellWidth": 384.0,
+    "cellHeight": 341.3333333333333,
+    "alpha": true,
+    "note": "Soft semitransparent light/shadow may extend into cell margins. Use actual dimensions and normalized slices."
+  },
+  "propAtlas": {
+    "path": "public/assets/atlases/props-v2.webp",
+    "columns": 4,
+    "rows": 3,
+    "order": [
+      "fountain_a",
+      "fountain_b",
+      "fountain_c",
+      "bench",
+      "streetlamp",
+      "pine",
+      "broadleaf_tree",
+      "flowerbed",
+      "bridge",
+      "roofed_well",
+      "noticeboard",
+      "planter"
+    ],
+    "usedInCurrentScene": false,
+    "width": 1448,
+    "height": 1086,
+    "cellWidth": 362.0,
+    "cellHeight": 362.0,
+    "alpha": true,
+    "note": "Soft semitransparent light/shadow may extend into cell margins. Use actual dimensions and normalized slices."
+  },
+  "palette": [
+    "#172e29",
+    "#214c3b",
+    "#e6bd65",
+    "#faf4e4",
+    "#fff1cb",
+    "#35bbd5",
+    "#ee6267",
+    "#dc5a97"
+  ],
+  "sourceOriginals": "Delivered separately in the art pack; original user photos are excluded."
+}
