@@ -1,0 +1,116 @@
+{
+  "project": "Mario Agent Town",
+  "repository": "Mario-creator-86/Ai_Agency",
+  "branch": "mario-agent-town",
+  "directory": "mario-agent-town",
+  "updated": "2026-11-05",
+  "phase": "local_prototype",
+  "tests": {
+    "command": "npm test",
+    "passed": 35,
+    "failed": 0,
+    "runtime": "Node 22.23.4 Linux",
+    "real_provider_acceptance": false,
+    "browser": "tests/browser/movement_rules.py PASS"
+  },
+  "browser_qa": "v3 village day/night, meeting gathering, Town Hall table seating and candidate flow inspected in Chrome desktop 1600x1000 and phone 412x900; live providers not verified; automated 250 ms rule simulation: 0 off-path, 0 teleports, 0 lasting overlaps",
+  "providers_implemented_not_live_verified": [
+    "codex-cli-subscription",
+    "claude-code-cli-subscription",
+    "ollama-local",
+    "ollama-cloud"
+  ],
+  "features": {
+    "ten_agents": true,
+    "isometric_town": false,
+    "ceo_quarter_zip_sprite": true,
+    "chat": true,
+    "persistent_tasks": true,
+    "internal_tools": true,
+    "autonomy_default": false,
+    "youtube": false,
+    "gmail": false,
+    "calendar": false,
+    "video_rendering": false,
+    "painted_rpg_village_v2": true,
+    "ten_character_sheets_16_frames": true,
+    "building_and_prop_atlases": true,
+    "living_town_effects": true,
+    "town_hall_table_12_seats": true,
+    "meeting_room_chat": true,
+    "agent_encounter_notes": true,
+    "recruiting_with_ceo_approval": true,
+    "shared_projects": true,
+    "daily_standup": true,
+    "higgsfield_assets": false,
+    "house_interiors": false,
+    "team_versions": [
+      "v1",
+      "v2",
+      "v3"
+    ],
+    "real_data_tools": true
+  },
+  "next_task": "On Owner PC: assign Claude Code/Codex/Ollama to two agents, call a meeting, run a discussion and verify the saved strategy; then one live hire",
+  "blockers": [
+    "No authenticated local Codex, Claude or Ollama runtime in development environment",
+    "External accounts and video tools not connected"
+  ],
+  "known_limits": [
+    "Direct chat jobs are not durable",
+    "Restart can replay task actions without idempotency",
+    "No multi-process lease",
+    "No house interiors",
+    "Daily limit counts workflows, each at most 3 model requests",
+    "Hires reuse an existing sheet with a code-painted yellow vest (Higgsfield not used: no credits)",
+    "Mario has no seated sprite row; at the table he is clipped at the waist",
+    "Houses were not repainted for the new jobs",
+    "Queued chat messages are not replayed after a restart (tasks are)",
+    "Hired staff stand at meetings: 12 chairs"
+  ],
+  "entry_document": "HANDOFF.md",
+  "art_handoff": "art/README_CLAUDE.md",
+  "art_manifest": "art/manifest.json",
+  "roles": {
+    "maria": "YouTube",
+    "ana": "Inbox & email",
+    "irina": "Money",
+    "radu": "Research",
+    "david": "Products",
+    "tudor": "Family",
+    "victor": "Trading",
+    "sofia": "AI News",
+    "elena": "Outreach",
+    "alex": "Chief of Staff (Town Hall)"
+  },
+  "team_data": {
+    "v1": "data/",
+    "v2": "data/v2/",
+    "v3": "data/v3/"
+  },
+  "production_audit": {
+    "date": "2026-11-05",
+    "crash_on_close_fixed": true,
+    "api_fuzz_5xx": 0,
+    "heap_growth_6min_mb": 0.3,
+    "median_frame_ms": 16.7,
+    "real_claude_code_cli": "responded",
+    "real_codex_cli": "network unavailable in cloud",
+    "windows_verified": false
+  },
+  "data_sources": [
+    "Yahoo Finance",
+    "SEC EDGAR",
+    "Google News RSS",
+    "FRED (+market fallback)",
+    "BNR/ECB",
+    "Wikipedia",
+    "YouTube public",
+    "public web pages"
+  ],
+  "live_runs": [
+    "claude-code v2 david risk",
+    "claude-code v3 radu topics",
+    "claude-code v3 tudor titles"
+  ]
+}
