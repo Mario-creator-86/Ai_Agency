@@ -27,7 +27,7 @@ HIS_EDITOR = lg.Proc(
     501,
     "UnrealEditor.exe",
     r'"E:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" '
-    r'"C:\Users\mario\OneDrive\Documents\Unreal Projects\AMN_AI\AMN_AI.uproject"',
+    r'"C:\Users\owner\Documents\Unreal Projects\AMN_AI\AMN_AI.uproject"',
 )
 #: A shell whose command line names everything the stream's do (it once matched a bare
 #: command-line filter and was killed): never the stream's, whatever its text says.
