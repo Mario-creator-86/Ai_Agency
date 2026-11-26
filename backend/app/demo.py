@@ -602,6 +602,12 @@ def demo_settings(settings: Settings) -> Settings:
     guard_demo_database(settings)
     return settings.model_copy(
         update={
+            # The deterministic DemoModel has a fixed short script. Do not use
+            # production's 160-second target or montage-on defaults, which
+            # cause Sarah to reject every DEMO draft. Apply to the CLI *and*
+            # scripts/start.py --demo (the web app enters via create_app).
+            "target_video_seconds": 30,
+            "montage_enabled": False,
             "trends_enabled": False,
             "provider_catalog_refresh_enabled": False,
             "office_weather_host": None,
