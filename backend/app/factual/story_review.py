@@ -197,7 +197,10 @@ _INSTRUCTIONS = (
     "You are the Director, and this script has not been produced yet — changing it now costs "
     "nothing, while re-filming a shot costs real money. Below is the whole script as data: "
     "the topic, the story it means to tell, and every scene with its narration, its purpose "
-    "and the verified claims behind it. Read it as a viewer on a phone will.\n\n"
+    "and the verified claims behind it. The topic's target_audience is the actual viewer "
+    "segment Marcus was given, not a licence to invent demographics; judge whether that "
+    "audience can understand the stakes and benefit, without assuming specialist knowledge. "
+    "Read it as a viewer on a phone will.\n\n"
     "Answer, in order: do the first three seconds open a gap worth staying for; is there one "
     "clear idea; does every sentence move the story rather than restate it; is there a real "
     "payoff that answers the hook; does the ending close the film; is the closing question "
@@ -358,6 +361,7 @@ def _script_facts(session: Session, script: ScriptDraft) -> dict[str, Any]:
     return {
         "title": script.title,
         "topic": topic.title if topic else "",
+        "target_audience": str(topic.target_audience or "") if topic else "",
         "thesis": (topic.thesis_json if topic and topic.thesis_json else {}),
         "story": dict(script.story_json or {}),
         "target_seconds": script.target_duration_seconds,

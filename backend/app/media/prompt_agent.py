@@ -52,7 +52,7 @@ from sqlalchemy.orm import Session
 from app.agents.memory import LESSON_MARKER, agent_for_role, remember
 from app.db import lock_for_write
 from app.factual.editorial import SCENE_PURPOSES
-from app.factual.models import FactualClaim, ScriptDraft
+from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media import prompt_lint as lint
 from app.media.markings import markings_kept, planned_markings, still_exclusions
@@ -362,6 +362,11 @@ class ShotPrompt(BaseModel):
     # (assembler.plan_second_framings): {"subject", "centre_x", "centre_y"}. Any shape is
     # accepted here and read by _second_framing, so a rough answer never costs the shot.
     second_framing: Any = None
+    # New architecture: Kael writes the EXACT vendor payload, not component
+    # phrases for a Python composer to rearrange. No legacy field is removed.
+    still_prompt: str = Field(default="", max_length=1700)
+    motion_prompt: str = Field(default="", max_length=1700)
+    negative_prompt: str = Field(default="", max_length=400)
 
 
 class ShotPack(BaseModel):
@@ -381,6 +386,10 @@ _BIBLE_INSTRUCTIONS = (
     "must never appear. Respect the physical setting: for an airless scene describe vacuum "
     "and direct sunlight, not terrestrial weather, haze or wind. Vertical 9:16, watched on "
     "a phone: the subject has to stay readable. "
+    "AI-generated adult faces are allowed. Do not add a blanket no-faces or faceless "
+    "rule to the visual bible. Describe people's appearance, expression and consistency "
+    "when the story calls for people; only hide a face when a particular scene's story "
+    "or rights requirements explicitly need it. "
     "Be specific and brief — a rule that could describe any film is not a rule. Write every "
     "value in plain English words, the way a photographer would say it: the place by its "
     "name and what it looks like, the season, the weather, the light, and colours named in "
@@ -414,6 +423,11 @@ _SHOTS_INSTRUCTIONS = (
     "what is seen then — a pose, a state, a place — never a camera move, a speed or a span of "
     "the clip's seconds: those belong only in the camera's move, in motion and in "
     "ending_frame.\n\n"
+    "The film's target_audience, core_message and takeaway (in the film's data) are Marcus's "
+    "mission, already approved by Sarah. For each scene preserve its story_purpose and "
+    "writer_visual: make the exact causal beat readable in the first still and its motion. "
+    "Do not change the promised payoff, imply facts Marcus never said, or fill a missing "
+    "audience detail with your own demographic assumptions.\n\n"
     "Show the information rather than narrating it twice: if the narration says a storm grew "
     "stronger, the picture shows cloud, wind, water and a reaction, not a caption. Never ask "
     "for writing in the picture — no text overlay, title, label, caption or written number: a "
@@ -423,7 +437,7 @@ _SHOTS_INSTRUCTIONS = (
     "unless the scene says so. Detailed does not mean long — every phrase must earn its "
     "place.\n\n"
     "The camera: name the shot size (a wide establishing shot, a medium shot, or a detail "
-    "of hands, objects or texture; never a close-up of a face) and the lens (24mm wide, "
+    "of hands, objects, texture or a face when the story needs it) and the lens (24mm wide, "
     "50mm, 85mm compression), and choose exactly one camera_move from this list: dolly in, "
     "dolly out, tracking left, tracking right, crane up, crane down, slow orbit, handheld "
     "drift, aerial drift forward, pedestal up, tilt up, tilt down, slow pan left, slow pan "
@@ -524,6 +538,28 @@ _SERIAL_SHOTS_INSTRUCTIONS = (
     '"audio_intent": "...", "transition": "..."}]}.\n'
 )
 
+_EDITOR_FINAL_INSTRUCTIONS = (
+    "\nNEW REQUIRED VENDOR-PROMPT CONTRACT: For every LIVE shot, return in its JSON "
+    "object still_prompt, motion_prompt and negative_prompt in addition to scene_index, "
+    "camera_move and the concise planning fields. YOU (Kael), not Python, own every word "
+    "of still_prompt and motion_prompt. Still is ONE camera photograph at the FIRST moment: "
+    "subject, exact staging, light source, framing, film look, physical geometry, consistent "
+    "faces when applicable, and one continuous 9:16 picture. Motion describes only how that "
+    "approved photograph moves over time: ONE camera move and the actors/world with a "
+    "coherent ending; no unrelated terrestrial motion in space. Don't paste generic people "
+    "sentences into scenes with no humans. Keep the exact selected film/series look, and "
+    "follow the bible's real face policy. Every word matters. Each still_prompt and "
+    "motion_prompt must be at most 1000 UTF-16 units, including spaces. Use short complete "
+    "sentences; if too long, YOU shorten without losing the subject, setting or light. "
+    "Don't embed a 9:16 ratio after a camera colon where it could become a broken fragment. "
+    "The model adapter will not edit, shorten, inject, recompose, or translate these prompts. "
+    "Sarah checks this exact text before any purchase. If she refuses it, revise ONLY "
+    "the identified scene or layer and return a new exact final text. "
+    "For negative_prompt, use a brief comma-separated optional list only where the "
+    "selected vendor supports a negative channel; do not rely on it for the visible facts.\n"
+)
+
+
 _GENERATION_QC_INSTRUCTIONS = (
     "Before writing, check each shot against the same requirements used to judge its output: "
     "it must illustrate the scene's narration and verified claims, not merely match your own "
@@ -534,14 +570,24 @@ _GENERATION_QC_INSTRUCTIONS = (
     "concise so these details fit the series' prompt budget. Describe the final visible state "
     "in ending_frame, with no camera instructions there. Camera movement belongs in camera_move; "
     "a static shot keeps its framing throughout. Respect the bible's face rule throughout "
-    "the video, including its last frame; the camera must not swing into a forbidden face. "
+    "the video, including its last frame, only if the policy explicitly hides faces. "
+    "With face_policy ALLOW, people may face the camera, make eye contact or appear in "
+    "close-up. Never silently revive an old back-only restriction. "
     "Show only the actors/objects already present in the approved first frame, with stable "
     "identity, clothing, anatomy and object geometry. Do not solve a faulty first frame with "
     "a motion instruction. Pages/screens stay blank; an instrument's deliberately required "
     "scale is distinct from added captions. Avoid lists are metadata, not positive drawing "
     "instructions: state the desired visible result in subject/action/motion/ending_frame. "
     "A video model without a negative channel will not receive avoid as a separate instruction. "
-    "Do not invent a weather effect to create motion in a vacuum or in a fixed indoor scene.\n"
+    "Do not invent a weather effect to create motion in a vacuum or in a fixed indoor scene. "
+    "Check physical visibility before sending a paid prompt: a medal at the chest cannot "
+    "be visible to a camera behind its wearer. For a medal presentation either frame the "
+    "recipient from the front or three-quarter angle, or show a coherent rear view "
+    "without front-of-body medals. Do not place chest medals on backs. In deep-space "
+    "vacuum never describe terrestrial ground sliding beneath the camera or a land "
+    "horizon opening ahead. Camera drift is relative to stars and galaxy filaments. "
+    "In a still prompt describe one frozen illumination state; time-varying ripples, "
+    "pulses and camera movement belong only in the motion prompt.\n"
     "When canonical character identities are supplied, the still composer inserts their hair "
     "and wardrobe. Do not repeat that description in action: use concise named clauses for "
     "each person's visible pose and movement instead. For example: Nadia taps the pen on the "
@@ -600,6 +646,10 @@ def _serial_scene_facts(session: Session, entry: dict[str, Any]) -> dict[str, An
 def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
     """The story, its scenes and its characters, as the prompt agent reads them."""
     script = session.get(ScriptDraft, board.script_draft_id)
+    topic = (
+        session.get(TopicIdea, script.topic_id)
+        if script is not None and script.topic_id else None
+    )
     scenes = list(
         session.scalars(
             select(StoryboardScene)
@@ -641,6 +691,9 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
         "title": board.title,
         "aspect_ratio": board.aspect_ratio,
         "visual_style": board.visual_style,
+        # The same selected audience Marcus wrote for and Sarah evaluated.
+        # No new inference about this audience is delegated to the video model.
+        "target_audience": str(topic.target_audience or "") if topic else "",
         "story": dict(script.story_json or {}) if script else {},
         "target_seconds": board.target_duration_seconds,
         "scenes": [
@@ -1281,6 +1334,19 @@ def build_visual_bible(
             bible = _parse_bible(result.get("output_text") or "")
 
     record = (bible or VisualBible()).model_dump()
+    # A model-generated visual bible must not turn the mere presence of an AI
+    # person's face into a paid-media failure. Keep deliberate HIDE policies from
+    # existing films intact; this default applies only when building a NEW bible.
+    # Clean the contradictory prose as well: the vision reviewer also reads it.
+    record["face_policy"] = "ALLOW"
+    record["continuity_rules"] = [
+        rule for rule in record.get("continuity_rules", [])
+        if not lint.BIBLE_NO_FACES.search(str(rule))
+    ]
+    record["avoid"] = [
+        rule for rule in record.get("avoid", [])
+        if not (lint.BIBLE_AVOID_FACES.match(str(rule)) or lint.BIBLE_NO_FACES.search(str(rule)))
+    ]
     record["avoid"] = _avoid_list(record.get("avoid"))
     record.setdefault("aspect_ratio", facts["aspect_ratio"])
     record["aspect_ratio"] = facts["aspect_ratio"]
@@ -1325,6 +1391,211 @@ def _avoid_list(raw: Any) -> list[str]:
 
 
 # ------------------------------------------------------------------ the shots
+
+
+# The Editor gets two scoped chances to repair a scene's blocking prompt before
+# ANY picture/video is purchased. The film also has a global budget: a bad
+# provider answer cannot fan out into unbounded token spending.
+PREFLIGHT_REWRITES_PER_SCENE = 2
+PREFLIGHT_REWRITES_PER_FILM = 8
+
+
+def _complete_editor_shot(shot: ShotPrompt) -> bool:
+    """A usable new model response has both final vendor texts and one valid move."""
+    from app.media.final_prompts import FinalPromptError, validate_final  # noqa: PLC0415
+
+    try:
+        validate_final({
+            "still_prompt": shot.still_prompt,
+            "motion_prompt": shot.motion_prompt,
+            "camera_move": shot.camera_move,
+            "negative_prompt": shot.negative_prompt,
+        })
+        return True
+    except FinalPromptError:
+        return False
+
+
+def _preflight_findings(
+    shot: ShotPrompt,
+    facts: dict[str, Any],
+    bible: dict[str, Any],
+    allowed: str,
+    previous_ending: str,
+    previous_moves: list[str],
+    shot_type: str,
+) -> tuple[list[lint.Finding], dict[str, Any]]:
+    """Check the exact compiled still/motion before ever handing them to a vendor."""
+    package, _notes = _validated_package(
+        shot, facts, bible, allowed, previous_ending
+    )
+    package.update(scene_kind=LIVE_KIND, shot_type=shot_type)
+    compiled = compile_prompts(package, bible, previous_moves=previous_moves)
+    issues = lint.lint_scene(
+        lint.LintScene(
+            scene=int(facts["scene_index"]),
+            still_prompt=str(compiled.get("still_prompt") or ""),
+            motion_prompt=str(compiled.get("motion_prompt") or ""),
+            composition_issues=tuple(compiled.get("composition_issues") or []),
+        ),
+        bible=bible,
+    )
+    return [item for item in issues if item.severity == lint.BLOCK], compiled
+
+
+def _preflight_repair_factual_shots(
+    engine: Engine,
+    registry: Any,
+    editor_id: str,
+    storyboard_id: str,
+    correlation: str,
+    bible: dict[str, Any],
+    facts: dict[str, Any],
+    packs: dict[int, ShotPrompt],
+    targets: set[int] | None,
+    profile: ShotGenerationProfile,
+) -> tuple[dict[int, list[str]], list[dict[str, Any]], list[str], set[int]]:
+    """Bounded AI fix-review loop for new factual shots, outside any DB write lock.
+
+    Already bought scene numbers are protected even if called on the full film.
+    A failed repair is NOT saved and later cannot be purchased. The daily ladder
+    can try again on another day, but no step here auto-buys images or clips.
+    """
+    from app.media.models import SceneTake  # noqa: PLC0415 - no media purchases
+
+    with Session(engine) as session:
+        rows = list(
+            session.scalars(
+                select(StoryboardScene)
+                .where(StoryboardScene.storyboard_id == storyboard_id)
+                .order_by(StoryboardScene.scene_index)
+            )
+        )
+        protected = set(
+            session.scalars(
+                select(SceneTake.scene_number).where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.status.in_(("SUBMITTED", "PAID", "APPROVED", "REJECTED", "LOST")),
+                )
+            )
+        )
+        snapshot = [
+            (
+                int(row.scene_index),
+                str(row.shot_type),
+                str((row.prompt_json or {}).get("ending_frame") or ""),
+                str((row.prompt_json or {}).get("camera_move") or ""),
+                str(row.scene_kind or LIVE_KIND),
+            )
+            for row in rows
+        ]
+    allowed = _allowed_text(facts)
+    by_index = {int(item["scene_index"]): item for item in facts["scenes"]}
+    previous_ending = ""
+    previous_moves: list[str] = []
+    failed: dict[int, list[str]] = {}
+    repaired: list[dict[str, Any]] = []
+    run_ids: list[str] = []
+    remaining = PREFLIGHT_REWRITES_PER_FILM
+    for index, shot_type, old_ending, old_move, kind in snapshot:
+        if (targets is not None and index not in targets) or index not in packs or kind != LIVE_KIND:
+            previous_ending = old_ending
+            if old_move:
+                previous_moves.append(old_move)
+            continue
+        # The existing shot belongs to its paid media; never silently invalidate it.
+        if index in protected:
+            previous_ending = old_ending
+            if old_move:
+                previous_moves.append(old_move)
+            continue
+        scene_facts = by_index.get(index)
+        if scene_facts is None:
+            previous_ending = old_ending
+            if old_move:
+                previous_moves.append(old_move)
+            continue
+        candidate = packs[index]
+        blockers: list[lint.Finding] = []
+        compiled: dict[str, Any] = {}
+        seen: set[str] = set()
+        for turn in range(PREFLIGHT_REWRITES_PER_SCENE + 1):
+            blockers, compiled = _preflight_findings(
+                candidate, scene_facts, bible, allowed, previous_ending, previous_moves,
+                shot_type,
+            )
+            if not blockers:
+                packs[index] = candidate
+                if turn:
+                    repaired.append({"scene_index": index, "rounds": turn})
+                break
+            if turn >= PREFLIGHT_REWRITES_PER_SCENE or remaining <= 0 or registry is None:
+                failed[index] = [item.message_ro for item in blockers]
+                break
+            # Reusing an earlier candidate/review is not progress.
+            signature = json.dumps(candidate.model_dump(), sort_keys=True, ensure_ascii=False)
+            if signature in seen:
+                failed[index] = [item.message_ro for item in blockers]
+                break
+            seen.add(signature)
+            remaining -= 1
+            payload = {
+                "scene_index": index,
+                "scene_narration_and_facts": scene_facts,
+                "bible": bible,
+                "current_shot": candidate.model_dump(),
+                "vendor_still": compiled.get("still_prompt"),
+                "vendor_motion": compiled.get("motion_prompt"),
+                "blocking_findings": [
+                    {"code": item.code, "evidence": item.evidence, "reason": item.message_ro}
+                    for item in blockers
+                ],
+            }
+            prompt = (
+                _SHOTS_INSTRUCTIONS
+                + _EDITOR_FINAL_INSTRUCTIONS
+                + _GENERATION_QC_INSTRUCTIONS
+                + "\nRepair ONLY this shot's fields that caused the BLOCK findings. "
+                "Keep the story, approved narration, characters and location. "
+                "Medals on a person's chest require a frontal or three-quarter shot; "
+                "a vacuum cosmic web cannot have terrestrial ground or horizon camera moves. "
+                "Write the first frame as a STATIC moment. Camera travel is only video. "
+                "Return one shot in JSON: {\"shots\":[{\"scene_index\": ..., ...}]}. "
+                "Do not propose a new scene or new narration.\n"
+                + wrap_in_inert_boundary(_dumps(payload), "prompt-preflight")
+            )
+            reply = _run(
+                engine, registry, editor_id, "shot_prompts", prompt,
+                SHOTS_TEMPLATE, correlation,
+                f"Corectez numai promptul cadrului {index} înainte de cumpărare.",
+                profile.max_tokens,
+                native_thinking=profile.native_thinking,
+                subject={"storyboard_id": storyboard_id, "scene_indexes": [index],
+                         "preflight_repair": True},
+            )
+            if reply is None:
+                failed[index] = [item.message_ro for item in blockers]
+                break
+            run_ids.append(str(reply["id"]))
+            next_shot = parse_shot_plan(reply.get("output_text") or "").shots.get(index)
+            if (
+                next_shot is None
+                or not _complete_editor_shot(next_shot)
+                or next_shot.model_dump() == candidate.model_dump()
+            ):
+                failed[index] = [item.message_ro for item in blockers]
+                break
+            candidate = next_shot
+        # Subsequent shots take their continuity from the candidate that actually passed.
+        if index not in failed and compiled:
+            previous_ending = str(candidate.ending_frame or "")
+            if compiled.get("camera_move"):
+                previous_moves.append(str(compiled["camera_move"]))
+        else:
+            previous_ending = old_ending
+            if old_move:
+                previous_moves.append(old_move)
+    return failed, repaired, run_ids, protected
 
 
 def write_shot_prompts(
@@ -1450,12 +1721,16 @@ def write_shot_prompts(
                 "negative_channel": "depends on selected video model; do not rely on avoid alone",
             }
         for fitted in shot_payload_batches(
-            data, lessons, MAX_SHOTS_PAYLOAD_CHARS, max_scenes=profile.max_scenes
+            data, lessons, MAX_SHOTS_PAYLOAD_CHARS,
+            # Final still+motion text is larger than the old field-only plan;
+            # request a few fully finished shots rather than losing half a batch.
+            max_scenes=min(profile.max_scenes or 2, 2),
         ):
             batch_facts = fitted["episode" if serial else "film"]
             indices = [int(s["scene_index"]) for s in batch_facts["scenes"]]
             prompt = (
                 instructions
+                + _EDITOR_FINAL_INSTRUCTIONS
                 + _GENERATION_QC_INSTRUCTIONS
                 + lessons_rule(lessons)
                 + wrap_in_inert_boundary(_dumps(fitted), "approved-film")
@@ -1482,7 +1757,10 @@ def write_shot_prompts(
             run_id = result["id"]
             run_ids.append(str(run_id))
             parsed = parse_shot_plan(result.get("output_text") or "")
-            packs.update({index: shot for index, shot in parsed.shots.items() if index in indices})
+            packs.update({
+                index: shot for index, shot in parsed.shots.items()
+                if index in indices and _complete_editor_shot(shot)
+            })
             missing = [index for index in indices if index not in packs]
             # ONE re-ask, carrying the decoder's own words, for a factual film. The serial's
             # shots are composed from its fixed look when the model's are missing (S8).
@@ -1509,10 +1787,22 @@ def write_shot_prompts(
                     run_ids.append(str(run_id))
                     second = parse_shot_plan(again.get("output_text") or "")
                     for index, answer in second.shots.items():
-                        if index in indices:
+                        if index in indices and _complete_editor_shot(answer):
                             packs.setdefault(index, answer)
                     parsed = ShotPlanParse(packs, second.method, second.error)
 
+    preflight_failed: dict[int, list[str]] = {}
+    preflight_repaired: list[dict[str, Any]] = []
+    preflight_protected: set[int] = set()
+    if editor_id is not None and registry is not None and packs:
+        profile = shot_generation_profile(engine, editor_id)
+        preflight_failed, preflight_repaired, preflight_run_ids, preflight_protected = (
+            _preflight_repair_factual_shots(
+                engine, registry, editor_id, storyboard_id, correlation, bible,
+                facts, packs, targets, profile,
+            )
+        )
+        run_ids.extend(preflight_run_ids)
     allowed = _allowed_text(facts)
     written: list[dict[str, Any]] = []
     refused: list[str] = []
@@ -1534,10 +1824,34 @@ def write_shot_prompts(
                 .order_by(StoryboardScene.scene_index)
             )
         )
+        # Takes may have arrived while Kael was answering a preflight question.
+        # Recheck under the write lock: never replace the words of paid media.
+        from app.media.models import SceneTake  # noqa: PLC0415
+
+        protected_now = set(
+            session.scalars(
+                select(SceneTake.scene_number).where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.status.in_(
+                        ("SUBMITTED", "PAID", "APPROVED", "REJECTED", "LOST")
+                    ),
+                )
+            )
+        )
+        preflight_protected.update(protected_now)
         facts_by_index = {int(s["scene_index"]): s for s in facts["scenes"]}
         selected = [s for s in scenes if targets is None or s.scene_index in targets]
-        lost = answered and not serial and any(s.scene_index not in packs for s in selected)
+        lost = bool(preflight_failed) or (
+            registry is not None and any(s.scene_index not in packs for s in selected)
+        )
         for scene in scenes:
+            if scene.scene_index in preflight_protected or scene.scene_index in preflight_failed:
+                # Never overwrite a paid identity or save a scene whose review still BLOCKS.
+                previous = dict(scene.prompt_json or {})
+                previous_ending = str(previous.get("ending_frame") or "")
+                if previous.get("camera_move"):
+                    moves.append(str(previous["camera_move"]))
+                continue
             if targets is not None and scene.scene_index not in targets:
                 previous = dict(scene.prompt_json or {})
                 previous_ending = str(previous.get("ending_frame") or "")
@@ -1547,6 +1861,13 @@ def write_shot_prompts(
             scene_facts = facts_by_index.get(scene.scene_index, {})
             shot = packs.get(scene.scene_index)
             earlier = dict(scene.prompt_json or {})
+            if shot is None and registry is not None:
+                # New shots never fall back to Python-composed prompts on a
+                # malformed or missing model answer. Leave this scene untouched.
+                previous_ending = str(earlier.get("ending_frame") or "")
+                if earlier.get("camera_move"):
+                    moves.append(str(earlier["camera_move"]))
+                continue
             if (lost or not answered) and shot is None and earlier.get("source") == SOURCE_MODEL:
                 # A plan a model wrote before is never overwritten by a template because
                 # this answer could not be read, nor because no model answered at all this
@@ -1560,7 +1881,11 @@ def write_shot_prompts(
                 package = _serial_package(package, shot, scene_facts, look)
                 scene.shot_type = SHOT_TYPES[package["shot_size"]]
                 package["source"] = SOURCE_MODEL if shot is not None else SOURCE_SERIES_LOOK
-                composed = compose_serial_prompt(package, look)
+                composed = (
+                    package["still_prompt"]
+                    if package.get("prompt_format") == "editor_final_v1"
+                    else compose_serial_prompt(package, look)
+                )
                 # The shot's own movement, so the motion step has words of its own and the
                 # film's camera varies: the plan's move, else one that suits the shot's size
                 # and is not the scene before's, as the factual compile chooses. A serial
@@ -1569,16 +1894,25 @@ def write_shot_prompts(
                 move = _serial_camera_move(package, moves)
                 moves.append(move)
                 package["camera_move"] = move
-                package["motion_prompt"], dropped = serial_motion(package, look)
+                if package.get("prompt_format") == "editor_final_v1":
+                    # Preserve Kael's exact final words, including scene style;
+                    # don't reconstruct a clip sentence from the action or look.
+                    package["motion_intent"] = None
+                    package["motion_family"] = "editor_final"
+                    package["composition_issues"] = []
+                    dropped = False
+                else:
+                    package["motion_prompt"], dropped = serial_motion(package, look)
                 if dropped:
                     # Where the clip must arrive could not be said beside the action, even
                     # cut to its first moment (review of 68fa0b4): recorded, so the scene's
                     # rewrite asks the editor to shorten the action before a clip is bought.
                     ending_dropped.append(scene.scene_index)
                 package["still_prompt"] = composed
-                package["composition_issues"] = composition_issues(
-                    package, composed, package["motion_prompt"]
-                )
+                if package.get("prompt_format") != "editor_final_v1":
+                    package["composition_issues"] = composition_issues(
+                        package, composed, package["motion_prompt"]
+                    )
             else:
                 # Two prompts per filmed scene (compile_prompts); a scene composed locally
                 # carries none, and its visual_prompt stays the writer's line.
@@ -1608,7 +1942,8 @@ def write_shot_prompts(
         missing = [
             s.scene_index
             for s in selected
-            if s.scene_index not in packs and s.scene_index not in kept_from_before
+            if (s.scene_index not in packs or s.scene_index in preflight_failed)
+            and s.scene_index not in kept_from_before
         ]
         board = session.get(Storyboard, storyboard_id)
         if lost and missing:
@@ -1627,6 +1962,8 @@ def write_shot_prompts(
                     "kept_from_before": kept_from_before,
                     "decoder_error": parsed.error,
                     "parse_method": parsed.method,
+                    "preflight_failed": preflight_failed,
+                    "preflight_repaired": preflight_repaired,
                     "reasked": reasked,
                     "run_ids": run_ids,
                 },
@@ -1656,6 +1993,7 @@ def write_shot_prompts(
                     "parse_method": parsed.method,
                     "reasked": reasked,
                     "ending_dropped": ending_dropped,
+                    "preflight_repaired": preflight_repaired,
                 },
                 correlation,
             )
@@ -1668,8 +2006,9 @@ def write_shot_prompts(
             storyboard_id,
             missing,
             f"Planul de cadre al editorului nu a putut fi citit pentru cadrele "
-            f"{_listed(missing)}, nici după a doua cerere; filmul așteaptă un plan "
-            f"({NEEDS_SHOT_PLAN}).",
+            f"{_listed(missing)}, după verificarea și corecția automată limitată; "
+            f"filmul așteaptă un plan valid ({NEEDS_SHOT_PLAN}). "
+            f"Blocaje: {str(preflight_failed)[:600]}",
         )
     logger.info(
         "shot_prompts_written",
@@ -1823,6 +2162,14 @@ def _validated_package(
         # The montage's tag, kept on every package written for the scene (`montage.beat_tag`).
         "beat": dict(scene["beat"]) if isinstance(scene.get("beat"), dict) else None,
     }
+    if shot is not None and _complete_editor_shot(shot):
+        package.update({
+            "prompt_format": "editor_final_v1",
+            "still_prompt": shot.still_prompt,
+            "motion_prompt": shot.motion_prompt,
+            "negative_prompt": shot.negative_prompt or None,
+            "motion_intent": None,
+        })
     # Only when the editor gave a usable one: a package without it is the package it was,
     # and the sheet's hashes of every film planned before stay what they were.
     framing = _second_framing(shot.second_framing if shot else None)
@@ -3763,6 +4110,18 @@ def shot_frame(camera: Any, shot_type: Any = "") -> tuple[str, str]:
     return size, _sentence(", ".join(parts))
 
 
+# Some editors write "Wide shot, 24mm lens: 9:16 frame: subject" or just
+# "Wide shot, 9:16 frame". Splitting on the first ":" used to make "16 frame"
+# look like an object placement and send "24mm lens: 16 frame:" to the image
+# model. The image ratio is already supplied by COMPOSITION_SENTENCE; only
+# real subject placement belongs after the camera label.
+_RATIO_CAMERA_PREFIX = re.compile(
+    r"^\s*(?:(?:9\s*:\s*16|16\s*:\s*9|16)\s+frame)"
+    r"\s*(?:[:,;\-]\s*|$)",
+    re.IGNORECASE,
+)
+
+
 def _frame_placement(camera: Any) -> str:
     """The plan's own words for the frame after its label — what is centred, how large, how
     far («Wide establishing shot, straight-on, 24mm wide: the glass display case centred in
@@ -3775,6 +4134,11 @@ def _frame_placement(camera: Any) -> str:
     if ":" not in raw:
         return ""
     after = raw.split(":", 1)[1]
+    after = _RATIO_CAMERA_PREFIX.sub("", after)
+    # A ratio-only fragment is NOT a placement instruction. Discard it rather
+    # than asking the picture model to draw the meaningless "16 frame".
+    if not after.strip(" ,;:-"):
+        return ""
     kept: list[str] = []
     for sentence in re.split(r"\s*[;.]\s*", after):
         parts: list[str] = []
@@ -4432,6 +4796,13 @@ def compile_prompts(
     """
     kind = str(package.get("scene_kind") or LIVE_KIND).upper()
     bible = bible if isinstance(bible, dict) else {}
+    if kind == LIVE_KIND and package.get("prompt_format") == "editor_final_v1":
+        from app.media.final_prompts import editor_compiled  # noqa: PLC0415
+        return editor_compiled(
+            package,
+            model_id=_contract_model(contract, "model_id", DEFAULT_MOTION_MODEL),
+            cap=lint.prompt_cap(contract, "still"),
+        )
     motion_model = _contract_model(contract, "model_id", DEFAULT_MOTION_MODEL)
     family = _motion_family(motion_model)
     if kind != LIVE_KIND:
@@ -4550,6 +4921,47 @@ def compile_prompts(
             if all(text in candidate for text in needed):
                 still, subject = candidate, shorter
                 break
+    # For explicitly single-source scenes (a candle in an otherwise dark room)
+    # omission of the only light source is physically wrong, not a minor style
+    # choice. Keep the short source-of-light fact while shortening verbose
+    # subject and room descriptions, without inventing new scene content.
+    light_first = _sentence(light.split(",", 1)[0]) if light else ""
+    if (
+        light_first
+        and re.search(r"\b(?:only|sole|single)\s+light\s+source\b", light_first, re.I)
+        and light_first not in still
+    ):
+        # Preserve original descriptions wherever possible; shorten the room
+        # before dropping it. The Director's downstream audit remains the final
+        # gate if even the essential facts cannot fit into the vendor cap.
+        room_options = [environment, *_shorter_subject(environment)] if environment else [""]
+        for shorter in (subject, *_shorter_subject(subject)):
+            for room in room_options:
+                retry = [
+                    (
+                        0 if order == 8 else rank,
+                        order,
+                        (
+                            light_first if order == 8
+                            else shorter if order == 2
+                            else room if order == 5
+                            else text
+                        ),
+                    )
+                    for rank, order, text in items
+                ]
+                candidate = _fit_sentences(
+                    retry, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS
+                )
+                if all(
+                    phrase in candidate
+                    for phrase in (light_first, action, room)
+                    if phrase
+                ):
+                    still = candidate
+                    break
+            if light_first in still:
+                break
     # People kept faceless are shown from behind: an orbit around them turns their faces to
     # the camera, so it is never the compiler's choice for such a scene (a plan may ask).
     move = choose_camera_move(
@@ -4631,6 +5043,9 @@ def motion_prompt_for(
     the dialect of whichever model the scene is bought on. A package from before the
     compiler has none: its stored motion prompt is used as it is (empty when it has none).
     """
+    if isinstance(package, dict) and package.get("prompt_format") == "editor_final_v1":
+        from app.media.final_prompts import editor_motion_for  # noqa: PLC0415
+        return editor_motion_for(package, model_cap=lint.prompt_cap(contract, "motion"))
     intent = motion_intent_of(package) if isinstance(package, dict) else None
     if intent is not None:
         return render_motion(intent, _motion_family(model_id), lint.prompt_cap(contract, "motion"))

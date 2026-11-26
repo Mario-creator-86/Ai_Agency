@@ -9,7 +9,7 @@ Following docs/architecture/08_VIDEO_PIPELINE.md:
 - Picture spans QC: every filmed scene is judged on the first, middle and last frame of its
   span on the film's timeline, at the delivered 1080 px, with the per-clip checklist
   (picture_qc.judge_clip), YuNet counts faces on each frame when the bible forbids them, and
-  each frame is read for a flat band that splits it into panels (`flat_band`).
+  the model's required `one_picture` verdict decides whether a frame is a collage.
 - Character Drift QC: the same look, against the Character Bible's canonical description.
 - Rights/License QC: all assets must be clear of copyright blocks.
 - Audio QC: the film measures at the platform's loudness, under the true-peak ceiling.
@@ -312,12 +312,12 @@ DEGENERATE_SSIM = 0.94
 
 
 def still_is_degenerate(ffmpeg: str | None, path: Path) -> str | None:
-    """Why a still is not a picture (stripes, bands, a blank field), or None when it is one.
+    """Whether a still is essentially uniform/blank, or None when it is not.
 
-    Measured with the encoder the studio already has: the still is squeezed to a single row
-    (and then to a single column), stretched back, and compared with itself. No image library,
-    no model, no opinion. None also when it cannot be measured — this check refuses pictures,
-    it never invents a refusal.
+    Compare the image to a row/column-collapsed version. Only BOTH axes above
+    the uniformity threshold cause an automatic refusal. A stripe or dark band
+    alone never does: a vision model checks composition and scene relevance.
+    None also means the image could not be measured.
     """
     import re  # noqa: PLC0415
     import subprocess  # noqa: PLC0415
@@ -356,10 +356,9 @@ def still_is_degenerate(ffmpeg: str | None, path: Path) -> str | None:
     columns, rows = scores["columns"], scores["rows"]
     if columns >= DEGENERATE_SSIM and rows >= DEGENERATE_SSIM:
         return f"blank or uniform picture, no scene (structure {columns:.2f}/{rows:.2f})"
-    if columns >= DEGENERATE_SSIM:
-        return f"vertical stripes, no scene (structure {columns:.2f})"
-    if rows >= DEGENERATE_SSIM:
-        return f"horizontal bands, no scene (structure {rows:.2f})"
+    # Single-axis similarity cannot establish a split image or a defective
+    # picture. Skies, desk fronts and horizons caused false paid rerolls.
+    # Stripes, panels and visual scene fidelity belong to the vision model.
     return None
 
 
@@ -2188,66 +2187,27 @@ def _panels_check(
     *,
     measured: dict[str, Any],
 ) -> ClipCheck:
-    """The flat band (`flat_band`) on the first, middle and last frames: a frame split by a
-    band of at least PANEL_BAND_SHARE of its height beside at least FRAME_PICTURE_FLOOR of
-    picture (`FlatBand.splits_the_picture`) is panels pasted together, or a blank strip, not
-    one picture; a soft-edged band at the top or the bottom is the scene's sky. Free, and
-    measured whether or not anybody looks."""
-    if not frames:
-        return ClipCheck("panels", "NOT_RUN", True, None, "cadrele nu au putut fi tăiate")
-    read: list[dict[str, Any]] = []
-    split: list[tuple[str, FlatBand]] = []
-    soft: list[tuple[str, FlatBand]] = []
-    unread = False
-    for at, moment, path in frames:
-        band = flat_band(ffmpeg, path)
-        if band is None:
-            unread = True
-            read.append({"at": at, "time": moment, "status": "NOT_RUN"})
-            continue
-        read.append({"at": at, "time": moment, "status": "MEASURED", **band.as_dict()})
-        if band.splits_the_picture:
-            split.append((at, band))
-        elif band.wide and band.soft_edge:
-            soft.append((at, band))
-    measured["panels"] = {
-        "frames": read,
-        "band_share_threshold": PANEL_BAND_SHARE,
-        "picture_share_floor": FRAME_PICTURE_FLOOR,
-    }
-    if split:
-        return ClipCheck(
-            "panels",
-            "FAILED",
-            True,
-            round(max(band.share for _at, band in split), 3),
-            "nu e o singură fotografie: "
-            + "; ".join(f"cadrul {at} are {band.detail_ro()}" for at, band in split),
-        )
-    if unread:
-        return ClipCheck(
-            "panels", "NOT_RUN", True, None, "benzile cadrelor nu au putut fi măsurate"
-        )
-    widest = max(float(entry["band_share"]) for entry in read)
-    detail = (
-        f"o singură imagine în fiecare cadru (cea mai lată bandă plată: {widest:.0%}, prag "
-        f"{PANEL_BAND_SHARE:.0%})"
+    """No pixel-band veto: AI vision is the sole judge of panels and split screens.
+
+    Keep a non-blocking entry for report compatibility. Do not scan pixels or
+    turn an undecodable frame into "panels"; the real video/vision gates handle
+    technical or unmeasured footage independently.
+    """
+    measured["panels"] = {"method": "vision_only", "frames": []}
+    return ClipCheck(
+        "panels",
+        "NOT_APPLICABLE",
+        False,
+        None,
+        "Verificarea benzilor și colajelor aparține exclusiv modelului AI (one_picture)",
     )
-    if soft:
-        named = ("în cadrul " if len(soft) == 1 else "în cadrele ") + ", ".join(
-            at for at, _band in soft
-        )
-        widest_soft = max((band for _at, band in soft), key=lambda band: band.rows)
-        detail += f"; {named}, {widest_soft.soft_edge_ro()}"
-    return ClipCheck("panels", "PASSED", False, widest, detail)
 
 
 def _still_must_change(
     measured: dict[str, Any], judgement: Any, *, fixes: Sequence[Mapping[str, Any]] = ()
 ) -> bool:
-    """Whether the clip's fault is its still's: the first frame (the still the clip was made
-    from) is split by a flat band, or the look saw more than one picture or asked for the
-    still to change, or an item checked on the clip that lives in the PICTURE (layer still,
+    """Whether a measured vision finding says the clip's initial still must change,
+    or an item checked on the clip that lives in the PICTURE (layer still,
     or both: no still was approved since it was found) is there again. Another seed on the
     same still buys the same fault (2026-10-09: scene 5 was a triptych, and its clip animated
     the triptych). A clip that repeats a mistake its MOVEMENT was rewritten to correct (layer
@@ -2255,9 +2215,6 @@ def _still_must_change(
 
     2026-10-12 (the review of 5fc7468, finding 5): a persisting item silenced the look's own
     ``back_to_still``, and seed + 1 was bought from a still that had to change."""
-    frames = (measured.get("panels") or {}).get("frames") or []
-    if any(entry.get("at") == "first" and entry.get("splits_the_picture") for entry in frames):
-        return True
     verdict = getattr(judgement, "verdict", None)
     if getattr(judgement, "status", None) != "MEASURED" or verdict is None:
         return False
@@ -3991,8 +3948,8 @@ def span_picture_qc(
                     )
                     judgement = judge([path for _at, _moment, path in looked_at], plan)
                 picture = _picture_check(judgement, faces_forbidden=faces_forbidden)
-            # The same flat-band reading as the still's and the clip's: the scene's frames
-            # are one picture each, or the scene is panels (2026-10-09, scene 5).
+            # Compatibility-only report: geometric flat bands are no longer judged
+            # here; the vision model's required one_picture field decides panels.
             panels = _panels_check(band_reader, frames, measured=measured)
             entry["faces"] = {
                 "status": faces.status,
@@ -4026,16 +3983,17 @@ def span_picture_qc(
                 problems.append(panels.detail_ro)
             if picture.status == "FAILED":
                 problems.append(picture.detail_ro)
-            # A carried look measured nothing today; the faces and the band did, if they ran.
+            # A previously verified AI verdict may be reused for an unchanged shot.
+            # It is evidence, unlike the removed geometric panel detector.
             today = (faces, panels) if earlier is not None else (faces, picture, panels)
-            if any(item.status in ("PASSED", "FAILED") for item in today):
+            if earlier is not None or any(item.status in ("PASSED", "FAILED") for item in today):
                 measured_any = True
             if problems:
                 entry.update(status="FAILED", passed=False, reason="; ".join(problems))
                 record["failures"] += [f"Scena {index}: {problem}" for problem in problems]
             elif (
                 picture.status == "PASSED"
-                and panels.status == "PASSED"
+                and panels.status in ("NOT_APPLICABLE", "PASSED")
                 and faces.status in ("PASSED", "NOT_APPLICABLE")
             ):
                 entry.update(status="PASSED", passed=True, reason=picture.detail_ro)
@@ -4061,21 +4019,15 @@ def span_picture_qc(
     carried_words = (
         f"; {len(kept)} {'trecută' if len(kept) == 1 else 'trecute'} la un control anterior cu "
         f"aceleași preluări (sau acceptate de Directoare), "
-        f"{'neprivită' if len(kept) == 1 else 'neprivite'} din nou de model, dar citite de "
-        "YuNet și de banda plată"
+        f"{'neprivită' if len(kept) == 1 else 'neprivite'} din nou de model; "
+        "verdictul vizual anterior este păstrat"
         if kept
         else ""
     )
     if judge is None:
-        read = sum(
-            1
-            for entry in filmed
-            if (entry.get("panels") or {}).get("status") in ("PASSED", "FAILED")
-        )
         record["detail"] = (
-            "nimeni nu se uită la cadre (niciun model care vede nu este înregistrat); banda "
-            f"plată a fost citită pe {read} din {len(filmed)} scene filmate, pe primul, "
-            "mijlocul și ultimul cadru"
+            "nu este disponibil un model AI cu vedere; benzile și colajele nu au fost "
+            "evaluate vizual și nu primesc un verdict automat"
             + (", iar fețele au fost numărate de YuNet" if faces_forbidden else "")
             + carried_words
         )

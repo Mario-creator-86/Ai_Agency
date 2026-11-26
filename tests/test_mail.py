@@ -408,7 +408,7 @@ def test_a_schema_example_echoed_back_is_not_a_letter_and_the_second_try_is(engi
     registry = ProviderRegistry()
     registry.register(staffed["provider_id"], Narrator(lambda p: ""))
     sent = answer_mail(engine, registry, asked_id)
-    assert calls == [{"format": "json"}, {"think": True}]
+    assert calls == [{"format": "json", "think": False}, {"think": True}]
     with Session(engine) as session:
         reply = session.get(AgentMessage, sent["message_id"])
         assert reply.body_text.startswith("Sarah, cele 59 de rulări")
@@ -859,7 +859,7 @@ def test_an_analysis_without_its_object_is_asked_again_with_native_thinking(engi
     result = director_review(engine, registry, str(uuid4()))
 
     assert result["reviewed"] == 1
-    assert [c["extra"] for c in calls] == [{"format": "json"}, {"think": True}]
+    assert [c["extra"] for c in calls] == [{"format": "json", "think": False}, {"think": True}]
     assert calls[0]["prompt"] == calls[1]["prompt"]
     with Session(engine) as session:
         runs = session.scalars(

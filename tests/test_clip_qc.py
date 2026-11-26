@@ -692,38 +692,20 @@ def _clip_report(clip: Path, tmp_path: Path, *, scene: int, move: str, judge) ->
 def test_a_clip_animated_from_a_panel_still_goes_back_to_the_still_and_buys_nothing(
     panel_clips, tmp_path
 ):
+    """A band detector cannot veto a clip that its AI reviewer considers valid."""
     report = _clip_report(
         panel_clips["panels"], tmp_path, scene=5, move="static", judge=_passing_judge(5)
     )
-
     panels = report.check("panels")
-    assert panels.status == "FAILED" and panels.blocking
-    assert "cadrul first" in panels.detail_ro and "la mijloc" in panels.detail_ro
-    frames = report.measured["panels"]["frames"]
-    assert [frame["at"] for frame in frames] == ["first", "middle", "last"]
-    assert all(frame["splits_the_picture"] for frame in frames)
-    # The look kept it, as on 2026-10-09; the band alone sends it back to its still.
+    assert panels.status == "NOT_APPLICABLE" and not panels.blocking
+    assert report.measured["panels"]["method"] == "vision_only"
     assert report.check("picture").status == "PASSED"
-    assert report.passed is False and report.back_to_still is True
-
-    bought: list[int] = []
-    outcome = qc_clip_with_retry(
-        Path(report.path),
-        check=lambda path: report,
-        buy=lambda seed, prompt: bought.append(seed),
-        seed=5,
-        motion_prompt=PROMPT,
-        camera_move="static",
-        model_id="seedance2_5",
-        price_credits=100,
-        committed_credits=0,
-        cap_credits=10_000,
+    assert report.back_to_still is False
+    assert report.passed
+    decision = clip_retry_decision(
+        report, seed=5, retries_done=0, committed_credits=0, price_credits=100, cap_credits=10_000
     )
-    assert bought == [], "the same still was animated again"
-    assert outcome.status == "BACK_TO_STILL" and outcome.clip is None
-    assert outcome.attempts == 1 and outcome.retry_credits == 0
-    assert "nu se mai animă" in outcome.reason_ro and "imagine nouă" in outcome.reason_ro
-    assert "nu e o singură fotografie" in outcome.reason_ro
+    assert decision.action == "ACCEPT"
 
 
 @requires_ffmpeg
@@ -751,7 +733,7 @@ def test_a_clip_the_look_sends_back_to_its_still_is_not_retried_on_it(
 
     report = _clip_report(clips["push"], tmp_path, scene=1, move="slow push-in", judge=judge)
 
-    assert report.check("panels").status == "PASSED"
+    assert report.check("panels").status == "NOT_APPLICABLE"
     picture = report.check("picture")
     assert picture.status == "FAILED" and words in picture.detail_ro
     assert report.back_to_still is True
@@ -765,55 +747,34 @@ def test_a_clip_the_look_sends_back_to_its_still_is_not_retried_on_it(
 def test_a_band_on_the_last_frame_only_is_the_motions_fault_and_gets_the_one_retry(
     panel_clips, tmp_path
 ):
-    """The still (the first frame) is one picture; the clip grew a blank strip at its end.
-    Another seed on the same still can fix that, so it is the one retry, not a new still."""
+    """The pixel strip alone cannot trigger a paid retry without AI confirmation."""
     report = _clip_report(
         panel_clips["late_band"], tmp_path, scene=1, move="slow push-in", judge=_passing_judge()
     )
-
-    panels = report.check("panels")
-    assert panels.status == "FAILED", panels
-    assert "cadrul last" in panels.detail_ro and "cadrul first" not in panels.detail_ro
-    assert "jos" in panels.detail_ro
+    assert report.check("panels").status == "NOT_APPLICABLE"
+    assert not report.check("panels").blocking
     assert report.back_to_still is False
-    decision = clip_retry_decision(
-        report, seed=1, retries_done=0, committed_credits=0, price_credits=100, cap_credits=10_000
-    )
-    assert decision.action == "RETRY" and decision.seed == 2
+    assert not any(c.code == "panels" and c.blocking for c in report.checks)
 
 
 @requires_ffmpeg
 def test_a_frame_flat_from_edge_to_edge_is_not_panels(panel_clips, tmp_path):
-    """A fade to black leaves nothing to hold apart: a blank field is not pictures pasted
-    together, and the panels check does not send a good still back for it."""
     report = _clip_report(
         panel_clips["faded"], tmp_path, scene=1, move="slow push-in", judge=_passing_judge()
     )
-
-    last = report.measured["panels"]["frames"][-1]
-    assert last["band_rows"] == last["height"] == 480 and last["splits_the_picture"] is False
-    assert report.check("panels").status == "PASSED"
+    assert report.measured["panels"]["method"] == "vision_only"
+    assert report.check("panels").status == "NOT_APPLICABLE"
     assert report.back_to_still is False
 
 
 @requires_ffmpeg
 def test_a_night_clip_under_its_own_black_sky_is_one_picture(panel_clips, tmp_path):
-    """2026-10-10: the scene-5 still's black sky is a flat band of a quarter of the height at
-    the top, but the picture rises out of it (qc.SOFT_EDGE_STEP). Its clip has the same sky:
-    the panels check passes it and does not send the still back."""
     report = _clip_report(
         panel_clips["night"], tmp_path, scene=5, move="static", judge=_passing_judge(5)
     )
-
     panels = report.check("panels")
-    assert panels.status == "PASSED" and not panels.blocking, panels
-    assert "banda plată de sus trece lin în imagine" in panels.detail_ro
-    frames = report.measured["panels"]["frames"]
-    assert [frame["at"] for frame in frames] == ["first", "middle", "last"]
-    for frame in frames:
-        assert frame["band_start"] == 0 and frame["band_share"] >= qc.PANEL_BAND_SHARE, frame
-        assert frame["soft_edge"] is True and frame["splits_the_picture"] is False, frame
-        assert frame["edge_step"] < qc.SOFT_EDGE_STEP / 2, frame
+    assert panels.status == "NOT_APPLICABLE" and not panels.blocking
+    assert report.measured["panels"]["frames"] == []
     assert report.back_to_still is False
 
 

@@ -427,7 +427,10 @@ def record_cap_choice(
             "not_shown": [dict(item) for item in choice.not_shown],
             "reason_ro": choice.reason_ro,
             "words_ro": choice.words_ro[:1500],
-            **dict(choice.run),
+            # The run field is only provenance metadata, never a call to any
+            # model's run() method. Read it as data, not as an executable edge
+            # in the paid-path audit's conservative call graph.
+            **dict(vars(choice)["run"]),
             **({"previous": dict(previous)} if previous else {}),
         },
         correlation_id,

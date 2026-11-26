@@ -179,7 +179,7 @@ from app.media.fix_check import (
 )
 from app.media.markings import markings_ro, named
 from app.media.picture_qc import StillJudgement, judge_still
-from app.media.qc import PANEL_BAND_SHARE, flat_band, still_is_degenerate
+from app.media.qc import still_is_degenerate
 from app.media.renders_cap import max_rerolls
 from app.media.toolchain import find_ffmpeg
 from app.wording import count as count_ro
@@ -711,42 +711,19 @@ def local_checks(
                 else CheckResult("degenerate", "PASSED", False, None, "structură de imagine")
             )
     if "panels" in measure:
-        band = flat_band(ffmpeg, path)
-        if band is None:
-            checks.append(
-                _unmeasured(
-                    "panels", f"Benzile imaginii nu au fost măsurate: {no_encoder}", environment
-                )
+        # Image/clip composition is a semantic judgement. A mathematically flat row
+        # may be a desk, sky or horizon rather than a pasted panel. Previous
+        # thresholds produced paid false refusals. Only the vision check's
+        # required one_picture / matches_plan / shows_scene fields can fail panels.
+        checks.append(
+            CheckResult(
+                "panels",
+                "NOT_APPLICABLE",
+                False,
+                None,
+                "Panourile și benzile sunt evaluate vizual de AI, nu de detectorul de rânduri",
             )
-        elif band.splits_a_still:
-            # A measured violation, so it is re-rolled with the positive words, unlike a
-            # check that could not run. The frames' waiver for captions and fades
-            # (qc.FRAME_PICTURE_FLOOR) is not a still's: a black still with a strip of
-            # picture 9.6 % tall passed both local checks under it.
-            checks.append(
-                CheckResult(
-                    "panels",
-                    "FAILED",
-                    True,
-                    round(band.share, 3),
-                    f"Imaginea nu e o singură fotografie: {band.detail_ro()}",
-                )
-            )
-        else:
-            # A wide band passes only glued to one edge with a soft edge: the scene's own
-            # night sky or background (2026-10-10, qc.SOFT_EDGE_STEP).
-            checks.append(
-                CheckResult(
-                    "panels",
-                    "PASSED",
-                    False,
-                    round(band.share, 3),
-                    f"o singură imagine: {band.soft_edge_ro()}"
-                    if band.wide
-                    else f"o singură imagine: cea mai lată bandă plată are {band.rows} rânduri "
-                    f"din {band.height} ({band.share:.0%}, prag {PANEL_BAND_SHARE:.0%})",
-                )
-            )
+        )
     if "sharpness" in measure:
         focus = measure_focus(ffmpeg, path)
         if focus is None:
@@ -850,7 +827,7 @@ def local_checks(
 
 
 def _required(plan: StillPlan) -> tuple[str, ...]:
-    base = ("degenerate", "panels", "sharpness", "motion_blur")
+    base = ("degenerate", "sharpness", "motion_blur")
     return base + (("faces",) if plan.faces_forbidden else ())
 
 

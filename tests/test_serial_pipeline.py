@@ -197,11 +197,35 @@ def fake_showrunner(monkeypatch, answer: str, seen: list[str] | None = None):
     from app.story import services
 
     def fake_run(_engine, _registry, agent_id, task_type, prompt, *args, **kwargs):
+        if task_type == "shot_prompts":
+            # The storyboard stage invokes Kael after Marcus' serial episode.
+            # The showrunner's answer is not a final vendor prompt pack.
+            from e2e_shots import make_shot_plan
+
+            return {
+                "id": str(uuid4()),
+                "status": "SUCCEEDED",
+                "output_text": make_shot_plan(prompt),
+            }
         if seen is not None:
             seen.append(prompt)
         return {"id": str(uuid4()), "status": "SUCCEEDED", "output_text": answer}
 
     monkeypatch.setattr(services, "run_agent_task", fake_run)
+
+    # Unlike the Showrunner, Kael invokes run_agent_task from the agent kernel
+    # inside prompt_agent._run. Route only his shot requests to the deterministic
+    # final-prompt adapter; leave the Director's other tasks untouched.
+    from app.agents import services as agent_services
+
+    kernel_run = agent_services.run_agent_task
+
+    def shot_or_kernel(*args, **kwargs):
+        if len(args) >= 4 and args[3] == "shot_prompts":
+            return fake_run(*args, **kwargs)
+        return kernel_run(*args, **kwargs)
+
+    monkeypatch.setattr(agent_services, "run_agent_task", shot_or_kernel)
 
 
 #: The Director's rubric (review v2) with every part working: what a PASS carries.

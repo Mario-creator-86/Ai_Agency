@@ -96,6 +96,7 @@ the serial composer saying the rewritten fields again (`serial_rewritten_package
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -145,6 +146,9 @@ ACCEPTED_MINOR = "ACCEPTED_MINOR"
 #: finding (2026-10-12, f06808c9 scenes 3, 4, 7: a refused rewrite ended the rung, and the next
 #: rung asked the same brief again).
 REWRITES_PER_RUNG = 2
+# Two refused rungs on unchanged source words without a newer failed take are not
+# progress. Stop repeated Sarah/Kael tokens; wait for a real change or second look.
+MAX_UNCHANGED_REFUSED_RUNGS = 2
 #: How serious a finding her review leaves untreated is (Owner, 2026-10-12: «DIRECTOAREA
 #: ACCEPTĂ DEFECTELE MICI!»): only a serious one refuses the rewrite.
 MINOR: Literal["minor"] = "minor"
@@ -650,7 +654,9 @@ def review_schema(
     return BoundReview
 
 
-def shot_schema(index: int, layer: str, *, serial: bool = False) -> type[BaseModel]:
+def shot_schema(
+    index: int, layer: str, *, serial: bool = False, editor_final: bool = False
+) -> type[BaseModel]:
     """The editor's one shot, fitted to the shot schema (`prompt_agent._coerce`), and holding
     what the layer rewrites: a motion for the motion layer, the picture and its motion for the
     still layer. A serial shot is composed from fewer fields (`SERIAL_STILL_FIELDS`,
@@ -679,6 +685,18 @@ def shot_schema(index: int, layer: str, *, serial: bool = False) -> type[BaseMod
         @model_validator(mode="after")
         def _rewrites(self) -> SceneShot:
             needed: tuple[str, ...]
+            if editor_final:
+                needed = (
+                    ("still_prompt", "motion_prompt") if layer == STILL
+                    else ("motion_prompt",)
+                )
+                empty = [
+                    name for name in needed
+                    if not str(getattr(self, name) or "").strip()
+                ]
+                if empty:
+                    raise ValueError(f"Kael must rewrite the exact {', '.join(empty)}")
+                return self
             if serial:
                 needed = ("action",) if layer == STILL else ()
                 moved = ("camera_move", "ending_frame", "emotion")
@@ -1645,6 +1663,21 @@ def lock_texts(
     says}. 2026-10-12 evening review of a50407e: the chosen move's own sentence and the people
     rule were read as words the layer keeps, so a lock on them turned the scene to a paid
     still although another choice of the field says other words."""
+    active = package or context["package"]
+    if active.get("prompt_format") == "editor_final_v1":
+        still = str(visual or active.get("still_prompt") or context.get("visual_prompt") or "")
+        motion = str(active.get("motion_prompt") or "")
+        # No fixed Python sentences exist in editor-final text. Only the still
+        # itself is locked during a motion-only repair.
+        return {
+            "said": (still, motion),
+            "constants": (),
+            "picture": (still,) if layer == MOTION else (),
+            "fields": {
+                "still_prompt": (still,) if layer == STILL else (),
+                "motion_prompt": (motion,),
+            },
+        }
     words = _layer_words(context, layer, package, visual)
     constants = [*words["still_fixed"], *words["motion_fixed"]]
     picture: list[str] = []
@@ -1688,6 +1721,29 @@ def layer_terms(
     change, never a lock), "camera_move": the move whose sentence the motion opens with}, and
     on a motion rewrite "still_kept_whole" (`STILL_KEPT_WHOLE`; the still is in the prompts
     beside it)."""
+    active = package or context["package"]
+    if active.get("prompt_format") == "editor_final_v1":
+        still = str(active.get("still_prompt") or context["visual_prompt"])
+        motion = str(active.get("motion_prompt") or "")
+        editable = (
+            {"still_prompt": "Write the exact final still text; no composer.",
+             "motion_prompt": "Write the matching exact final clip text.",
+             "camera_move": "Single enumerated camera move"}
+            if layer == STILL
+            else {
+                "motion_prompt": "Write the exact final clip movement text.",
+                "camera_move": "Single enumerated camera move",
+            }
+        )
+        return {
+            "layer": layer,
+            "fields_he_may_change": editable,
+            "kept_word_for_word": {"still_prompt": still} if layer == MOTION else {},
+            "fixed_sentences": {"still": [], "motion": []},
+            "said_by_his_fields": {},
+            "camera_move": active.get("camera_move") or "",
+            **({"still_kept_whole": STILL_KEPT_WHOLE} if layer == MOTION else {}),
+        }
     words = _layer_words(context, layer, package, visual)
     terms: dict[str, Any] = {
         "layer": layer,
@@ -1853,7 +1909,10 @@ def director_brief(
     more: dict[str, Any] = {
         "open_layers": list(layers),
         "layers_he_may_change": {layer: layer_terms(context, layer) for layer in layers},
-        "camera_move_sentences": camera_move_sentences(),
+        "camera_move_sentences": (
+            {} if context["package"].get("prompt_format") == "editor_final_v1"
+            else camera_move_sentences()
+        ),
     }
     findings = review_findings(context)
     if findings:
@@ -1928,6 +1987,35 @@ def director_brief(
 # ------------------------------------------------------------------ his rewrite
 
 
+def _direct_rewritten_package(
+    context: dict[str, Any], new: dict[str, Any], layer: str
+) -> dict[str, Any]:
+    """No compositor: preserve the untouched layer and Kael's exact corrected prose."""
+    from app.media.final_prompts import editor_compiled  # noqa: PLC0415
+
+    stored = context["package"]
+    package = dict(stored)
+    if layer == STILL:
+        package["still_prompt"] = new["still_prompt"]
+        package["motion_prompt"] = new["motion_prompt"]
+        # Planning notes are metadata; only Kael's final prompt is sent.
+        for name in SHOT_FIELDS:
+            if name not in ("avoid", "second_framing") and new.get(name) not in ("", None, [], {}):
+                package[name] = new[name]
+    else:
+        # A motion correction NEVER touches the paid/approved still identity.
+        package["motion_prompt"] = new["motion_prompt"]
+        if new.get("camera_move") in lint.CAMERA_MOVES:
+            package["camera_move"] = new["camera_move"]
+        if new.get("ending_frame"):
+            package["ending_frame"] = new["ending_frame"]
+    if new.get("negative_prompt"):
+        package["negative_prompt"] = new["negative_prompt"]
+    package["prompt_format"] = "editor_final_v1"
+    package.update(editor_compiled(package))
+    return package
+
+
 def rewritten_package(
     context: dict[str, Any], shot: BaseModel, layer: str, brief: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1946,6 +2034,8 @@ def rewritten_package(
 
     stored = context["package"]
     new = shot.model_dump()
+    if stored.get("prompt_format") == "editor_final_v1":
+        return _direct_rewritten_package(context, new, layer)
     merged = _shot_of(stored)
     taken = MOTION_FIELDS if layer == MOTION else tuple(f for f in SHOT_FIELDS if f != "avoid")
     for name in taken:
@@ -2020,6 +2110,8 @@ def serial_rewritten_package(
     stored = context["package"]
     look = context.get("look") or {}
     new = shot.model_dump()
+    if stored.get("prompt_format") == "editor_final_v1":
+        return _direct_rewritten_package(context, new, layer)
     merged = dict(stored)
 
     def clean(text: Any) -> str:
@@ -2515,7 +2607,10 @@ def _editor_rewrite(
             asked,
             REWRITE_TEMPLATE,
             correlation_id,
-            shot_schema(index, layer, serial=serial),
+            shot_schema(
+                index, layer, serial=serial,
+                editor_final=(context.get("package") or {}).get("prompt_format") == "editor_final_v1",
+            ),
             "",
             summary=(f"Rescriu scena {index} din «{context['title']}» după brief-ul Directoarei."),
             max_tokens=3000,
@@ -2535,7 +2630,11 @@ def _editor_rewrite(
                 ),
             }
         rewrite = serial_rewritten_package if serial else rewritten_package
-        candidate = rewrite(context, parsed, layer, brief)
+        try:
+            candidate = rewrite(context, parsed, layer, brief)
+        except ValueError as exc:
+            refused = [f"Prompt final invalid: {exc}"]
+            continue
         candidate_visual = (
             visual if layer == MOTION else str(candidate.get("still_prompt") or visual)
         )
@@ -2887,7 +2986,19 @@ def rewrite_scene(
             moves=", ".join(lint.CAMERA_MOVES),
         )
         + lessons_rule(lessons)
-        + (STILL_FRAMING_RULE if layer == STILL else "")
+        + (STILL_FRAMING_RULE if layer == STILL and context["package"].get("prompt_format") != "editor_final_v1" else "")
+        + (
+            "\nEDITOR_FINAL_v1: You directly edit the exact still_prompt or motion_prompt "
+            "sent to the vendor. No Python composer rewrites your sentences. "
+            "For a still-layer repair, send both complete still_prompt and motion_prompt; "
+            "for a motion-layer repair, send the complete motion_prompt only, "
+            "preserving the purchased still exactly. Return the short JSON shot object "
+            "with scene_index, camera_move, these fields and optional negative_prompt. "
+            "Keep each prompt under 1000 UTF-16 units and the series look consistent. "
+            "Sarah judges precisely this final text, so remove the concrete words "
+            "she identified as wrong, not merely the draft planning notes.\n"
+            if context["package"].get("prompt_format") == "editor_final_v1" else ""
+        )
     )
     data = _data(
         context,
@@ -3209,6 +3320,52 @@ def _composer_sentences() -> tuple[str, ...]:
     )
 
 
+def _source_words_fingerprint(context: dict[str, Any]) -> str:
+    """Stable identity of the exact scene package Sarah asked Kael to repair."""
+    source = {
+        "prompt_json": context.get("package") or {},
+        "visual_prompt": context.get("visual_prompt") or "",
+        "scene_index": context.get("scene_index"),
+    }
+    data = json.dumps(source, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
+def _repeated_review_refusals(
+    briefs: Sequence[dict[str, Any]],
+    source_fingerprint: str,
+    *,
+    newer_take_than: Any = None,
+) -> bool:
+    """True only after two consecutive failed rungs on exactly unchanged prompts.
+
+    A passed/stored rewrite, a missing fingerprint (older events), a new take or
+    a different prompt resets the count. Never blocks the first correction.
+    """
+    count = 0
+    for payload in briefs:
+        if payload.get("source_words_fingerprint") != source_fingerprint:
+            return False
+        if payload.get("rewritten") or payload.get("resumed") or payload.get("accepted_minor"):
+            return False
+        timestamp = payload.get("_event_timestamp")
+        if timestamp is None:
+            return False
+        if newer_take_than is not None and _after(newer_take_than, timestamp):
+            return False
+        failed = (
+            payload.get("not_treating") or payload.get("same_prompt")
+            or payload.get("review_unavailable")
+            or payload.get("review_verdict") == MISSES
+        )
+        if not failed:
+            return False
+        count += 1
+        if count >= MAX_UNCHANGED_REFUSED_RUNGS:
+            return True
+    return False
+
+
 def scene_waits(engine: Engine, context: dict[str, Any]) -> str | None:
     """Why the ladder must not ask the Director the same brief again for this scene, in words;
     None when it may ask. 2026-10-12 evening review of a50407e: a scene her rung left where no
@@ -3227,6 +3384,7 @@ def scene_waits(engine: Engine, context: dict[str, Any]) -> str | None:
     with Session(engine) as session:
         newest = None
         rewritten_since = False
+        same_source_briefs: list[dict[str, Any]] = []
         for event in session.scalars(
             select(DomainEvent)
             .where(
@@ -3252,6 +3410,34 @@ def scene_waits(engine: Engine, context: dict[str, Any]) -> str | None:
         ):
             return None
         his = _owner_still(session, storyboard_id, index)
+        # The most recent brief and older rounds on unchanged words, at most
+        # the two needed to recognise a futile repeated dialogue.
+        for event in session.scalars(
+            select(DomainEvent)
+            .where(DomainEvent.aggregate_id == storyboard_id, DomainEvent.event_type == BRIEF_EVENT)
+            .order_by(DomainEvent.sequence.desc())
+            .limit(50)
+        ):
+            item = _payload(event)
+            if item.get("scene_index") != index:
+                continue
+            same_source_briefs.append({**item, "_event_timestamp": event.timestamp})
+            if len(same_source_briefs) >= MAX_UNCHANGED_REFUSED_RUNGS:
+                break
+        latest_take_time = next(
+            (row.created_at for row in scene_takes(session, storyboard_id, index)), None
+        )
+    if _repeated_review_refusals(
+        same_source_briefs,
+        _source_words_fingerprint(context),
+        newer_take_than=latest_take_time,
+    ):
+        return (
+            f"Scena {index} așteaptă: Sarah a refuzat de două ori rescrieri pe "
+            "același prompt, fără un take nou sau o corecție salvată între ele. "
+            "Nu o mai trimit pe Kael în aceeași buclă; următorul pas este "
+            "o schimbare verificabilă a scenei ori privirea a doua a Directoarei."
+        )
     if payload.get("composer_locked"):
         kept = (
             *lock_texts(context, str(payload.get("layer") or MOTION))["constants"],
@@ -3437,6 +3623,7 @@ def _record_brief(
             1,
             {
                 "scene_index": context["scene_index"],
+                "source_words_fingerprint": _source_words_fingerprint(context),
                 "layer": done.get("layer") or brief.get("layer"),
                 "asked_layer": brief.get("layer"),
                 "rewritten": bool(done.get("rewritten")),
@@ -3452,6 +3639,7 @@ def _record_brief(
                 "review_reason_ro": done.get("review_reason_ro") or "",
                 "review_run_id": done.get("review_run_id"),
                 "not_treating": bool(done.get("not_treating")),
+                "review_unavailable": bool(done.get("review_unavailable")),
                 # The motion layer could not treat the findings: counted as a motion attempt by
                 # `open_layers`, so the picture's turn comes (2026-10-12, f06808c9 3, 4, 7).
                 "layer_exhausted": bool(done.get("layer_exhausted")),
@@ -3627,6 +3815,10 @@ def serial_recomposition(
     if target is None or str(target.scene_kind or "LIVE").upper() != "LIVE":
         return None
     stored = dict(target.prompt_json or {})
+    if stored.get("prompt_format") == "editor_final_v1":
+        # Old compositor recomposition would silently change Kael's reviewed
+        # vendor text and orphan any corresponding paid media.
+        return None
     if not str(stored.get("action") or "").strip() and not stored.get("in_frame"):
         return None
     moves = [

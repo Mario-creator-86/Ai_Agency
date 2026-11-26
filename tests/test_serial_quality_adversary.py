@@ -202,7 +202,7 @@ def test_a_model_that_ignores_the_look_cannot_restyle_the_shot(engine, staffed, 
         # What the model said about the shot's action is kept. Its camera sentence is read
         # for the move only (48bbcd1): the still's framing is the look's shot size, so a lens
         # the model named never reaches the picture.
-        assert "swivels his chair" in prompt
+        assert "stands beside the office desk" in prompt
         assert "35mm lens" not in prompt
         assert scene.prompt_json["from_model"] is True
 

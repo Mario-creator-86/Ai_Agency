@@ -1053,7 +1053,8 @@ def test_a_mode_lowered_during_the_studios_redo_buys_no_reroll_and_gives_nothing
     result = still_press(engine, storyboard_id, tmp_path, images, plan["plan_hash"], unasked=True)
 
     assert len(images.asked) == 1, "a re-roll was bought after the mode was lowered"
-    assert "restul nu s-a cumpărat" in result["still"]["reason"]
+    # A rejected frame also requires Sarah to approve replacement words before a reroll.
+    assert "Directoarea le rescrie" in result["still"]["reason"]
     (event,) = stopped_events(engine)
     assert event["step"] == "scene_redo"
     assert "given_back" not in result

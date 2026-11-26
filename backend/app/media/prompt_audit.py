@@ -240,6 +240,10 @@ def prompt_text(package: dict[str, Any], layer: str) -> str:
     renders every purchase from the intent — 22:19Z, 7c26a7ce scene 1: the audit read the
     stored string of a composer since corrected and refused words the sheet would not have
     sent), or the stored string of a scene from before the intents."""
+    if package.get("prompt_format") == "editor_final_v1":
+        # What Sarah reviews must be byte-for-byte the text the vendor reads;
+        # a whitespace-join here would silently change the audited identity.
+        return str(package.get("still_prompt" if layer == "still" else "motion_prompt") or "")
     if layer == "still":
         return " ".join(str(package.get("still_prompt") or "").split())
     from app.media import prompt_lint as lint  # noqa: PLC0415
@@ -253,8 +257,11 @@ def prompt_text(package: dict[str, Any], layer: str) -> str:
     return " ".join(str(package.get("motion_prompt") or "").split())
 
 
-def prompt_digest(text: str) -> str:
-    return hashlib.sha256(" ".join(str(text).split()).encode("utf-8")).hexdigest()
+def prompt_digest(text: str, *, exact: bool = False) -> str:
+    # Legacy approvals deliberately normalized spaces. Editor-owned finals
+    # must be bound to the byte-for-byte text that Sarah saw and the vendor gets.
+    words = str(text) if exact else " ".join(str(text).split())
+    return hashlib.sha256(words.encode("utf-8")).hexdigest()
 
 
 def _audits(session: Session, storyboard_id: str, scene: int, layer: str) -> list[dict[str, Any]]:
@@ -279,6 +286,55 @@ def approved_words(
         a.get("verdict") in (APPROVED, APPROVED_UNDER_CAP) and a.get("digest") == digest
         for a in _audits(session, storyboard_id, scene, layer)
     )
+
+
+def approved_for_purchase(
+    session: Session, storyboard_id: str, scene: int, layer: str, digest: str
+) -> bool:
+    """Only Sarah's explicit APPROVED may authorize a *new* media purchase.
+
+    APPROVED_UNDER_CAP remains readable through approved_words for historical
+    media already bought before the Owner prohibited buying on a cap alone.
+    """
+    return any(
+        a.get("verdict") == APPROVED and a.get("digest") == digest
+        for a in _audits(session, storyboard_id, scene, layer)
+    )
+
+
+def purchase_approval_gaps(
+    engine: Any, storyboard_id: str, step: str, scenes: list[int]
+) -> list[int]:
+    """Scenes with no Sarah approval for the *current vendor-bound words*.
+
+    The staircase audits proactively, but the shooting sheet is also callable
+    directly by the Owner/API. Recheck at the final purchase boundary, after
+    verifying the sheet hash and before reading balances, reserving budgets or
+    contacting a media provider. Missing/closed scenes fail closed.
+    """
+    from app.media.scene_rewrite import scene_context  # noqa: PLC0415 - cycle
+
+    layer = LAYER_OF_STEP.get(step)
+    if layer is None:
+        return sorted({int(scene) for scene in scenes})
+    missing: list[int] = []
+    with Session(engine) as session:
+        for scene in sorted({int(scene) for scene in scenes}):
+            context = scene_context(engine, storyboard_id, scene)
+            if context is None:
+                missing.append(scene)
+                continue
+            package = context["package"]
+            words = prompt_text(package, layer)
+            if not words.strip():
+                missing.append(scene)
+                continue
+            digest = prompt_digest(
+                words, exact=package.get("prompt_format") == "editor_final_v1"
+            )
+            if not approved_for_purchase(session, storyboard_id, scene, layer, digest):
+                missing.append(scene)
+    return missing
 
 
 def finding_of(item: AuditedScene) -> str:
@@ -684,9 +740,11 @@ def audit_before_purchase(
         if not text:
             result["skipped"].append(scene)
             continue
-        digest = prompt_digest(text)
+        digest = prompt_digest(
+            text, exact=context["package"].get("prompt_format") == "editor_final_v1"
+        )
         with Session(engine) as session:
-            if approved_words(session, storyboard_id, scene, layer, digest):
+            if approved_for_purchase(session, storyboard_id, scene, layer, digest):
                 result["approved"].append(scene)
                 continue
             defect = tool_defect_on(session, storyboard_id, scene, layer, digest)

@@ -1627,28 +1627,18 @@ def test_with_no_film_on_disk_no_frame_is_cut(engine, staffed, monkeypatch):
 def test_with_nobody_to_look_and_faces_allowed_the_band_still_fails_a_panel_scene(
     engine, staffed, tmp_path
 ):
-    """Review of 2026-10-09: with no model that can see and a bible that allows faces, the
-    span check stood down before cutting a frame, so the band, which is free, was never read
-    on the film: the rehearsal's QC (registry None) and the Owner's re-QC could pass a film
-    with the triptych in it. The band is read whoever looks."""
+    """Without vision, never infer that a geometric band is a failed scene."""
     from app.media.qc import span_picture_qc
 
     ids = _spanned_film(engine, tmp_path, film=_panel_film(tmp_path))
-
     record = span_picture_qc(engine, None, ids["asset"], str(uuid4()))
-
     assert record["faces_forbidden"] is False
-    assert record["status"] == "MEASURED" and record["passed"] is False, record
+    assert record["passed"] is None and record["failures"] == []
     scenes = {entry["scene_index"]: entry for entry in record["scenes"]}
-    assert scenes[1]["passed"] is False and scenes[1]["panels"]["status"] == "FAILED"
-    assert "nu e o singură fotografie" in scenes[1]["reason"]
-    # The scene with no band was read, not looked at: it certifies nothing.
-    assert scenes[2]["passed"] is None and scenes[2]["status"] == "NOT_RUN"
-    assert scenes[2]["panels"]["status"] == "PASSED"
+    assert scenes[1]["passed"] is None and scenes[2]["passed"] is None
+    assert scenes[1]["panels"]["status"] == "NOT_APPLICABLE"
     assert scenes[2]["picture"]["status"] == "NOT_RUN"
-    (failure,) = record["failures"]
-    assert failure.startswith("Scena 1:")
-    assert "nimeni nu se uită" in record["detail"] and "banda plată" in record["detail"]
+    assert "nu este disponibil un model AI" in record["detail"]
 
 
 @requires_ffmpeg
@@ -1658,13 +1648,11 @@ def test_with_nobody_to_look_a_film_without_panels_is_read_and_certifies_nothing
     from app.media.qc import span_picture_qc
 
     ids = _spanned_film(engine, tmp_path)
-
     record = span_picture_qc(engine, None, ids["asset"], str(uuid4()))
-
     assert record["passed"] is None and record["failures"] == []
     filmed = [entry for entry in record["scenes"] if entry["kind"] == "LIVE"]
     assert len(filmed) == 2
-    assert all(entry["panels"]["status"] == "PASSED" for entry in filmed)
+    assert all(entry["panels"]["status"] == "NOT_APPLICABLE" for entry in filmed)
     assert all(entry["passed"] is None for entry in filmed)
 
 
@@ -1672,15 +1660,18 @@ def test_with_nobody_to_look_a_film_without_panels_is_read_and_certifies_nothing
 def test_quality_control_without_a_seeing_model_fails_a_panel_scene_and_asks_for_still_and_motion(
     engine, staffed, tmp_path
 ):
-    """The rehearsal's own QC: evaluate_media_qc with no registry and no judge of its own."""
+    """The panel heuristic must never generate a scene-redo proposal on its own."""
     ids = _spanned_film(engine, tmp_path, film=_panel_film(tmp_path))
-
     report = evaluate_media_qc(engine, ids["asset"], str(uuid4()))
-
-    assert report["status"] == "FAILED"
-    assert report["checks_json"]["picture_spans_qc"]["passed"] is False
-    assert report["checks_json"]["picture_qc"]["passed"] is None
-    assert _scene_redos(report) == {1: {"still", "motion"}}
+    spans = report["checks_json"]["picture_spans_qc"]
+    # evaluate_media_qc intentionally moves span failures to failure_reasons_json.
+    # With no vision, a band alone must never be a measured refusal.
+    assert spans["passed"] is None
+    live = [entry for entry in spans["scenes"] if entry["kind"] == "LIVE"]
+    assert len(live) == 2
+    assert all(entry["passed"] is None for entry in live)
+    assert all(entry["panels"]["status"] == "NOT_APPLICABLE" for entry in live)
+    assert not any("bandă plată" in reason for reason in report["failure_reasons_json"])
 
 
 @requires_ffmpeg
@@ -1816,43 +1807,39 @@ def _scene_redos(report) -> dict[int, set[str]]:
 
 @requires_ffmpeg
 def test_a_scene_made_of_panels_fails_the_span_check_on_the_band_alone(engine, staffed, tmp_path):
-    """The look is the lenient one of 2026-10-09: it keeps everything. The band does not."""
+    """An AI approval is not overridden by a guessed horizontal separator."""
     from app.media.qc import span_picture_qc
 
     ids = _spanned_film(engine, tmp_path, film=_panel_film(tmp_path))
-
     record = span_picture_qc(engine, None, ids["asset"], str(uuid4()), judge=_Judge())
-
-    assert record["status"] == "MEASURED" and record["passed"] is False
+    assert record["status"] == "MEASURED" and record["passed"] is True
     scenes = {entry["scene_index"]: entry for entry in record["scenes"]}
-    panel, card = scenes[1], scenes[2]
-    assert panel["passed"] is False and panel["panels"]["status"] == "FAILED"
-    assert "nu e o singură fotografie" in panel["reason"] and "la mijloc" in panel["reason"]
-    assert all(frame["splits_the_picture"] for frame in panel["panels"]["frames"])
-    assert card["passed"] is True and card["panels"]["status"] == "PASSED"
-    (failure,) = record["failures"]
-    assert failure.startswith("Scena 1:")
+    # Scene 3 is a locally composed BLACK card; it has no AI picture verdict.
+    assert scenes[3]["passed"] is None and scenes[3]["status"] == "NOT_APPLICABLE"
+    for index in (1, 2):
+        assert scenes[index]["passed"] is True
+        assert scenes[index]["picture"]["status"] == "PASSED"
+        assert scenes[index]["panels"]["status"] == "NOT_APPLICABLE"
+    assert record["failures"] == []
 
 
 @requires_ffmpeg
 def test_quality_control_fails_a_panel_scene_and_the_studio_asks_for_a_new_still_and_motion(
     engine, staffed, tmp_path
 ):
+    """No automatic panel failure reaches the final-film report."""
     ids = _spanned_film(engine, tmp_path, film=_panel_film(tmp_path))
-
     report = evaluate_media_qc(
         engine, ids["asset"], str(uuid4()), span_judge=_Judge(), face_counter=_Faces()
     )
-
-    assert report["status"] == "FAILED"
-    assert report["checks_json"]["picture_spans_qc"]["passed"] is False
-    assert any(
-        "Scena 1" in reason and "singură fotografie" in reason
-        for reason in report["failure_reasons_json"]
-    ), report["failure_reasons_json"]
-    # The studio's own redo: a new still and new motion for scene 1, and nothing for the
-    # scene that passed. Never the whole film.
-    assert _scene_redos(report) == {1: {"still", "motion"}}
+    spans = report["checks_json"]["picture_spans_qc"]
+    assert spans["passed"] is True
+    live = [entry for entry in spans["scenes"] if entry["kind"] == "LIVE"]
+    assert len(live) == 2
+    assert all(entry["passed"] is True for entry in live)
+    assert all(entry["picture"]["status"] == "PASSED" for entry in live)
+    assert all(entry["panels"]["status"] == "NOT_APPLICABLE" for entry in live)
+    assert not any("bandă plată" in reason for reason in report["failure_reasons_json"])
 
 
 @requires_ffmpeg
@@ -1881,7 +1868,7 @@ def test_panels_the_band_cannot_see_fail_the_scene_on_the_looks_one_picture(
 
     scenes = {entry["scene_index"]: entry for entry in record["scenes"]}
     assert scenes[1]["passed"] is True
-    assert scenes[2]["passed"] is False and scenes[2]["panels"]["status"] == "PASSED"
+    assert scenes[2]["passed"] is False and scenes[2]["panels"]["status"] == "NOT_APPLICABLE"
     assert "nu sunt o singură fotografie" in scenes[2]["reason"]
     assert "three tunnels" in scenes[2]["reason"]
     assert _scene_redos({"checks_json": {"picture_spans_qc": record}}) == {2: {"still", "motion"}}

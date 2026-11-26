@@ -1772,8 +1772,34 @@ def _noise_stills(tmp_path) -> tuple[Path, Path]:
     return made[0], made[1]
 
 
+def _fixture_sarah_approves(monkeypatch) -> None:
+    """When the test is about money/Owner policy, supply a deterministic Sarah.
+
+    These tests deliberately run _media(..., registry=None). Since PRODUCTION
+    now fails closed without Director approval, simulate only the editorial
+    approval boundary; the real paid staircase, budgets and QC remain active.
+    Her missing/rejected review is covered by dedicated prompt-audit tests.
+    """
+    from app.runbook import stages
+
+    original = stages._walk_staircase
+
+    def with_director(engine, settings, registry, *args, **kwargs):
+        return original(
+            engine, settings, registry if registry is not None else object(),
+            *args, **kwargs
+        )
+
+    def approved(_engine, _registry, *, scenes, **_kwargs):
+        return {"approved": list(scenes), "rewritten": [], "held": [], "skipped": [], "asked": True}
+
+    monkeypatch.setattr(stages, "_walk_staircase", with_director)
+    monkeypatch.setattr("app.media.prompt_audit.audit_before_purchase", approved)
+
+
 def _staircase_world(engine, tmp_path, monkeypatch, *, stills=None) -> dict[str, Any]:
     """The vendors, faked, as the stage's wiring hands them over; the legacy render refuses."""
+    _fixture_sarah_approves(monkeypatch)
     from app.runbook import stages
     from test_film_costing import SEEDANCE, Account, Models, SpyVideo
     from test_stills_stage import SpyStills
@@ -2904,6 +2930,7 @@ def _assembled_staircase_film(engine, settings, tmp_path, monkeypatch):
 
     _production(engine)
     _paid_media_mode(engine)
+    _fixture_sarah_approves(monkeypatch)
     storyboard_id = _bottom_of_the_staircase(engine, tmp_path, scenes=2)
     stills = _noise_stills(tmp_path)
 

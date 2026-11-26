@@ -115,7 +115,7 @@ PICTURE_TASK = "picture_qc"
 #: subtitles are the studio's own (film babcf272 was failed for its own captions).
 #: v5 (2026-10-12 review): the look is told which scene numbers its frames are, since a scene
 #: carried forward is not shown and a frame numbered by its position named the wrong scene.
-TEMPLATE_VERSION = "picture-qc-v6"
+TEMPLATE_VERSION = "picture-qc-v7"
 
 #: The departments asked to look, in order. The Video Editor owns the pictures, so the
 #: department that made them is the department that answers for them; the Director is asked
@@ -168,11 +168,14 @@ _INSTRUCTIONS = (
     "only what you can see.\n"
     "{captions_note}"
     "For every scene answer three questions from its frame alone. First: is it a picture at "
-    "all? A blank or uniform field, plain stripes or bands, pure noise, a smear, or a wall "
-    "of garbled writing is not a picture, however clean the file is. Second: is it ONE "
+    "all? A uniformly blank frame, pure noise, severe smears or a wall of garbled "
+    "writing is not a picture. Ordinary horizontal surfaces, horizons and dark skies "
+    "are valid scene elements, not defects by themselves. Second: is it ONE "
     "picture, one continuous photograph filling the frame from edge to edge? A collage, a "
-    "split screen, a grid, panels stacked one above another, a comic strip, or a picture "
-    "with a blank or black band across it is not one picture, however good each part is. "
+    "split screen, grid or panels stacked as separate scenes are not one picture. "
+    "Do not infer panels from a horizon, dark sky, desk, floor, wall, shadow or "
+    "horizontal line alone. Reject a band only when it visibly divides separate "
+    "images or is clearly a pasted, unnatural obstruction. "
     "Third: does it show what the scene asked for — its written picture and what the "
     "narration says over it, including its requested motion and ending frame? A visual "
     "effect explicitly requested by the motion is not an unrequested addition. Judge whether "
@@ -1894,17 +1897,17 @@ STILL_TASK = "still_qc"
 #: shot k of n at its size (`StillPlan.shot_form`, `_SHOT_NOTE`), and its `scene_picture` and
 #: `narration` are the shot's own; a scene that is its own one shot is asked as under v4.
 #: (v5 is skipped: «still-qc-v5-contract» named v4 with the current plan's conditions.)
-STILL_TEMPLATE_VERSION = "still-qc-v6"
+STILL_TEMPLATE_VERSION = "still-qc-v7"
 #: The same, for a still bought after its scene's words were rewritten: it is also asked, item
 #: by item, whether each mistake the rewrite answered is gone (`StillPlan.must_fix`,
 #: `_FIXES_NOTE`). Only such a still is asked this way; any other is asked as above.
 #: fixes2 (2026-10-12, late evening): each item is answered gone, minor or persists (the
 #: Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI!»), the correction's words are guidance, not a
 #: second plan, and an item about the movement is left to the clip, which is checked for it.
-STILL_FIX_TEMPLATE_VERSION = "still-qc-v6-fixes"
+STILL_FIX_TEMPLATE_VERSION = "still-qc-v7-fixes"
 #: The same with the current plan's explicit conditions (a cropped person, unruled pages) to
 #: verify on the pixels (`stills_stage._still_plan`, ``source == "current_plan"``).
-STILL_CONTRACT_TEMPLATE_VERSION = "still-qc-v6-contract"
+STILL_CONTRACT_TEMPLATE_VERSION = "still-qc-v7-contract"
 #: The answers one item may get (`fix_check.FIX_STATUSES`).
 FixStatus = Literal["gone", "minor", "persists"]
 #: The width the still is shown at. A 2K still (1530x2720) is scaled down to it.
@@ -2146,8 +2149,9 @@ _STILL_INSTRUCTIONS = (
     "- readable_text: is there any lettering, number, sign, caption or logo?\n"
     "- one_picture: is this ONE continuous photograph filling the whole frame from edge to "
     "edge? A collage, a split screen, a grid, panels stacked one above another, a comic "
-    "strip, a picture inside a picture, or a picture with a blank or black band across it "
-    "is not one picture.\n"
+    "strip or a picture inside a picture is not one picture. A dark sky, horizon, "
+    "desk front, shadow or straight horizontal edge is not proof of a panel. "
+    "Reject a separator only if it visibly divides different images or is clearly pasted.\n"
     "- matches_plan: does it show what the plan asks for, as one moment?\n"
     "- shows_scene: does it show what the SCENE asks for — the scene's written picture and "
     "the narration spoken over it, under `scene_picture` and `narration`? The plan is how "
@@ -2448,14 +2452,14 @@ CLIP_TASK = "clip_qc"
 #: v3 (2026-10-10): a film's frames come with `studio_text_note` (where they were cut from, and
 #: the narration's subtitles named as the studio's) and, when their caption rows were cut out,
 #: the strip of each below them; a bought clip's prompt is unchanged.
-CLIP_TEMPLATE_VERSION = "clip-qc-v5"
+CLIP_TEMPLATE_VERSION = "clip-qc-v6"
 #: The same, for a clip bought after the scene's movement was rewritten to correct what quality
 #: control found (2026-10-12, late evening; the review of 9ac0195, finding 5): it is also asked,
 #: item by item, whether each mistake is gone, minor or persists (`StillPlan.must_fix` of the
 #: motion layer, `_CLIP_FIXES_NOTE`). Until then a finding treated in the motion's words was
 #: put to the still, which cannot show a movement, answered «fixed» without looking, and was
 #: never checked on the clip at all.
-CLIP_FIX_TEMPLATE_VERSION = "clip-qc-v5-fixes"
+CLIP_FIX_TEMPLATE_VERSION = "clip-qc-v6-fixes"
 #: The frames shown per clip, in order: first, middle, last.
 CLIP_FRAMES = 3
 
@@ -2566,8 +2570,9 @@ _CLIP_INSTRUCTIONS = (
     "- same_shot: are the three frames one continuous shot of the same place, with no cut "
     "to another picture and nothing turning into something else?\n"
     "- one_picture: is each frame ONE continuous photograph filling the whole frame? A "
-    "collage, a split screen, a grid, panels stacked one above another, a comic strip, or a "
-    "frame with a blank or black band across it is not one picture.\n"
+    "collage, split screen, grid or stacked separate scenes are not one picture. "
+    "A dark sky, desk, floor, shadow or horizontal edge can be part of a valid shot: "
+    "only mark false when you see distinct panels or a clearly pasted obstruction.\n"
     "- bible_violations: name the violation or write none. Check every rule listed.\n"
     "- verdict: keep only if the clip is right as it is; regenerate_motion if animating the "
     "same still again could fix it; back_to_still if the still itself must change (always "

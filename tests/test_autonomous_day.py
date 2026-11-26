@@ -124,65 +124,10 @@ def _runway(monkeypatch, tmp_path, *, balance: float = 10_000) -> dict[str, Any]
     return {"images": images, "models": models, "account": account}
 
 
-#: A shot plan with a different frame and subject per scene, as a real Video Editor writes
-#: one: the end-to-end stand-in answers every scene alike, which the sheet's lint rightly
-#: BLOCKs in PRODUCTION ("every filmed scene has the same framing").
-VARIED_SHOTS = (
-    (
-        "a wide, low angle, 24mm lens",
-        "the observatory dome on a cold hillside at night",
-        "the dome turns slowly, its shutter opening",
-    ),
-    (
-        "a medium shot, eye-level, 50mm lens",
-        "the segmented golden mirror of a telescope",
-        "a faint reflection drifts across the segments",
-    ),
-    (
-        "a detail shot, macro, 85mm lens",
-        "a cloud of red dust around a young star",
-        "the dust thins slowly and light shows through",
-    ),
-    (
-        "an aerial shot, high angle",
-        "an empty field under a clear starry sky",
-        "the stars wheel slowly overhead",
-    ),
-)
-
-
 def _varied_shot_plan(studio_, monkeypatch) -> None:
-    import json
-    import re
+    from e2e_shots import make_shot_plan
 
-    def shots(prompt: str) -> str:
-        indices = sorted({int(n) for n in re.findall(r'"scene_index":\s*(\d+)', prompt)}) or [1]
-        planned = []
-        for index in indices:
-            camera, subject, action = VARIED_SHOTS[(index - 1) % len(VARIED_SHOTS)]
-            planned.append(
-                {
-                    "scene_index": index,
-                    "story_purpose": "EVIDENCE",
-                    "subject": subject,
-                    "action": action,
-                    "environment": "a remote observatory far from any city",
-                    "camera": camera,
-                    "lighting": "moonlight from the left, one warm lamp behind",
-                    "composition": "vertical, the subject in the lower third",
-                    "motion": action,
-                    "emotion": "quiet anticipation",
-                    "background": "stars, unmoving",
-                    "continuity": "the same night sky as the previous shot",
-                    "ending_frame": f"{subject}, centred",
-                    "audio_intent": "wind, distant",
-                    "transition": "cut",
-                    "avoid": ["text of any kind"],
-                }
-            )
-        return json.dumps({"shots": planned})
-
-    monkeypatch.setattr(studio_["model"], "_shots", shots)
+    monkeypatch.setattr(studio_["model"], "_shots", make_shot_plan)
 
 
 def _judges_pass(monkeypatch) -> None:
@@ -548,10 +493,11 @@ def test_under_every_paid_step_each_yes_continues_the_film_the_same_day_to_a_pri
 def _stage_world(engine, settings, monkeypatch, tmp_path, *, rule="MODE", balance=10_000.0):
     """One film at the bottom of its staircase and the media stage alone, run three times."""
     from app.runbook import stages
-    from test_daily_run_stages import _bottom_of_the_staircase
+    from test_daily_run_stages import _bottom_of_the_staircase, _fixture_sarah_approves
     from test_daily_run_stages import _production as stage_production
 
     stage_production(engine)
+    _fixture_sarah_approves(monkeypatch)
     world = _runway(monkeypatch, tmp_path, balance=balance)
     monkeypatch.setattr(stages, "story_gate", lambda session, script_id: (True, ""))
     _judges_pass(monkeypatch)

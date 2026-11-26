@@ -100,9 +100,26 @@ def _nepal_board(engine) -> str:
 
 
 def _valid_pack() -> dict[str, Any]:
-    """The Nepal plan as the model meant it: the fixture's six shots, correctly escaped."""
+    """Legacy Nepal fields plus final vendor payloads Kael must now provide."""
+    from e2e_shots import make_shot_plan
+
     parsed = parse_shot_plan(_fixture_text())
-    return {"shots": [parsed.shots[index].model_dump() for index in sorted(parsed.shots)]}
+    modern = json.loads(
+        make_shot_plan('"scene_index": 1, "scene_index": 2, "scene_index": 3, '
+                       '"scene_index": 4, "scene_index": 5, "scene_index": 6')
+    )
+    final = {row["scene_index"]: row for row in modern["shots"]}
+    return {
+        "shots": [
+            {
+                **parsed.shots[index].model_dump(),
+                **{name: final[index][name] for name in (
+                    "still_prompt", "motion_prompt", "negative_prompt", "camera_move"
+                )},
+            }
+            for index in sorted(parsed.shots)
+        ]
+    }
 
 
 def _four_of_six() -> str:
@@ -121,11 +138,28 @@ class ShotModel:
     def __init__(self, shot_answers: list[str]) -> None:
         self.shot_answers = list(shot_answers)
         self.shot_prompts: list[str] = []
+        self.last_complete: str | None = None
 
     def __call__(self, prompt: str) -> str:
         if '"shots": [' in prompt:
             self.shot_prompts.append(prompt)
-            return self.shot_answers.pop(0) if self.shot_answers else "no answer left"
+            reply = (
+                self.shot_answers.pop(0) if self.shot_answers
+                else (self.last_complete or "no answer left")
+            )
+            # This test retains the original malformed 2026-09-27 source to
+            # prove the *decoder* repairs it. The model fake must nevertheless
+            # meet the modern Kael-owned final still/motion contract.
+            if reply == _fixture_text():
+                reply = json.dumps(_valid_pack())
+            parsed = parse_shot_plan(reply)
+            if (
+                sorted(parsed.shots) == [1, 2, 3, 4, 5, 6]
+                and all(shot.camera_move and shot.still_prompt and shot.motion_prompt
+                        for shot in parsed.shots.values())
+            ):
+                self.last_complete = reply
+            return reply
         return json.dumps(BIBLE_ANSWER)
 
 
@@ -221,8 +255,12 @@ def test_shot_reask_changes_mode_for_narration_but_keeps_json_for_a_partial_plan
         return original(*args, **kwargs)
 
     monkeypatch.setattr(prompt_agent, "_run", tracked)
-    model = ShotModel(["No structured answer."] if empty else [_four_of_six()])
-    model.shot_answers.append(json.dumps(_valid_pack()))
+    full = json.dumps(_valid_pack())
+    model = ShotModel([
+        full, full,
+        "No structured answer." if empty else _four_of_six(),
+        full,
+    ])
     registry, _ = registry_with(studio, model)
     write_shot_prompts(engine, registry, board_id, str(uuid4()))
     assert calls[-1] is empty
@@ -238,14 +276,15 @@ def test_a_plan_with_four_of_six_shots_is_asked_for_again_once_with_the_decoder_
     salvage = parse_shot_plan(broken)
     assert sorted(salvage.shots) == [1, 2, 3, 4], "four shots survive on their own"
 
-    model = ShotModel([broken, json.dumps(_valid_pack())])
+    full = json.dumps(_valid_pack())
+    model = ShotModel([full, full, broken, full])
     registry, _ = registry_with(studio, model)
 
     result = write_shot_prompts(engine, registry, board_id, str(uuid4()))
 
-    assert len(model.shot_prompts) == 2, "asked once, then re-asked exactly once"
-    reask = model.shot_prompts[1]
-    assert "Return shots only for these scene_index values: [1, 2, 3, 4, 5, 6]" in reask
+    assert len(model.shot_prompts) == 4, "three batches and one re-ask for missing shots"
+    reask = model.shot_prompts[3]
+    assert "Return shots only for these scene_index values: [5, 6]" in reask
     assert decoded.value.msg in reask
     assert f"offset {decoded.value.pos}" in reask
     assert "5, 6" in reask, "the re-ask names the scenes that are missing"
@@ -263,7 +302,7 @@ def test_a_complete_plan_is_not_asked_for_twice(engine, studio):
 
     write_shot_prompts(engine, registry, board_id, str(uuid4()))
 
-    assert len(model.shot_prompts) == 1
+    assert len(model.shot_prompts) == 3  # three two-scene batches, no re-asks
     packages = [scene.prompt_json for scene in _scenes(engine, board_id)]
     assert packages[0]["camera"].startswith("Aerial wide shot, static, 24mm")
     assert all(package["source"] == "model" for package in packages)
@@ -280,7 +319,7 @@ def test_junk_twice_leaves_the_film_waiting_for_a_shot_plan_with_a_warning(engin
     with pytest.raises(ShotPlanUnusable) as refused:
         write_shot_prompts(engine, registry, board_id, str(uuid4()))
 
-    assert len(model.shot_prompts) == 2
+    assert len(model.shot_prompts) == 6  # three batches, one retry apiece
     assert refused.value.missing == [1, 2, 3, 4, 5, 6]
     with Session(engine) as session:
         assert session.get(Storyboard, board_id).status == "NEEDS_SHOT_PLAN"
@@ -299,7 +338,8 @@ def test_junk_twice_leaves_the_film_waiting_for_a_shot_plan_with_a_warning(engin
 
 def test_a_plan_still_short_after_the_re_ask_names_what_it_kept_and_what_it_lost(engine, studio):
     board_id = _nepal_board(engine)
-    model = ShotModel([_four_of_six(), _four_of_six()])
+    full = json.dumps(_valid_pack())
+    model = ShotModel([full, full, _four_of_six(), _four_of_six()])
     registry, _ = registry_with(studio, model)
 
     with pytest.raises(ShotPlanUnusable):
@@ -309,7 +349,7 @@ def test_a_plan_still_short_after_the_re_ask_names_what_it_kept_and_what_it_lost
     assert payload["from_model"] == 4
     assert payload["missing_scenes"] == [5, 6]
     sources = [(scene.prompt_json or {}).get("source") for scene in _scenes(engine, board_id)]
-    assert sources == ["model"] * 4 + ["template"] * 2
+    assert sources == ["model"] * 4 + [None] * 2  # refused scenes get no model-owned vendor text
 
 
 # ------------------------------------------------------------------ 4: PRODUCTION stops it
@@ -455,7 +495,7 @@ def test_large_payload_keeps_every_claim_and_the_json_sent_always_parses(engine,
     def answer(prompt: str) -> str:
         asked.append(prompt)
         if '"shots": [' in prompt:
-            return _fixture_text()
+            return json.dumps(_valid_pack())
         return json.dumps(BIBLE_ANSWER)
 
     registry, _ = registry_with(studio, answer)
